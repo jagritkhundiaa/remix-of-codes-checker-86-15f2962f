@@ -20,6 +20,66 @@ function isInvalidCodeFormat(code) {
   return false;
 }
 
+// ── Cookie-aware fetch (preserves cookies across redirects like Python requests.Session) ──
+
+function extractCookiesFromResponse(res, cookieJar) {
+  const setCookies = res.headers.getSetCookie?.() || [];
+  for (const c of setCookies) {
+    const parts = c.split(";")[0].trim();
+    if (parts.includes("=")) {
+      cookieJar.push(parts);
+    }
+  }
+}
+
+function getCookieString(cookieJar) {
+  return cookieJar.join("; ");
+}
+
+async function sessionFetch(url, options, cookieJar) {
+  // Manual redirect following to preserve cookies (like Python requests.Session)
+  let currentUrl = url;
+  let method = options.method || "GET";
+  let body = options.body;
+  let maxRedirects = 15;
+
+  while (maxRedirects-- > 0) {
+    const res = await proxiedFetch(currentUrl, {
+      ...options,
+      method,
+      body,
+      headers: {
+        ...options.headers,
+        Cookie: getCookieString(cookieJar),
+      },
+      redirect: "manual",
+    });
+
+    extractCookiesFromResponse(res, cookieJar);
+
+    const status = res.status;
+    if (status >= 300 && status < 400) {
+      const location = res.headers.get("location");
+      if (!location) break;
+      currentUrl = new URL(location, currentUrl).href;
+      // Redirects become GET (except 307/308)
+      if (status !== 307 && status !== 308) {
+        method = "GET";
+        body = undefined;
+      }
+      // Consume body to avoid memory leaks
+      try { await res.text(); } catch {}
+      continue;
+    }
+
+    // Return with the final URL attached
+    const text = await res.text();
+    return { res, text, finalUrl: currentUrl };
+  }
+
+  throw new Error("Too many redirects");
+}
+
 // ── Xbox Live OAuth Login ────────────────────────────────────
 
 const MICROSOFT_OAUTH_URL =
@@ -27,11 +87,9 @@ const MICROSOFT_OAUTH_URL =
 
 async function fetchOAuthTokens(session) {
   try {
-    const res = await proxiedFetch(MICROSOFT_OAUTH_URL, {
+    const { text } = await sessionFetch(MICROSOFT_OAUTH_URL, {
       headers: session.headers,
-      redirect: "follow",
-    });
-    const text = await res.text();
+    }, session.cookies);
 
     let match = text.match(/value=\\?"(.+?)\\?"/s) || text.match(/value="(.+?)"/s);
     if (!match) return { urlPost: null, ppft: null };
@@ -55,25 +113,16 @@ async function fetchLogin(session, email, password, urlPost, ppft) {
       PPFT: ppft,
     });
 
-    const res = await proxiedFetch(urlPost, {
+    const { text, finalUrl } = await sessionFetch(urlPost, {
       method: "POST",
       headers: {
         ...session.headers,
         "Content-Type": "application/x-www-form-urlencoded",
-        Cookie: session.cookieJar || "",
       },
       body: body.toString(),
-      redirect: "follow",
-    });
+    }, session.cookies);
 
-    // Extract cookies
-    const setCookies = res.headers.getSetCookie?.() || [];
-    for (const c of setCookies) {
-      const parts = c.split(";")[0];
-      session.cookieJar = (session.cookieJar || "") + "; " + parts;
-    }
-
-    const finalUrl = res.url;
+    // Check if final URL has access_token in fragment
     if (finalUrl.includes("#")) {
       const hash = new URL(finalUrl).hash.substring(1);
       const params = new URLSearchParams(hash);
@@ -81,7 +130,6 @@ async function fetchLogin(session, email, password, urlPost, ppft) {
       if (token && token !== "None") return token;
     }
 
-    const text = await res.text();
     if (text.includes("cancel?mkt=")) {
       const iptMatch = text.match(/(?<="ipt" value=").+?(?=">)/);
       const ppridMatch = text.match(/(?<="pprid" value=").+?(?=">)/);
@@ -95,27 +143,22 @@ async function fetchLogin(session, email, password, urlPost, ppft) {
           uaid: uaidMatch[0],
         });
 
-        const ret = await proxiedFetch(actionMatch[0], {
+        const { text: retText } = await sessionFetch(actionMatch[0], {
           method: "POST",
           headers: {
             ...session.headers,
             "Content-Type": "application/x-www-form-urlencoded",
-            Cookie: session.cookieJar || "",
           },
           body: formBody.toString(),
-          redirect: "follow",
-        });
+        }, session.cookies);
 
-        const retText = await ret.text();
         const returnUrlMatch = retText.match(
           /(?<="recoveryCancel":\{"returnUrl":")(.+?)(?=",)/
         );
         if (returnUrlMatch) {
-          const fin = await proxiedFetch(returnUrlMatch[0], {
-            headers: { ...session.headers, Cookie: session.cookieJar || "" },
-            redirect: "follow",
-          });
-          const finUrl = fin.url;
+          const { finalUrl: finUrl } = await sessionFetch(returnUrlMatch[0], {
+            headers: session.headers,
+          }, session.cookies);
           if (finUrl.includes("#")) {
             const hash = new URL(finUrl).hash.substring(1);
             const params = new URLSearchParams(hash);
@@ -516,7 +559,7 @@ async function fetchFromAccount(email, password) {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     },
-    cookieJar: "",
+    cookies: [], // Array-based cookie jar for proper tracking
   };
 
   try {
