@@ -263,36 +263,21 @@ async function handlePull(respond, userId, accountsRaw, accountsFile) {
       }
     });
 
-    // Build result files
+    // Build result files — checker returns lowercase statuses: valid, used, expired, invalid, error
     const files = [];
-    const valid = validateResults.filter((r) => r.status === "VALID");
-    const validCard = validateResults.filter((r) => r.status === "VALID_REQUIRES_CARD");
-    const balance = validateResults.filter((r) => r.status === "BALANCE_CODE");
-    const redeemed = validateResults.filter((r) => r.status === "REDEEMED");
-    const expired = validateResults.filter((r) => r.status === "EXPIRED");
-    const deactivated = validateResults.filter((r) => r.status === "DEACTIVATED");
-    const regionLocked = validateResults.filter((r) => r.status === "REGION_LOCKED");
-    const invalid = validateResults.filter((r) => r.status === "INVALID");
-    const unknown = validateResults.filter((r) => r.status === "UNKNOWN");
+    const valid = validateResults.filter((r) => r.status === "valid");
+    const used = validateResults.filter((r) => r.status === "used");
+    const expired = validateResults.filter((r) => r.status === "expired");
+    const invalid = validateResults.filter((r) => r.status === "invalid" || r.status === "error");
 
     if (valid.length > 0)
-      files.push(textAttachment(valid.map((r) => r.message), "valid.txt"));
-    if (validCard.length > 0)
-      files.push(textAttachment(validCard.map((r) => r.message), "valid_card_required.txt"));
-    if (balance.length > 0)
-      files.push(textAttachment(balance.map((r) => r.message), "balance_codes.txt"));
-    if (redeemed.length > 0)
-      files.push(textAttachment(redeemed.map((r) => r.message), "redeemed.txt"));
+      files.push(textAttachment(valid.map((r) => (r.title ? `${r.code} | ${r.title}` : r.code)), "valid.txt"));
+    if (used.length > 0)
+      files.push(textAttachment(used.map((r) => r.code), "used.txt"));
     if (expired.length > 0)
-      files.push(textAttachment(expired.map((r) => r.message), "expired.txt"));
-    if (deactivated.length > 0)
-      files.push(textAttachment(deactivated.map((r) => r.message), "deactivated.txt"));
-    if (regionLocked.length > 0)
-      files.push(textAttachment(regionLocked.map((r) => r.message), "region_locked.txt"));
+      files.push(textAttachment(expired.map((r) => (r.title ? `${r.code} | ${r.title}` : r.code)), "expired.txt"));
     if (invalid.length > 0)
-      files.push(textAttachment(invalid.map((r) => r.message), "invalid.txt"));
-    if (unknown.length > 0)
-      files.push(textAttachment(unknown.map((r) => r.message), "unknown.txt"));
+      files.push(textAttachment(invalid.map((r) => r.code), "invalid.txt"));
 
     await msg.edit({ embeds: [pullResultsEmbed(fetchResults, validateResults)], files });
   } catch (err) {

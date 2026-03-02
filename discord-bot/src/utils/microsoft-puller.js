@@ -4,6 +4,8 @@
 // ============================================================
 
 const crypto = require("crypto");
+const { checkCodes } = require("./microsoft-checker");
+const { getWlids } = require("./wlid-store");
 
 // ── Code Format Validation (exact match to Python) ───────────
 
@@ -605,25 +607,18 @@ async function pullCodes(accounts, onProgress) {
     return { fetchResults, validateResults: [] };
   }
 
-  // Phase 2: Validate using first working account
+  // Phase 2: Validate using WLID checker (same as .check / website)
+  const wlids = getWlids();
+  if (wlids.length === 0) {
+    const validateResults = allCodes.map((c) => ({ code: c, status: "error", message: `${c} | No WLIDs stored — use .wlidset first` }));
+    return { fetchResults, validateResults };
+  }
+
   if (onProgress) onProgress("validate_start", { total: allCodes.length });
 
-  let validateResults = null;
-  for (const { email, password } of parsed) {
-    const results = await validateCodesWithStore(email, password, allCodes, (done, total) => {
-      if (onProgress) onProgress("validate", { done, total });
-    });
-
-    const allError = results.every((r) => r.status === "ERROR");
-    if (!allError) {
-      validateResults = results;
-      break;
-    }
-  }
-
-  if (!validateResults) {
-    validateResults = allCodes.map((c) => ({ code: c, status: "ERROR", message: `${c} | All accounts failed` }));
-  }
+  const validateResults = await checkCodes(wlids, allCodes, 10, (done, total) => {
+    if (onProgress) onProgress("validate", { done, total });
+  });
 
   return { fetchResults, validateResults };
 }

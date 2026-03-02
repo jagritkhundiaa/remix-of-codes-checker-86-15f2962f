@@ -85,16 +85,12 @@ function pullResultsEmbed(fetchResults, validateResults) {
   const accountsSuccess = fetchResults.filter((r) => r.codes.length > 0).length;
   const accountsFailed = fetchResults.filter((r) => r.error).length;
 
-  const valid = validateResults.filter((r) => r.status === "VALID");
-  const validCard = validateResults.filter((r) => r.status === "VALID_REQUIRES_CARD");
-  const balance = validateResults.filter((r) => r.status === "BALANCE_CODE");
-  const redeemed = validateResults.filter((r) => r.status === "REDEEMED");
-  const expired = validateResults.filter((r) => r.status === "EXPIRED");
-  const deactivated = validateResults.filter((r) => r.status === "DEACTIVATED");
-  const regionLocked = validateResults.filter((r) => r.status === "REGION_LOCKED");
-  const invalid = validateResults.filter((r) => r.status === "INVALID");
-  const unknown = validateResults.filter((r) => r.status === "UNKNOWN");
-  const errors = validateResults.filter((r) => ["ERROR", "RATE_LIMITED", "SKIPPED"].includes(r.status));
+  // Checker returns lowercase statuses: valid, used, expired, invalid, error
+  const valid = validateResults.filter((r) => r.status === "valid");
+  const used = validateResults.filter((r) => r.status === "used");
+  const expired = validateResults.filter((r) => r.status === "expired");
+  const invalid = validateResults.filter((r) => r.status === "invalid");
+  const errors = validateResults.filter((r) => r.status === "error");
 
   const embed = header()
     .setColor(COLORS.PRIMARY)
@@ -103,15 +99,12 @@ function pullResultsEmbed(fetchResults, validateResults) {
       { name: "Accounts", value: `\`${accountsSuccess} ok / ${accountsFailed} failed\``, inline: true },
       { name: "Codes Fetched", value: `\`${totalFetched}\``, inline: true },
       { name: "\u200b", value: "\u200b", inline: true },
-      { name: "Valid", value: `\`${valid.length}\``, inline: true },
-      { name: "Valid (Card)", value: `\`${validCard.length}\``, inline: true },
-      { name: "Balance", value: `\`${balance.length}\``, inline: true },
-      { name: "Redeemed", value: `\`${redeemed.length}\``, inline: true },
-      { name: "Expired", value: `\`${expired.length}\``, inline: true },
-      { name: "Deactivated", value: `\`${deactivated.length}\``, inline: true },
-      { name: "Region Locked", value: `\`${regionLocked.length}\``, inline: true },
-      { name: "Invalid", value: `\`${invalid.length}\``, inline: true },
-      { name: "Unknown/Error", value: `\`${unknown.length + errors.length}\``, inline: true }
+      { name: "✅ Valid", value: `\`${valid.length}\``, inline: true },
+      { name: "🔄 Used", value: `\`${used.length}\``, inline: true },
+      { name: "⏰ Expired", value: `\`${expired.length}\``, inline: true },
+      { name: "❌ Invalid", value: `\`${invalid.length}\``, inline: true },
+      { name: "⚠️ Errors", value: `\`${errors.length}\``, inline: true },
+      { name: "\u200b", value: "\u200b", inline: true }
     );
 
   return embed;
