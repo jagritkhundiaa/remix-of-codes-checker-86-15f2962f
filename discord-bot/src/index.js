@@ -1,5 +1,5 @@
 // ============================================================
-//  MS Code Checker & WLID Claimer — Discord Bot
+//  MS Code Checker & WLID Claimer & Puller — Discord Bot
 //  Supports both slash commands and dot-prefix commands
 // ============================================================
 
@@ -9,10 +9,13 @@ const { AuthManager, parseDuration, formatDuration, formatExpiry } = require("./
 const { ConcurrencyLimiter } = require("./utils/concurrency");
 const { checkCodes } = require("./utils/microsoft-checker");
 const { claimWlids } = require("./utils/microsoft-claimer");
+const { pullCodes } = require("./utils/microsoft-puller");
 const {
   progressEmbed,
   checkResultsEmbed,
   claimResultsEmbed,
+  pullFetchProgressEmbed,
+  pullResultsEmbed,
   errorEmbed,
   successEmbed,
   infoEmbed,
@@ -57,9 +60,9 @@ async function fetchAttachmentLines(attachment) {
   return text.split("\n").map((l) => l.trim()).filter(Boolean);
 }
 
-async function updateProgress(msg, completed, total, label) {
+async function updateProgress(msg, embed) {
   try {
-    await msg.edit({ embeds: [progressEmbed(completed, total, label)] });
+    await msg.edit({ embeds: [embed] });
   } catch { /* ignore rate limits */ }
 }
 
@@ -94,11 +97,10 @@ async function handleCheck(respond, userId, wlidsRaw, codesRaw, codesFile, threa
       const now = Date.now();
       if (now - lastUpdate > 2000) {
         lastUpdate = now;
-        updateProgress(msg, done, total, "Checking codes");
+        updateProgress(msg, progressEmbed(done, total, "Checking codes"));
       }
     });
 
-    // Build result files
     const files = [];
     const valid = results.filter((r) => r.status === "valid");
     const used = results.filter((r) => r.status === "used");
@@ -154,7 +156,7 @@ async function handleClaim(respond, userId, accountsRaw, accountsFile, threads =
       const now = Date.now();
       if (now - lastUpdate > 2000) {
         lastUpdate = now;
-        updateProgress(msg, done, total, "Claiming WLIDs");
+        updateProgress(msg, progressEmbed(done, total, "Claiming WLIDs"));
       }
     });
 
@@ -168,6 +170,108 @@ async function handleClaim(respond, userId, accountsRaw, accountsFile, threads =
       files.push(textAttachment(failed.map((r) => `${r.email}: ${r.error || "Unknown error"}`), "failed.txt"));
 
     await msg.edit({ embeds: [claimResultsEmbed(results)], files });
+  } catch (err) {
+    await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
+  } finally {
+    limiter.release(userId);
+  }
+}
+
+// ── Pull handler ─────────────────────────────────────────────
+
+async function handlePull(respond, userId, accountsRaw, accountsFile) {
+  if (!canUse(userId)) return respond({ embeds: [errorEmbed("You are not authorized to use this bot.")] });
+
+  const acquire = limiter.acquire(userId, "pull");
+  if (!acquire.ok) {
+    const reason = acquire.reason === "busy"
+      ? "You already have a command running. Wait for it to finish."
+      : `Max concurrent users (${config.MAX_CONCURRENT_USERS}) reached. Try again later.`;
+    return respond({ embeds: [errorEmbed(reason)] });
+  }
+
+  try {
+    let accounts = splitInput(accountsRaw).filter((a) => a.includes(":"));
+    if (accountsFile) {
+      const lines = await fetchAttachmentLines(accountsFile);
+      accounts = accounts.concat(lines.filter((l) => l.includes(":")));
+    }
+
+    if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided (email:password format).")] });
+
+    const msg = await respond({
+      embeds: [pullFetchProgressEmbed({ done: 0, total: accounts.length, totalCodes: 0 })],
+      fetchReply: true,
+    });
+
+    let lastUpdate = Date.now();
+    let totalCodesSoFar = 0;
+    let lastAccount = "";
+    let lastCodes = 0;
+    let lastError = null;
+
+    const { fetchResults, validateResults } = await pullCodes(accounts, (phase, detail) => {
+      const now = Date.now();
+
+      if (phase === "fetch") {
+        totalCodesSoFar += detail.codes;
+        lastAccount = detail.email;
+        lastCodes = detail.codes;
+        lastError = detail.error;
+
+        if (now - lastUpdate > 2000) {
+          lastUpdate = now;
+          updateProgress(msg, pullFetchProgressEmbed({
+            done: detail.done,
+            total: detail.total,
+            totalCodes: totalCodesSoFar,
+            lastAccount,
+            lastCodes,
+            lastError,
+          }));
+        }
+      } else if (phase === "validate_start") {
+        updateProgress(msg, progressEmbed(0, detail.total, "Validating codes"));
+      } else if (phase === "validate") {
+        if (now - lastUpdate > 2000) {
+          lastUpdate = now;
+          updateProgress(msg, progressEmbed(detail.done, detail.total, "Validating codes"));
+        }
+      }
+    });
+
+    // Build result files
+    const files = [];
+    const valid = validateResults.filter((r) => r.status === "VALID");
+    const validCard = validateResults.filter((r) => r.status === "VALID_REQUIRES_CARD");
+    const balance = validateResults.filter((r) => r.status === "BALANCE_CODE");
+    const redeemed = validateResults.filter((r) => r.status === "REDEEMED");
+    const expired = validateResults.filter((r) => r.status === "EXPIRED");
+    const deactivated = validateResults.filter((r) => r.status === "DEACTIVATED");
+    const regionLocked = validateResults.filter((r) => r.status === "REGION_LOCKED");
+    const invalid = validateResults.filter((r) => r.status === "INVALID");
+    const unknown = validateResults.filter((r) => r.status === "UNKNOWN");
+
+    if (valid.length > 0)
+      files.push(textAttachment(valid.map((r) => r.message), "valid.txt"));
+    if (validCard.length > 0)
+      files.push(textAttachment(validCard.map((r) => r.message), "valid_card_required.txt"));
+    if (balance.length > 0)
+      files.push(textAttachment(balance.map((r) => r.message), "balance_codes.txt"));
+    if (redeemed.length > 0)
+      files.push(textAttachment(redeemed.map((r) => r.message), "redeemed.txt"));
+    if (expired.length > 0)
+      files.push(textAttachment(expired.map((r) => r.message), "expired.txt"));
+    if (deactivated.length > 0)
+      files.push(textAttachment(deactivated.map((r) => r.message), "deactivated.txt"));
+    if (regionLocked.length > 0)
+      files.push(textAttachment(regionLocked.map((r) => r.message), "region_locked.txt"));
+    if (invalid.length > 0)
+      files.push(textAttachment(invalid.map((r) => r.message), "invalid.txt"));
+    if (unknown.length > 0)
+      files.push(textAttachment(unknown.map((r) => r.message), "unknown.txt"));
+
+    await msg.edit({ embeds: [pullResultsEmbed(fetchResults, validateResults)], files });
   } catch (err) {
     await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
   } finally {
@@ -255,6 +359,13 @@ client.on("interactionCreate", async (interaction) => {
       await handleClaim(respond, user.id, accounts, accountsFile, threads);
     }
 
+    else if (commandName === "pull") {
+      await interaction.deferReply();
+      const accounts = interaction.options.getString("accounts");
+      const accountsFile = interaction.options.getAttachment("accounts_file");
+      await handlePull(respond, user.id, accounts, accountsFile);
+    }
+
     else if (commandName === "auth") {
       const target = interaction.options.getUser("user");
       const duration = interaction.options.getString("duration");
@@ -293,8 +404,6 @@ client.on("messageCreate", async (message) => {
 
   try {
     if (cmd === "check") {
-      // .check <wlids>
-      // Attach a .txt file for codes, or provide codes after a newline
       const wlidsRaw = args.join(" ");
       const attachment = message.attachments.first();
       if (!wlidsRaw && !attachment) {
@@ -304,7 +413,6 @@ client.on("messageCreate", async (message) => {
     }
 
     else if (cmd === "claim") {
-      // .claim  (attach accounts.txt)
       const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) {
@@ -313,12 +421,19 @@ client.on("messageCreate", async (message) => {
       await handleClaim(respond, message.author.id, accountsRaw, attachment, 5);
     }
 
+    else if (cmd === "pull") {
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) {
+        return respond({ embeds: [infoEmbed("Usage", "`.pull <accounts>`\nProvide email:password comma-separated or attach a `.txt` file.\n\nFetches codes from Game Pass accounts and validates them.\n\nExample:\n`.pull email@test.com:pass123`")] });
+      }
+      await handlePull(respond, message.author.id, accountsRaw, attachment);
+    }
+
     else if (cmd === "auth") {
-      // .auth @user <duration>  OR  .auth <user_id> <duration>
       if (args.length < 2) {
         return respond({ embeds: [infoEmbed("Usage", "`.auth <@user or user_id> <duration>`\n\nDuration examples: `1h`, `7d`, `30d`, `1mo`, `forever`")] });
       }
-
       let targetId = args[0].replace(/[<@!>]/g, "");
       const duration = args.slice(1).join(" ");
       await handleAuth(respond, message.author.id, targetId, duration);
@@ -351,6 +466,10 @@ client.on("messageCreate", async (message) => {
               "",
               "**Claimer**",
               "`/claim` or `.claim <accounts>` + attach accounts.txt",
+              "",
+              "**Puller**",
+              "`/pull` or `.pull <accounts>` + attach accounts.txt",
+              "Fetches codes from Game Pass + validates them",
               "",
               "**Authorization (Owner only)**",
               "`.auth <@user> <duration>` — Authorize a user",

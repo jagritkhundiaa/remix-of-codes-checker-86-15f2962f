@@ -37,6 +37,16 @@ const commands = [
     ),
 
   new SlashCommandBuilder()
+    .setName("pull")
+    .setDescription("Fetch codes from Xbox Game Pass accounts and validate them")
+    .addAttachmentOption((o) =>
+      o.setName("accounts_file").setDescription("Text file with email:password per line").setRequired(false)
+    )
+    .addStringOption((o) =>
+      o.setName("accounts").setDescription("Accounts as email:password (comma-separated)").setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
     .setName("auth")
     .setDescription("Authorize a user to use the bot (owner only)")
     .addUserOption((o) => o.setName("user").setDescription("User to authorize").setRequired(true))
