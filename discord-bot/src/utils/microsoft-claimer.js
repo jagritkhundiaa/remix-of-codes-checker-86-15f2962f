@@ -2,6 +2,8 @@
 //  Microsoft WLID Claimer — exact same logic as the edge function
 // ============================================================
 
+const { proxiedFetch } = require("./proxy-manager");
+
 const DEFAULT_HEADERS = {
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -81,7 +83,7 @@ async function fetchWithCookies(url, options, cookies) {
 
   while (maxRedirects > 0) {
     const headers = { ...(options.headers || {}), Cookie: cookies.toString() };
-    const response = await fetch(currentUrl, { ...options, headers, redirect: "manual" });
+    const response = await proxiedFetch(currentUrl, { ...options, headers, redirect: "manual" });
     cookies.extractFromHeaders(response.headers);
 
     const location = response.headers.get("location");
@@ -233,7 +235,7 @@ async function authenticateAccount(email, password) {
     }
 
     // Step 10
-    const tokenResponse = await fetch("https://account.microsoft.com/auth/acquire-onbehalf-of-token?scopes=MSComServiceMBISSL", {
+    const tokenResponse = await proxiedFetch("https://account.microsoft.com/auth/acquire-onbehalf-of-token?scopes=MSComServiceMBISSL", {
       method: "GET",
       headers: { ...TOKEN_HEADERS, "User-Agent": DEFAULT_HEADERS["User-Agent"], Referer: "https://account.microsoft.com/billing/redeem", Cookie: cookies.toString() },
     });

@@ -6,6 +6,7 @@
 const crypto = require("crypto");
 const { checkCodes } = require("./microsoft-checker");
 const { getWlids } = require("./wlid-store");
+const { proxiedFetch } = require("./proxy-manager");
 
 // ── Code Format Validation (exact match to Python) ───────────
 
@@ -26,7 +27,7 @@ const MICROSOFT_OAUTH_URL =
 
 async function fetchOAuthTokens(session) {
   try {
-    const res = await fetch(MICROSOFT_OAUTH_URL, {
+    const res = await proxiedFetch(MICROSOFT_OAUTH_URL, {
       headers: session.headers,
       redirect: "follow",
     });
@@ -54,7 +55,7 @@ async function fetchLogin(session, email, password, urlPost, ppft) {
       PPFT: ppft,
     });
 
-    const res = await fetch(urlPost, {
+    const res = await proxiedFetch(urlPost, {
       method: "POST",
       headers: {
         ...session.headers,
@@ -94,7 +95,7 @@ async function fetchLogin(session, email, password, urlPost, ppft) {
           uaid: uaidMatch[0],
         });
 
-        const ret = await fetch(actionMatch[0], {
+        const ret = await proxiedFetch(actionMatch[0], {
           method: "POST",
           headers: {
             ...session.headers,
@@ -110,7 +111,7 @@ async function fetchLogin(session, email, password, urlPost, ppft) {
           /(?<="recoveryCancel":{"returnUrl":")+.+?(?=",)/
         );
         if (returnUrlMatch) {
-          const fin = await fetch(returnUrlMatch[0], {
+          const fin = await proxiedFetch(returnUrlMatch[0], {
             headers: { ...session.headers, Cookie: session.cookieJar || "" },
             redirect: "follow",
           });
@@ -132,7 +133,7 @@ async function fetchLogin(session, email, password, urlPost, ppft) {
 
 async function getXboxTokens(rpsToken) {
   try {
-    const userRes = await fetch(
+    const userRes = await proxiedFetch(
       "https://user.auth.xboxlive.com/user/authenticate",
       {
         method: "POST",
@@ -152,7 +153,7 @@ async function getXboxTokens(rpsToken) {
     const userData = await userRes.json();
     const userToken = userData.Token;
 
-    const xstsRes = await fetch(
+    const xstsRes = await proxiedFetch(
       "https://xsts.auth.xboxlive.com/xsts/authorize",
       {
         method: "POST",
@@ -179,7 +180,7 @@ async function getXboxTokens(rpsToken) {
 async function fetchCodesFromXbox(uhs, xstsToken) {
   try {
     const auth = `XBL3.0 x=${uhs};${xstsToken}`;
-    const res = await fetch("https://profile.gamepass.com/v2/offers", {
+    const res = await proxiedFetch("https://profile.gamepass.com/v2/offers", {
       headers: {
         Authorization: auth,
         "Content-Type": "application/json",
@@ -200,7 +201,7 @@ async function fetchCodesFromXbox(uhs, xstsToken) {
         cv += ".0";
 
         try {
-          const claimRes = await fetch(
+          const claimRes = await proxiedFetch(
             `https://profile.gamepass.com/v2/offers/${offer.offerId}`,
             {
               method: "POST",
@@ -257,7 +258,7 @@ async function loginMicrosoftStore(email, password) {
   }
 
   async function storeGet(url) {
-    const res = await fetch(url, {
+    const res = await proxiedFetch(url, {
       headers: { ...headers, Cookie: cookieJar },
       redirect: "follow",
     });
@@ -266,7 +267,7 @@ async function loginMicrosoftStore(email, password) {
   }
 
   async function storePost(url, body, extraHeaders = {}) {
-    const res = await fetch(url, {
+    const res = await proxiedFetch(url, {
       method: "POST",
       headers: { ...headers, Cookie: cookieJar, ...extraHeaders },
       body,
@@ -334,11 +335,11 @@ function generateReferenceId() {
 async function getStoreAuthToken(cookieJar, headers) {
   try {
     // Touch buynow endpoint first — exact same as Python
-    await fetch("https://buynowui.production.store-web.dynamics.com/akam/13/79883e11", {
+    await proxiedFetch("https://buynowui.production.store-web.dynamics.com/akam/13/79883e11", {
       headers: { ...headers, Cookie: cookieJar },
     }).catch(() => {});
 
-    const tokenRes = await fetch(
+    const tokenRes = await proxiedFetch(
       "https://account.microsoft.com/auth/acquire-onbehalf-of-token?scopes=MSComServiceMBISSL",
       {
         headers: {
@@ -383,7 +384,7 @@ async function getStoreCartState(token, cookieJar, headers) {
       sdkVersion: "VERSION_PLACEHOLDER",
     });
 
-    const res = await fetch(
+    const res = await proxiedFetch(
       `https://www.microsoft.com/store/purchase/buynowui/redeemnow?ms-cv=${msCv}&market=US&locale=en-GB&clientName=AccountMicrosoftCom`,
       {
         method: "POST",
@@ -443,7 +444,7 @@ async function validateCodePrepareRedeem(code, token, storeState, cookieJar, use
   };
 
   try {
-    const res = await fetch(
+    const res = await proxiedFetch(
       "https://buynow.production.store-web.dynamics.com/v1.0/Redeem/PrepareRedeem/?appId=RedeemNow&context=LookupToken",
       { method: "POST", headers: hdrs, body: JSON.stringify({}) }
     );

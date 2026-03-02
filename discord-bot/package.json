@@ -8,6 +8,9 @@
     "deploy": "node src/deploy-commands.js"
   },
   "dependencies": {
-    "discord.js": "^14.16.3"
+    "discord.js": "^14.16.3",
+    "socks-proxy-agent": "^8.0.2",
+    "https-proxy-agent": "^7.0.4",
+    "http-proxy-agent": "^7.0.2"
   }
 }

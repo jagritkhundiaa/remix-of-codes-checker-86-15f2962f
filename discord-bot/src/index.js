@@ -10,6 +10,7 @@ const { ConcurrencyLimiter } = require("./utils/concurrency");
 const { checkCodes } = require("./utils/microsoft-checker");
 const { claimWlids } = require("./utils/microsoft-claimer");
 const { pullCodes } = require("./utils/microsoft-puller");
+const { loadProxies, isProxyEnabled, getProxyCount, reloadProxies } = require("./utils/proxy-manager");
 const { setWlids, getWlids, getWlidCount } = require("./utils/wlid-store");
 const {
   progressEmbed,
@@ -315,6 +316,7 @@ async function handleStats(respond) {
   const activeCount = limiter.getActiveCount();
   const authCount = auth.getAllAuthorized().length;
   const wlidCount = getWlidCount();
+  const proxyStatus = isProxyEnabled() ? `Enabled (${getProxyCount()} loaded)` : "Disabled";
   return respond({
     embeds: [
       infoEmbed(
@@ -323,6 +325,7 @@ async function handleStats(respond) {
           `Active sessions: \`${activeCount}/${config.MAX_CONCURRENT_USERS}\``,
           `Authorized users: \`${authCount}\``,
           `Stored WLIDs: \`${wlidCount}\``,
+          `Proxies: \`${proxyStatus}\``,
           `Uptime: \`${formatUptime(process.uptime())}\``,
           `Ping: \`${client.ws.ping}ms\``,
         ].join("\n")
@@ -532,6 +535,11 @@ client.once("ready", () => {
   console.log(`Owner: ${config.OWNER_ID}`);
   console.log(`Max concurrent users: ${config.MAX_CONCURRENT_USERS}`);
   console.log(`Stored WLIDs: ${getWlidCount()}`);
+  
+  // Load proxies on startup
+  const proxyCount = loadProxies();
+  console.log(`Proxies: ${config.USE_PROXIES ? `Enabled (${proxyCount} loaded)` : "Disabled"}`);
+  
   client.user.setPresence({
     status: "online",
     activities: [{ name: "Code Checker", type: 3 }],

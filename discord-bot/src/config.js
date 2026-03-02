@@ -21,6 +21,11 @@ module.exports = {
   // Discord webhook for logging valid codes / tokens (optional, leave "" to disable)
   DISCORD_WEBHOOK: "",
 
+  // ── Proxy Settings ──────────────────────────────────────────
+  // Set to true to route requests through proxies loaded from proxies.txt
+  // Set to false for direct connections
+  USE_PROXIES: false,
+
   // Embed color palette  (hex → decimal)
   COLORS: {
     PRIMARY:  0x2563eb,   // blue-600

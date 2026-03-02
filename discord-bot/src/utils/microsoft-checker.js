@@ -2,6 +2,8 @@
 //  Microsoft Code Checker — exact same logic as the edge function
 // ============================================================
 
+const { proxiedFetch } = require("./proxy-manager");
+
 const titleCache = new Map();
 
 async function checkSingleCode(code, wlid) {
@@ -16,7 +18,7 @@ async function checkSingleCode(code, wlid) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-      const response = await fetch(
+      const response = await proxiedFetch(
         `https://purchase.mp.microsoft.com/v7.0/tokenDescriptions/${trimmedCode}?market=US&language=en-US&supportMultiAvailabilities=true`,
         {
           method: "GET",
@@ -57,7 +59,7 @@ async function checkSingleCode(code, wlid) {
           title = titleCache.get(productId);
         } else {
           try {
-            const catalogRes = await fetch(
+            const catalogRes = await proxiedFetch(
               `https://displaycatalog.mp.microsoft.com/v7.0/products?bigIds=${productId}&market=US&languages=en-US`
             );
             if (catalogRes.status === 200) {
@@ -142,14 +144,6 @@ function delay(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/**
- * Check codes against WLIDs.
- * @param {string[]} wlids
- * @param {string[]} codes
- * @param {number} threads
- * @param {(completed, total) => void} onProgress
- * @returns {Promise<Array>}
- */
 async function checkCodes(wlids, codes, threads = 10, onProgress) {
   const formattedWlids = wlids.map((w) =>
     w.includes("WLID1.0=") ? w.trim() : `WLID1.0="${w.trim()}"`
