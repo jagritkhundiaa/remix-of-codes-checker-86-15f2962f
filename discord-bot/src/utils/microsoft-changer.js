@@ -1,6 +1,6 @@
 // ============================================================
 //  Microsoft Account Password Changer
-//  Logs in and changes password with retry + throttling
+//  Uses the same OAuth login flow as the puller, then changes password
 // ============================================================
 
 const { proxiedFetch } = require("./proxy-manager");
@@ -55,34 +55,7 @@ async function sessionFetch(url, options, cookieJar) {
   throw new Error("Too many redirects");
 }
 
-// ── Regex patterns ───────────────────────────────────────────
-
-const PPFT_PATTERNS = [
-  /sFT:'([^']+)'/s,
-  /sFT\s*:\s*'([^']+)'/s,
-  /"sFT"\s*:\s*"([^"]+)"/s,
-  /name="PPFT"[^>]*value="([^"]+)"/s,
-  /value="([^"]+)"[^>]*name="PPFT"/s,
-  /name=\\?"PPFT\\?"[^>]*value=\\?"([^"\\]+)\\?"/s,
-  /PPFT[^>]*value="([^"]+)"/s,
-  /sFTTag:\s*'[^']*value="([^"]+)'/s,
-];
-const URL_POST_PATTERNS = [
-  /"urlPost"\s*:\s*"([^"]+)"/s,
-  /urlPost\s*:\s*'([^']+)'/s,
-  /urlPost:'([^']+)'/s,
-  /"urlPost":"([^"]+)"/s,
-  /action="(https:\/\/login\.live\.com\/ppsecure\/post\.srf[^"]*)"/s,
-  /action="(https:\/\/login\.live\.com[^"]*post[^"]*)"/i,
-];
-
-function extractField(page, patterns) {
-  for (const p of patterns) {
-    const m = page.match(p);
-    if (m) return m[1];
-  }
-  return null;
-}
+// ── Login (same as puller) ───────────────────────────────────
 
 const DEFAULT_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -90,62 +63,36 @@ const DEFAULT_HEADERS = {
   "Accept-Language": "en-US,en;q=0.9",
 };
 
-// ── Single attempt ───────────────────────────────────────────
+const OAUTH_URL =
+  "https://login.live.com/oauth20_authorize.srf?client_id=00000000402B5328&redirect_uri=https://login.live.com/oauth20_desktop.srf&scope=service::user.auth.xboxlive.com::MBI_SSL&display=touch&response_type=token&locale=en";
 
-async function attemptChangePassword(email, oldPassword, newPassword, attempt) {
-  const cookieJar = [];
-  const headers = { ...DEFAULT_HEADERS };
-  const tag = `[CHANGER][${email}][attempt ${attempt}]`;
-  const debug = (step, msg) => console.log(`${tag} ${step}: ${msg}`);
+async function loginToMicrosoft(email, password, cookieJar, headers, debug) {
+  // Step 1: Load OAuth page (same as puller - this always works)
+  debug("S1", "Loading OAuth login page");
+  const { text: oauthPage } = await sessionFetch(OAUTH_URL, { headers }, cookieJar);
 
-  // Step 1: Go straight to login.live.com (avoids account.live.com rate limit on initial page)
-  debug("S1", "Loading login page");
-  const { text: loginPage, finalUrl: loginUrl } = await sessionFetch(
-    "https://login.live.com/login.srf?wa=wsignin1.0&rpsnv=180&wreply=https%3A%2F%2Faccount.live.com%2Fpassword%2FChange",
-    { headers },
-    cookieJar
-  );
-
-  // Check for rate limit on login page itself
-  if (loginPage.length < 100 && loginPage.includes("Too Many")) {
-    return { email, success: false, error: "Rate limited", retryable: true };
+  // Extract PPFT - same regex as puller
+  let match = oauthPage.match(/value=\\?"(.+?)\\?"/s) || oauthPage.match(/value="(.+?)"/s);
+  if (!match) {
+    debug("S1", `No PPFT value found (page len: ${oauthPage.length})`);
+    return { success: false, error: "Could not extract login form", retryable: false };
   }
+  const ppft = match[1];
 
-  const ppft = extractField(loginPage, PPFT_PATTERNS);
-  const urlPost = extractField(loginPage, URL_POST_PATTERNS);
-
-  if (!ppft || !urlPost) {
-    debug("S1", `Failed to extract login fields (page len: ${loginPage.length})`);
-    // Debug: show snippets to understand the page structure
-    const hasPPFT = loginPage.includes("PPFT");
-    const hasSFT = loginPage.includes("sFT");
-    const hasUrlPost = loginPage.includes("urlPost");
-    const hasPostSrf = loginPage.includes("post.srf");
-    debug("S1", `Contains: PPFT=${hasPPFT}, sFT=${hasSFT}, urlPost=${hasUrlPost}, post.srf=${hasPostSrf}`);
-    // Show a snippet around sFT or urlPost if present
-    const sftIdx = loginPage.indexOf("sFT");
-    if (sftIdx !== -1) debug("S1", `sFT context: ...${loginPage.substring(sftIdx - 10, sftIdx + 80)}...`);
-    const upIdx = loginPage.indexOf("urlPost");
-    if (upIdx !== -1) debug("S1", `urlPost context: ...${loginPage.substring(upIdx - 10, upIdx + 120)}...`);
-    // Check if it's a JavaScript-rendered page
-    if (loginPage.includes("$Config") || loginPage.includes("ServerData")) {
-      debug("S1", "Page uses $Config/ServerData - trying JSON extraction");
-      const configMatch = loginPage.match(/\$Config=(\{[\s\S]*?\});/);
-      if (configMatch) {
-        try {
-          const config = JSON.parse(configMatch[1]);
-          if (config.sFT) debug("S1", `Found sFT in $Config: ${config.sFT.substring(0, 30)}...`);
-          if (config.urlPost) debug("S1", `Found urlPost in $Config: ${config.urlPost}`);
-        } catch {}
-      }
-    }
-    return { email, success: false, error: "Could not extract login form", retryable: false };
+  // Extract urlPost - same regex as puller
+  match = oauthPage.match(/"urlPost":"(.+?)"/s) || oauthPage.match(/urlPost:'(.+?)'/s);
+  if (!match) {
+    debug("S1", `No urlPost found (page len: ${oauthPage.length})`);
+    return { success: false, error: "Could not extract urlPost", retryable: false };
   }
+  const urlPost = match[1];
 
-  // Step 2: Submit credentials
+  debug("S1", "Extracted login fields OK");
+
+  // Step 2: Submit credentials (same as puller)
   debug("S2", "Submitting credentials");
   const loginBody = new URLSearchParams({
-    login: email, loginfmt: email, passwd: oldPassword, PPFT: ppft,
+    login: email, loginfmt: email, passwd: password, PPFT: ppft,
   });
 
   const { text: afterLogin, finalUrl: afterLoginUrl } = await sessionFetch(urlPost, {
@@ -154,114 +101,106 @@ async function attemptChangePassword(email, oldPassword, newPassword, attempt) {
     body: loginBody.toString(),
   }, cookieJar);
 
-  debug("S2", `After login: ${afterLoginUrl.substring(0, 80)}, len: ${afterLogin.length}`);
+  debug("S2", `After login URL: ${afterLoginUrl.substring(0, 80)}`);
 
-  // Check login failures (not retryable)
+  // Check login failures
   if (afterLogin.includes("incorrect") || afterLogin.includes("AADSTS50126") ||
       afterLogin.includes("password is incorrect") || afterLogin.includes("Your account or password is incorrect")) {
-    return { email, success: false, error: "Invalid credentials", retryable: false };
+    return { success: false, error: "Invalid credentials", retryable: false };
   }
   if (afterLogin.includes("account has been locked") || afterLogin.includes("locked")) {
-    return { email, success: false, error: "Account locked", retryable: false };
+    return { success: false, error: "Account locked", retryable: false };
   }
   if (afterLogin.includes("doesn't exist") || afterLogin.includes("that Microsoft account doesn")) {
-    return { email, success: false, error: "Account not found", retryable: false };
+    return { success: false, error: "Account not found", retryable: false };
   }
 
-  // Step 3: Handle intermediate forms (consent, abuse, stay signed in)
+  // Handle consent/intermediate forms (same pattern as puller)
   let currentPage = afterLogin;
+  if (currentPage.includes("cancel?mkt=")) {
+    debug("S2", "Handling consent form");
+    const iptMatch = currentPage.match(/(?<="ipt" value=").+?(?=">)/);
+    const ppridMatch = currentPage.match(/(?<="pprid" value=").+?(?=">)/);
+    const uaidMatch = currentPage.match(/(?<="uaid" value=").+?(?=">)/);
+    const actionMatch = currentPage.match(/(?<=id="fmHF" action=").+?(?=" )/);
 
-  // Submit up to 3 intermediate forms
+    if (iptMatch && ppridMatch && uaidMatch && actionMatch) {
+      const formBody = new URLSearchParams({
+        ipt: iptMatch[0], pprid: ppridMatch[0], uaid: uaidMatch[0],
+      });
+      const { text: consentPage } = await sessionFetch(actionMatch[0], {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
+        body: formBody.toString(),
+      }, cookieJar);
+      currentPage = consentPage;
+    }
+  }
+
+  // Submit any remaining intermediate forms (stay signed in, etc.)
   for (let i = 0; i < 3; i++) {
     const formMatch = currentPage.match(/<form[^>]*action="([^"]+)"/);
     if (!formMatch) break;
+    if (currentPage.includes("OldPassword") || currentPage.includes("ChangePassword")) break;
 
     const action = formMatch[1];
-    debug("S3", `Intermediate form ${i + 1}: ${action.substring(0, 60)}`);
+    debug("S2", `Intermediate form ${i + 1}: ${action.substring(0, 60)}`);
 
     const inputMatches = [...currentPage.matchAll(/<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"/g)];
     const formData = new URLSearchParams();
     for (const m of inputMatches) formData.append(m[1], m[2]);
 
-    const { text: nextPage, finalUrl: nextUrl } = await sessionFetch(action, {
+    const { text: nextPage } = await sessionFetch(action, {
       method: "POST",
       headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
       body: formData.toString(),
     }, cookieJar);
 
-    debug("S3", `Form result: ${nextUrl.substring(0, 60)}, len: ${nextPage.length}`);
     currentPage = nextPage;
-
-    // If we hit rate limit after form, retryable
     if (currentPage.length < 100 && currentPage.includes("Too Many")) {
-      return { email, success: false, error: "Rate limited after login", retryable: true };
-    }
-
-    // If we already have the password form, stop
-    if (currentPage.includes("OldPassword") || currentPage.includes("apiCanary")) break;
-  }
-
-  // Step 4: Navigate to password change page if not already there
-  if (!currentPage.includes("OldPassword") && !currentPage.includes("apiCanary") && !currentPage.includes("ChangePassword")) {
-    debug("S4", "Navigating to password change page");
-    
-    // Small delay before hitting account.live.com to reduce rate limit chance
-    await randomDelay(1000, 3000);
-
-    const { text: pwdPage, finalUrl: pwdUrl } = await sessionFetch(
-      "https://account.live.com/password/Change",
-      { headers },
-      cookieJar
-    );
-
-    debug("S4", `Password page: ${pwdUrl.substring(0, 60)}, len: ${pwdPage.length}`);
-
-    if (pwdPage.length < 100 && (pwdPage.includes("Too Many") || pwdPage.includes("429"))) {
-      return { email, success: false, error: "Rate limited on password page", retryable: true };
-    }
-
-    currentPage = pwdPage;
-
-    // Handle re-auth if needed
-    if (currentPage.includes("urlPost") && currentPage.includes("sFT") && !currentPage.includes("OldPassword")) {
-      debug("S4", "Re-authentication required");
-      const ppft2 = extractField(currentPage, PPFT_PATTERNS);
-      const urlPost2 = extractField(currentPage, URL_POST_PATTERNS);
-      if (ppft2 && urlPost2) {
-        const reAuthBody = new URLSearchParams({ login: email, loginfmt: email, passwd: oldPassword, PPFT: ppft2 });
-        const { text: reAuthPage } = await sessionFetch(urlPost2, {
-          method: "POST",
-          headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
-          body: reAuthBody.toString(),
-        }, cookieJar);
-        currentPage = reAuthPage;
-
-        // Handle one more intermediate form after re-auth
-        const fa = currentPage.match(/<form[^>]*action="([^"]+)"/);
-        if (fa) {
-          const im = [...currentPage.matchAll(/<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"/g)];
-          const fd = new URLSearchParams();
-          for (const m of im) fd.append(m[1], m[2]);
-          const { text: np } = await sessionFetch(fa[1], {
-            method: "POST",
-            headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
-            body: fd.toString(),
-          }, cookieJar);
-          currentPage = np;
-        }
-
-        // If still not on password page, try navigating again
-        if (!currentPage.includes("OldPassword") && !currentPage.includes("apiCanary")) {
-          await randomDelay(1000, 2000);
-          const { text: p2 } = await sessionFetch("https://account.live.com/password/Change", { headers }, cookieJar);
-          currentPage = p2;
-        }
-      }
+      return { success: false, error: "Rate limited after login", retryable: true };
     }
   }
 
-  // Step 5: Submit password change
-  return await submitPasswordChange(currentPage, email, oldPassword, newPassword, cookieJar, headers);
+  return { success: true, page: currentPage };
+}
+
+// ── Navigate to password change ──────────────────────────────
+
+async function navigateToPasswordChange(cookieJar, headers, email, debug) {
+  debug("S3", "Navigating to password change page");
+  await randomDelay(1000, 3000);
+
+  const { text: pwdPage, finalUrl: pwdUrl } = await sessionFetch(
+    "https://account.live.com/password/Change",
+    { headers },
+    cookieJar
+  );
+
+  debug("S3", `Password page URL: ${pwdUrl.substring(0, 60)}, len: ${pwdPage.length}`);
+
+  if (pwdPage.length < 100 && (pwdPage.includes("Too Many") || pwdPage.includes("429"))) {
+    return { success: false, error: "Rate limited on password page", retryable: true };
+  }
+
+  let currentPage = pwdPage;
+
+  // Handle re-auth if the password page requires it
+  if (currentPage.includes("urlPost") && currentPage.includes("value=") && !currentPage.includes("OldPassword")) {
+    debug("S3", "Re-authentication required");
+    const ppftMatch = currentPage.match(/value=\\?"(.+?)\\?"/s) || currentPage.match(/value="(.+?)"/s);
+    const urlPostMatch = currentPage.match(/"urlPost":"(.+?)"/s) || currentPage.match(/urlPost:'(.+?)'/s);
+
+    if (ppftMatch && urlPostMatch) {
+      const reAuthBody = new URLSearchParams({
+        login: email, loginfmt: email, passwd: "__OLDPWD__", PPFT: ppftMatch[1],
+      });
+      // Return the page and let caller fill in actual password
+      return { success: true, page: currentPage, needsReAuth: true, urlPost: urlPostMatch[1], ppft: ppftMatch[1] };
+    }
+  }
+
+  return { success: true, page: currentPage };
 }
 
 // ── Submit password change ───────────────────────────────────
@@ -270,8 +209,8 @@ async function submitPasswordChange(pageHtml, email, oldPassword, newPassword, c
   const debug = (msg) => console.log(`[CHANGER][${email}] PWD: ${msg}`);
 
   if (pageHtml.length < 100) {
-    debug(`Page too short (${pageHtml.length}): ${pageHtml}`);
-    return { email, success: false, error: "Password page not loaded (likely rate limited)", retryable: true };
+    debug(`Page too short (${pageHtml.length})`);
+    return { email, success: false, error: "Password page not loaded", retryable: true };
   }
 
   try {
@@ -300,7 +239,6 @@ async function submitPasswordChange(pageHtml, email, oldPassword, newPassword, c
 
       debug(`Result URL: ${changeFinalUrl.substring(0, 60)}, len: ${changeText.length}`);
 
-      // Errors (not retryable)
       if (changeText.includes("TooShort") || changeText.includes("too short"))
         return { email, success: false, error: "New password too short", retryable: false };
       if (changeText.includes("SameAsOld") || changeText.includes("same as your current"))
@@ -309,12 +247,9 @@ async function submitPasswordChange(pageHtml, email, oldPassword, newPassword, c
         return { email, success: false, error: "Current password incorrect", retryable: false };
       if (changeText.includes("OldPassword") && changeText.includes("NewPassword"))
         return { email, success: false, error: "Password change failed (form re-displayed)", retryable: false };
-
-      // Rate limit on change submission
       if (changeText.length < 100 && changeText.includes("Too Many"))
         return { email, success: false, error: "Rate limited on change submit", retryable: true };
 
-      // ONLY explicit success
       if (changeText.includes("PasswordChanged") || changeText.includes("Your password has been changed") ||
           changeText.includes("password has been updated") || changeText.includes("You've successfully")) {
         return { email, success: true, newPassword, retryable: false };
@@ -366,10 +301,73 @@ async function submitPasswordChange(pageHtml, email, oldPassword, newPassword, c
   }
 }
 
+// ── Single attempt ───────────────────────────────────────────
+
+async function attemptChangePassword(email, oldPassword, newPassword, attempt) {
+  const cookieJar = [];
+  const headers = { ...DEFAULT_HEADERS };
+  const tag = `[CHANGER][${email}][attempt ${attempt}]`;
+  const debug = (step, msg) => console.log(`${tag} ${step}: ${msg}`);
+
+  // Phase 1: Login using OAuth flow (same as puller)
+  const loginResult = await loginToMicrosoft(email, oldPassword, cookieJar, headers, debug);
+  if (!loginResult.success) {
+    return { email, ...loginResult };
+  }
+
+  debug("S2", "Login successful");
+
+  // Phase 2: Navigate to password change page
+  const navResult = await navigateToPasswordChange(cookieJar, headers, email, debug);
+  if (!navResult.success) {
+    return { email, ...navResult };
+  }
+
+  let pwdPage = navResult.page;
+
+  // Handle re-auth on password page
+  if (navResult.needsReAuth) {
+    debug("S3", "Re-authenticating for password page");
+    const reAuthBody = new URLSearchParams({
+      login: email, loginfmt: email, passwd: oldPassword, PPFT: navResult.ppft,
+    });
+    const { text: reAuthPage } = await sessionFetch(navResult.urlPost, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
+      body: reAuthBody.toString(),
+    }, cookieJar);
+    pwdPage = reAuthPage;
+
+    // Handle intermediate form after re-auth
+    const fa = pwdPage.match(/<form[^>]*action="([^"]+)"/);
+    if (fa && !pwdPage.includes("OldPassword")) {
+      const im = [...pwdPage.matchAll(/<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"/g)];
+      const fd = new URLSearchParams();
+      for (const m of im) fd.append(m[1], m[2]);
+      const { text: np } = await sessionFetch(fa[1], {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
+        body: fd.toString(),
+      }, cookieJar);
+      pwdPage = np;
+    }
+
+    // If still not on password page, try navigating again
+    if (!pwdPage.includes("OldPassword") && !pwdPage.includes("apiCanary")) {
+      await randomDelay(1000, 2000);
+      const { text: p2 } = await sessionFetch("https://account.live.com/password/Change", { headers }, cookieJar);
+      pwdPage = p2;
+    }
+  }
+
+  // Phase 3: Submit password change
+  return await submitPasswordChange(pwdPage, email, oldPassword, newPassword, cookieJar, headers);
+}
+
 // ── Main entry with retry ────────────────────────────────────
 
 const MAX_RETRIES = 3;
-const RETRY_DELAYS = [5000, 15000, 30000]; // escalating backoff
+const RETRY_DELAYS = [5000, 15000, 30000];
 
 async function changePassword(email, oldPassword, newPassword) {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -402,8 +400,6 @@ async function changePasswords(accounts, newPassword, threads = 3, onProgress, s
       if (signal && signal.aborted) break;
       const idx = currentIndex++;
       if (idx >= parsed.length) break;
-
-      // Stagger workers: random delay before each account
       await randomDelay(2000, 6000);
 
       const { email, password } = parsed[idx];
@@ -414,7 +410,6 @@ async function changePasswords(accounts, newPassword, threads = 3, onProgress, s
     }
   }
 
-  // Cap threads lower to reduce rate limiting
   const workerCount = Math.min(threads, parsed.length, 3);
   const workers = Array(workerCount).fill(null).map(() => worker());
   await Promise.all(workers);
