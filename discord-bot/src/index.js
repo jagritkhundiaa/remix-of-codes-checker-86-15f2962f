@@ -11,7 +11,7 @@ const { checkCodes } = require("./utils/microsoft-checker");
 const { claimWlids } = require("./utils/microsoft-claimer");
 const { pullCodes } = require("./utils/microsoft-puller");
 const { searchProducts, getProductDetails, purchaseItems } = require("./utils/microsoft-purchaser");
-const { changePasswords } = require("./utils/microsoft-changer");
+const { changePasswords, checkAccounts } = require("./utils/microsoft-changer");
 const { loadProxies, isProxyEnabled, getProxyCount, getProxyStats, reloadProxies } = require("./utils/proxy-manager");
 const blacklist = require("./utils/blacklist");
 const { setWlids, getWlids, getWlidCount } = require("./utils/wlid-store");
@@ -25,6 +25,7 @@ const {
   purchaseProgressEmbed,
   productSearchEmbed,
   changerResultsEmbed,
+  accountCheckerResultsEmbed,
   errorEmbed,
   successEmbed,
   infoEmbed,
@@ -651,6 +652,79 @@ async function handleChanger(respond, userId, accountsRaw, accountsFile, newPass
   }
 }
 
+// ── Account checker handler ──────────────────────────────────
+
+async function handleAccountChecker(respond, userId, accountsRaw, accountsFile, threads = 5, dmUser = null) {
+  if (!canUse(userId)) return respond({ embeds: [errorEmbed(blacklist.isBlacklisted(userId) ? "You are blacklisted." : "You are not authorized to use this bot.")] });
+
+  const acquire = limiter.acquire(userId, "checker");
+  if (!acquire.ok) {
+    const reason = acquire.reason === "busy"
+      ? "You already have a command running. Wait for it to finish."
+      : `Max concurrent users (${config.MAX_CONCURRENT_USERS}) reached. Try again later.`;
+    return respond({ embeds: [errorEmbed(reason)] });
+  }
+
+  const ac = new AbortController();
+  activeAborts.set(userId, ac);
+
+  try {
+    let accounts = splitInput(accountsRaw).filter((a) => a.includes(":"));
+    if (accountsFile) {
+      const lines = await fetchAttachmentLines(accountsFile);
+      accounts = accounts.concat(lines.filter((l) => l.includes(":")));
+    }
+
+    if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided (email:password format).") ] });
+
+    const msg = await respond({
+      embeds: [progressEmbed(0, accounts.length, "Checking accounts")],
+      components: [stopButton(userId)],
+      fetchReply: true,
+    });
+
+    let lastUpdate = Date.now();
+    const results = await checkAccounts(accounts, threads, (done, total) => {
+      const now = Date.now();
+      if (now - lastUpdate > 2000) {
+        lastUpdate = now;
+        updateProgress(msg, progressEmbed(done, total, "Checking accounts"), userId);
+      }
+    }, ac.signal);
+
+    const stopped = ac.signal.aborted;
+    const files = [];
+    const valid = results.filter((r) => r.status === "valid");
+    const locked = results.filter((r) => r.status === "locked");
+    const invalid = results.filter((r) => r.status === "invalid");
+    const failed = results.filter((r) => r.status !== "valid");
+
+    if (valid.length > 0) files.push(textAttachment(valid.map((r) => `${r.email}`), "valid.txt"));
+    if (locked.length > 0) files.push(textAttachment(locked.map((r) => `${r.email}: Account locked`), "locked.txt"));
+    if (invalid.length > 0) files.push(textAttachment(invalid.map((r) => `${r.email}: Invalid credentials`), "invalid.txt"));
+    if (failed.length > 0) files.push(textAttachment(failed.map((r) => `${r.email}: ${r.error || r.status || "Failed"}`), "failed.txt"));
+
+    const embed = accountCheckerResultsEmbed(results);
+    if (stopped) embed.setTitle("Account Checker Results (Stopped)");
+
+    if (dmUser) {
+      try {
+        await dmUser.send({ embeds: [embed], files });
+        await msg.edit({ embeds: [infoEmbed("Checker Complete", "Results sent to your DMs.")], components: [] });
+      } catch {
+        await msg.edit({ embeds: [embed], files, components: [] });
+      }
+    } else {
+      await msg.edit({ embeds: [embed], files, components: [] });
+    }
+  } catch (err) {
+    await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
+  } finally {
+    activeAborts.delete(userId);
+    limiter.release(userId);
+  }
+}
+
 // ── Slash Commands ───────────────────────────────────────────
 
 client.on("interactionCreate", async (interaction) => {
@@ -769,6 +843,15 @@ client.on("interactionCreate", async (interaction) => {
       const threads = interaction.options.getInteger("threads") || 5;
       const dm = interaction.options.getBoolean("dm") || false;
       await handleChanger(respond, user.id, accounts, accountsFile, newPassword, threads, dm ? user : null);
+    }
+
+    else if (commandName === "checker") {
+      await interaction.deferReply();
+      const accounts = interaction.options.getString("accounts");
+      const accountsFile = interaction.options.getAttachment("accounts_file");
+      const threads = interaction.options.getInteger("threads") || 5;
+      const dm = interaction.options.getBoolean("dm") || false;
+      await handleAccountChecker(respond, user.id, accounts, accountsFile, threads, dm ? user : null);
     }
 
     else if (commandName === "help") {
@@ -912,6 +995,17 @@ client.on("messageCreate", async (message) => {
         return respond({ embeds: [infoEmbed("Usage", "`.changer <accounts> <new_password>` [--dm]\nProvide email:password accounts and the new password.\nAttach a .txt file for multiple accounts.\n\nExample:\n`.changer email@test.com:oldpass NewPass123 --dm`")] });
       }
       await handleChanger(respond, message.author.id, accountsRaw, attachment, newPassword, 5, hasDm ? message.author : null);
+    }
+
+    else if (cmd === "checker") {
+      const hasDm = args.some(a => a === "--dm" || a === "—dm" || a === "–dm");
+      const filteredArgs = args.filter(a => a !== "--dm" && a !== "—dm" && a !== "–dm");
+      const accountsRaw = filteredArgs.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) {
+        return respond({ embeds: [infoEmbed("Usage", "`.checker <accounts>` [--dm]\nProvide email:password accounts or attach a `.txt` file.\n\nExample:\n`.checker email@test.com:pass123 --dm`")] });
+      }
+      await handleAccountChecker(respond, message.author.id, accountsRaw, attachment, 5, hasDm ? message.author : null);
     }
 
     else if (cmd === "help") {

@@ -98,6 +98,22 @@ const commands = [
     ),
 
   new SlashCommandBuilder()
+    .setName("checker")
+    .setDescription("Check Microsoft account credentials (valid/locked/invalid)")
+    .addAttachmentOption((o) =>
+      o.setName("accounts_file").setDescription("Text file with email:password per line").setRequired(false)
+    )
+    .addStringOption((o) =>
+      o.setName("accounts").setDescription("Accounts as email:password (comma-separated)").setRequired(false)
+    )
+    .addIntegerOption((o) =>
+      o.setName("threads").setDescription("Number of concurrent threads (1-50, default 5)").setMinValue(1).setMaxValue(50)
+    )
+    .addBooleanOption((o) =>
+      o.setName("dm").setDescription("Send results to your DMs instead of the channel").setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
     .setName("wlidset")
     .setDescription("Set WLID tokens for /check (owner only, replaces previous)")
     .addAttachmentOption((o) =>

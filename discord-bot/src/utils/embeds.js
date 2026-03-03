@@ -168,6 +168,26 @@ function changerResultsEmbed(results) {
     );
 }
 
+function accountCheckerResultsEmbed(results) {
+  const valid = results.filter((r) => r.status === "valid").length;
+  const locked = results.filter((r) => r.status === "locked").length;
+  const invalid = results.filter((r) => r.status === "invalid").length;
+  const rateLimited = results.filter((r) => r.status === "rate_limited").length;
+  const errors = results.filter((r) => r.status === "error").length;
+
+  return header()
+    .setColor(COLORS.PRIMARY)
+    .setTitle("Account Checker Results")
+    .addFields(
+      { name: "Valid", value: `\`${valid}\``, inline: true },
+      { name: "Locked", value: `\`${locked}\``, inline: true },
+      { name: "Invalid", value: `\`${invalid}\``, inline: true },
+      { name: "Rate Limited", value: `\`${rateLimited}\``, inline: true },
+      { name: "Errors", value: `\`${errors}\``, inline: true },
+      { name: "Total", value: `\`${results.length}\``, inline: true }
+    );
+}
+
 function errorEmbed(message) {
   return header().setColor(COLORS.ERROR).setTitle("Error").setDescription(message);
 }
@@ -224,6 +244,8 @@ function helpEmbed(prefix) {
     `  ${prefix}changer <email:pass> <new_password> [--dm]`,
     "  Change password on Microsoft accounts.",
     "  Attach .txt for multiple accounts.",
+    `  ${prefix}checker <email:pass> or attach .txt [--dm]`,
+    "  Validate account credentials (valid/locked/invalid).",
     "",
     "  Add --dm to receive results in DMs.",
     "",
@@ -278,6 +300,7 @@ module.exports = {
   purchaseResultsEmbed,
   productSearchEmbed,
   changerResultsEmbed,
+  accountCheckerResultsEmbed,
   errorEmbed,
   successEmbed,
   infoEmbed,
