@@ -87,7 +87,14 @@ async function sessionFetch(url, options, cookieJar) {
     if (status >= 300 && status < 400) {
       const location = res.headers.get("location");
       if (!location) break;
-      currentUrl = new URL(location, currentUrl).href;
+      const nextUrl = new URL(location, currentUrl).href;
+      // jsDisabled.srf means MS thinks we lack JS — skip this redirect,
+      // consume body and break to return whatever we have
+      if (nextUrl.includes("jsDisabled.srf")) {
+        try { await res.text(); } catch {}
+        break;
+      }
+      currentUrl = nextUrl;
       if (status !== 307 && status !== 308) {
         method = "GET";
         body = undefined;
@@ -116,8 +123,17 @@ async function sessionFetch(url, options, cookieJar) {
 
 const DEFAULT_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
   "Accept-Language": "en-US,en;q=0.9",
+  "Accept-Encoding": "gzip, deflate, br",
+  "Sec-Ch-Ua": '"Chromium";v="131", "Not_A Brand";v="24"',
+  "Sec-Ch-Ua-Mobile": "?0",
+  "Sec-Ch-Ua-Platform": '"Windows"',
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "none",
+  "Sec-Fetch-User": "?1",
+  "Upgrade-Insecure-Requests": "1",
 };
 
 // Use account.live.com directly — this establishes the right session cookies
@@ -149,8 +165,11 @@ async function loginToAccountLive(email, password, cookieJar, headers, debug) {
   }
   if (!match) {
     debug("S1", `No PPFT found (page len: ${loginPage.length})`);
+    debug("S1", `Final URL: ${loginUrl}`);
     debug("S1", `Page snippet: ${loginPage.substring(0, 300)}`);
-    return { success: false, error: "Could not extract login form", retryable: false };
+    // If redirected to jsDisabled or similar, it's retryable
+    const retryable = loginUrl.includes("jsDisabled") || loginUrl.includes("login.live.com");
+    return { success: false, error: "Could not extract login form", retryable };
   }
   const ppft = match[1];
 
