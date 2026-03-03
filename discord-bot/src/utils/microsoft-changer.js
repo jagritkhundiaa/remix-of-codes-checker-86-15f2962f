@@ -259,6 +259,7 @@ async function loginToAccountLive(email, password, cookieJar, headers, debug) {
   }
 
   return { success: true, page: currentPage, finalUrl: currentUrl };
+}
 
 // ── Navigate to password change (if not already there) ───────
 
