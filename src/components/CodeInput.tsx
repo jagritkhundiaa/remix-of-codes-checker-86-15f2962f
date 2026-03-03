@@ -42,21 +42,21 @@ export function CodeInput({ label, placeholder, value, onChange, icon }: CodeInp
   const lineCount = value.split('\n').filter(line => line.trim()).length;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <label className="flex items-center gap-2 text-sm font-semibold text-foreground">
+        <label className="flex items-center gap-2 text-xs font-bold text-foreground tracking-widest uppercase">
           {icon}
           {label}
         </label>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-muted-foreground px-2 py-1 rounded-md bg-secondary/50">
-            {lineCount} lines
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-muted-foreground px-2 py-0.5 border border-border rounded-sm font-mono">
+            {lineCount} entries
           </span>
           {value && (
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 px-2 text-muted-foreground hover:text-destructive"
+              className="h-6 px-1.5 text-muted-foreground hover:text-destructive rounded-sm"
               onClick={() => onChange('')}
             >
               <X className="w-3 h-3" />
@@ -66,10 +66,8 @@ export function CodeInput({ label, placeholder, value, onChange, icon }: CodeInp
       </div>
       
       <div
-        className={`relative rounded-xl transition-all duration-300 card-3d ${
-          isDragging 
-            ? 'ring-2 ring-primary shadow-glow' 
-            : 'hover:shadow-glow'
+        className={`relative rounded-sm transition-all duration-300 card-3d ${
+          isDragging ? 'ring-1 ring-primary shadow-glow' : ''
         }`}
         onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
         onDragLeave={() => setIsDragging(false)}
@@ -79,37 +77,32 @@ export function CodeInput({ label, placeholder, value, onChange, icon }: CodeInp
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
-          className="min-h-[220px] border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 font-mono text-sm resize-none"
+          className="min-h-[200px] border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 font-mono text-xs resize-none text-foreground placeholder:text-muted-foreground rounded-sm"
         />
         
-        <div className="absolute bottom-3 right-3 flex gap-2">
+        <div className="absolute bottom-2 right-2">
           <label>
-            <input
-              type="file"
-              accept=".txt"
-              className="hidden"
-              onChange={handleFileSelect}
-            />
+            <input type="file" accept=".txt" className="hidden" onChange={handleFileSelect} />
             <Button
               type="button"
               variant="secondary"
               size="sm"
-              className="cursor-pointer shadow-3d hover:shadow-glow transition-all"
+              className="cursor-pointer rounded-sm text-xs border border-border"
               asChild
             >
               <span className="flex items-center gap-1.5">
-                <Upload className="w-3.5 h-3.5" />
-                Upload File
+                <Upload className="w-3 h-3" />
+                UPLOAD
               </span>
             </Button>
           </label>
         </div>
         
         {isDragging && (
-          <div className="absolute inset-0 flex items-center justify-center bg-background/90 rounded-xl backdrop-blur-sm">
-            <div className="flex items-center gap-3 text-primary animate-pulse">
-              <FileText className="w-8 h-8" />
-              <span className="font-medium">Drop file here</span>
+          <div className="absolute inset-0 flex items-center justify-center bg-background/95 rounded-sm">
+            <div className="flex items-center gap-2 text-primary font-mono text-sm">
+              <FileText className="w-6 h-6" />
+              <span>&gt; DROP FILE_</span>
             </div>
           </div>
         )}
