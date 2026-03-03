@@ -67,17 +67,18 @@ function isPasswordChangeContext(pageHtml, finalUrl = "") {
 }
 
 async function sessionFetch(url, options, cookieJar) {
+  const { followClientRedirects = true, ...fetchOptions } = options || {};
   let currentUrl = url;
-  let method = options.method || "GET";
-  let body = options.body;
+  let method = fetchOptions.method || "GET";
+  let body = fetchOptions.body;
   let maxRedirects = 15;
 
   while (maxRedirects-- > 0) {
     const res = await proxiedFetch(currentUrl, {
-      ...options,
+      ...fetchOptions,
       method,
       body,
-      headers: { ...options.headers, Cookie: getCookieString(cookieJar) },
+      headers: { ...fetchOptions.headers, Cookie: getCookieString(cookieJar) },
       redirect: "manual",
     });
 
@@ -87,13 +88,16 @@ async function sessionFetch(url, options, cookieJar) {
     if (status >= 300 && status < 400) {
       const location = res.headers.get("location");
       if (!location) break;
+
       const nextUrl = new URL(location, currentUrl).href;
-      // jsDisabled.srf means MS thinks we lack JS — skip this redirect,
-      // consume body and break to return whatever we have
-      if (nextUrl.includes("jsDisabled.srf")) {
-        try { await res.text(); } catch {}
-        break;
+
+      // Microsoft sometimes sends jsDisabled.srf fallback URLs; following them
+      // breaks PPFT extraction in non-browser flows.
+      if (/jsdisabled\.srf/i.test(nextUrl)) {
+        const text = await res.text();
+        return { res, text, finalUrl: currentUrl };
       }
+
       currentUrl = nextUrl;
       if (status !== 307 && status !== 308) {
         method = "GET";
@@ -105,17 +109,27 @@ async function sessionFetch(url, options, cookieJar) {
 
     const text = await res.text();
 
-    // Some Microsoft pages redirect via meta refresh or JS, not HTTP 3xx
-    const clientRedirect = extractClientRedirectUrl(text, currentUrl);
-    if (clientRedirect && clientRedirect !== currentUrl) {
-      currentUrl = clientRedirect;
-      method = "GET";
-      body = undefined;
-      continue;
+    // If the page already contains login form markers, keep it as-is.
+    const hasLoginMarkers =
+      /name="PPFT"/i.test(text) ||
+      /"urlPost"\s*:/i.test(text) ||
+      /urlPost\s*:/i.test(text) ||
+      /sFTTag\s*:/i.test(text);
+
+    if (followClientRedirects && !hasLoginMarkers) {
+      // Some Microsoft pages redirect via meta refresh or JS, not HTTP 3xx.
+      const clientRedirect = extractClientRedirectUrl(text, currentUrl);
+      if (clientRedirect && clientRedirect !== currentUrl && !/jsdisabled\.srf/i.test(clientRedirect)) {
+        currentUrl = clientRedirect;
+        method = "GET";
+        body = undefined;
+        continue;
+      }
     }
 
     return { res, text, finalUrl: currentUrl };
   }
+
   throw new Error("Too many redirects");
 }
 
@@ -143,7 +157,7 @@ const ACCOUNT_LOGIN_URL = "https://account.live.com/password/Change";
 async function loginToAccountLive(email, password, cookieJar, headers, debug) {
   // Step 1: Navigate to password change page — it will redirect to login
   debug("S1", "Loading account.live.com/password/Change (will redirect to login)");
-  const { text: loginPage, finalUrl: loginUrl } = await sessionFetch(ACCOUNT_LOGIN_URL, { headers }, cookieJar);
+  const { text: loginPage, finalUrl: loginUrl } = await sessionFetch(ACCOUNT_LOGIN_URL, { headers, followClientRedirects: false }, cookieJar);
 
   debug("S1", `Redirected to: ${loginUrl.substring(0, 80)}, len: ${loginPage.length}`);
 
