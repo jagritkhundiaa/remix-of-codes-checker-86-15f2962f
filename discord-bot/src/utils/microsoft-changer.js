@@ -60,103 +60,170 @@ const DEFAULT_HEADERS = {
   "Accept-Language": "en-US,en;q=0.9",
 };
 
-// Use the same OAuth login approach as the working puller
-const LOGIN_URL = "https://login.live.com/oauth20_authorize.srf?client_id=00000000402B5328&redirect_uri=https://login.live.com/oauth20_desktop.srf&scope=service::user.auth.xboxlive.com::MBI_SSL&display=touch&response_type=token&locale=en";
-
-async function loginToMicrosoft(email, password, cookieJar, headers) {
-  // Step 1: Fetch login page (same approach as puller)
-  const { text: loginPage } = await sessionFetch(LOGIN_URL, { headers }, cookieJar);
-
-  // Extract PPFT
-  let ppftMatch = loginPage.match(/value=\\?"(.+?)\\?"/s) || loginPage.match(/value="(.+?)"/s);
-  if (!ppftMatch) return { success: false, error: "Could not extract PPFT" };
-  const ppft = ppftMatch[1];
-
-  // Extract urlPost
-  let urlPostMatch = loginPage.match(/"urlPost":"(.+?)"/s) || loginPage.match(/urlPost:'(.+?)'/s);
-  if (!urlPostMatch) return { success: false, error: "Could not extract urlPost" };
-  const urlPost = urlPostMatch[1];
-
-  // Step 2: Submit login
-  const loginBody = new URLSearchParams({
-    login: email,
-    loginfmt: email,
-    passwd: password,
-    PPFT: ppft,
-  });
-
-  const { text: afterLogin, finalUrl } = await sessionFetch(urlPost, {
-    method: "POST",
-    headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
-    body: loginBody.toString(),
-  }, cookieJar);
-
-  // Check for login failure
-  if (afterLogin.includes("incorrect") || afterLogin.includes("AADSTS50126") || 
-      afterLogin.includes("password is incorrect") || afterLogin.includes("Your account or password is incorrect")) {
-    return { success: false, error: "Invalid credentials" };
-  }
-
-  if (afterLogin.includes("account has been locked") || afterLogin.includes("locked")) {
-    return { success: false, error: "Account locked" };
-  }
-
-  // Handle consent/cancel forms (same as puller)
-  if (afterLogin.includes("cancel?mkt=")) {
-    const iptMatch = afterLogin.match(/(?<="ipt" value=").+?(?=">)/);
-    const ppridMatch = afterLogin.match(/(?<="pprid" value=").+?(?=">)/);
-    const uaidMatch = afterLogin.match(/(?<="uaid" value=").+?(?=">)/);
-    const actionMatch = afterLogin.match(/(?<=id="fmHF" action=").+?(?=" )/);
-
-    if (iptMatch && ppridMatch && uaidMatch && actionMatch) {
-      const formBody = new URLSearchParams({
-        ipt: iptMatch[0],
-        pprid: ppridMatch[0],
-        uaid: uaidMatch[0],
-      });
-      await sessionFetch(actionMatch[0], {
-        method: "POST",
-        headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
-        body: formBody.toString(),
-      }, cookieJar);
-    }
-  }
-
-  // Handle generic post-login forms
-  const formAction = afterLogin.match(/<form[^>]*action="([^"]+)"/);
-  if (formAction && !afterLogin.includes("cancel?mkt=")) {
-    const inputMatches = [...afterLogin.matchAll(/<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"/g)];
-    const formData = new URLSearchParams();
-    for (const m of inputMatches) formData.append(m[1], m[2]);
-    await sessionFetch(formAction[1], {
-      method: "POST",
-      headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
-      body: formData.toString(),
-    }, cookieJar);
-  }
-
-  return { success: true };
-}
-
 async function changePassword(email, oldPassword, newPassword) {
   const cookieJar = [];
   const headers = { ...DEFAULT_HEADERS };
 
   try {
-    // Step 1: Login using the proven OAuth flow
-    const loginResult = await loginToMicrosoft(email, oldPassword, cookieJar, headers);
-    if (!loginResult.success) {
-      return { email, success: false, error: loginResult.error };
-    }
-
-    // Step 2: Now navigate to password change page (we're authenticated)
-    const { text: pwdPage } = await sessionFetch(
+    // Step 1: Go to password change page - this will redirect to login.live.com
+    const { text: page1, finalUrl: url1 } = await sessionFetch(
       "https://account.live.com/password/Change",
       { headers },
       cookieJar
     );
 
-    return await submitPasswordChange(pwdPage, email, oldPassword, newPassword, cookieJar, headers);
+    // We should now be on a login page (login.live.com or login.microsoftonline.com)
+    // Extract PPFT and urlPost from whatever page we landed on
+    let ppft = null;
+    let urlPost = null;
+    let currentPage = page1;
+
+    // Try multiple extraction patterns
+    const ppftPatterns = [
+      /sFT:'([^']+)'/s,
+      /"sFT":"([^"]+)"/s,
+      /name="PPFT"[^>]*value="([^"]+)"/s,
+      /value="([^"]+)"[^>]*name="PPFT"/s,
+    ];
+    const urlPostPatterns = [
+      /"urlPost":"([^"]+)"/s,
+      /urlPost:'([^']+)'/s,
+    ];
+
+    for (const p of ppftPatterns) {
+      const m = currentPage.match(p);
+      if (m) { ppft = m[1]; break; }
+    }
+    for (const p of urlPostPatterns) {
+      const m = currentPage.match(p);
+      if (m) { urlPost = m[1]; break; }
+    }
+
+    // If we didn't find login fields, maybe we need to look for a different login URL
+    if (!ppft || !urlPost) {
+      // Try going directly to login.live.com with wreply to password change
+      const { text: page2 } = await sessionFetch(
+        "https://login.live.com/login.srf?wa=wsignin1.0&rpsnv=180&wreply=https%3A%2F%2Faccount.live.com%2Fpassword%2FChange",
+        { headers },
+        cookieJar
+      );
+      currentPage = page2;
+
+      for (const p of ppftPatterns) {
+        const m = currentPage.match(p);
+        if (m) { ppft = m[1]; break; }
+      }
+      for (const p of urlPostPatterns) {
+        const m = currentPage.match(p);
+        if (m) { urlPost = m[1]; break; }
+      }
+    }
+
+    if (!ppft || !urlPost) {
+      // Last resort: try the generic value= pattern like the puller does
+      const valMatch = currentPage.match(/value=\\?"(.+?)\\?"/s) || currentPage.match(/value="(.+?)"/s);
+      if (valMatch) ppft = valMatch[1];
+      const upMatch = currentPage.match(/"urlPost":"(.+?)"/s) || currentPage.match(/urlPost:'(.+?)'/s);
+      if (upMatch) urlPost = upMatch[1];
+    }
+
+    if (!ppft || !urlPost) {
+      return { email, success: false, error: "Could not extract login form" };
+    }
+
+    // Step 2: Submit login credentials
+    const loginBody = new URLSearchParams({
+      login: email,
+      loginfmt: email,
+      passwd: oldPassword,
+      PPFT: ppft,
+    });
+
+    const { text: afterLogin, finalUrl: afterLoginUrl } = await sessionFetch(urlPost, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
+      body: loginBody.toString(),
+    }, cookieJar);
+
+    // Check for login failure
+    if (afterLogin.includes("incorrect") || afterLogin.includes("AADSTS50126") || 
+        afterLogin.includes("password is incorrect") || afterLogin.includes("Your account or password is incorrect")) {
+      return { email, success: false, error: "Invalid credentials" };
+    }
+    if (afterLogin.includes("account has been locked") || afterLogin.includes("locked")) {
+      return { email, success: false, error: "Account locked" };
+    }
+    if (afterLogin.includes("doesn't exist") || afterLogin.includes("that Microsoft account doesn")) {
+      return { email, success: false, error: "Account not found" };
+    }
+
+    // Step 3: Handle any intermediate forms (consent, stay signed in, etc.)
+    let finalPage = afterLogin;
+    const formAction = afterLogin.match(/<form[^>]*action="([^"]+)"/);
+    if (formAction) {
+      const inputMatches = [...afterLogin.matchAll(/<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"/g)];
+      const formData = new URLSearchParams();
+      for (const m of inputMatches) formData.append(m[1], m[2]);
+      const { text: nextPage } = await sessionFetch(formAction[1], {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
+        body: formData.toString(),
+      }, cookieJar);
+      finalPage = nextPage;
+    }
+
+    // Step 4: Check if we landed on the password change page, or need to navigate there
+    if (!finalPage.includes("OldPassword") && !finalPage.includes("NewPassword") && !finalPage.includes("ChangePassword") && !finalPage.includes("apiCanary")) {
+      // Navigate to password change page now that we're logged in
+      const { text: pwdPage } = await sessionFetch(
+        "https://account.live.com/password/Change",
+        { headers },
+        cookieJar
+      );
+      finalPage = pwdPage;
+
+      // Might need to re-verify identity - handle another login prompt
+      if (finalPage.includes("urlPost") && finalPage.includes("sFT")) {
+        let ppft2 = null, urlPost2 = null;
+        for (const p of ppftPatterns) { const m = finalPage.match(p); if (m) { ppft2 = m[1]; break; } }
+        for (const p of urlPostPatterns) { const m = finalPage.match(p); if (m) { urlPost2 = m[1]; break; } }
+        if (ppft2 && urlPost2) {
+          const reAuthBody = new URLSearchParams({ login: email, loginfmt: email, passwd: oldPassword, PPFT: ppft2 });
+          const { text: reAuthPage } = await sessionFetch(urlPost2, {
+            method: "POST",
+            headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
+            body: reAuthBody.toString(),
+          }, cookieJar);
+          finalPage = reAuthPage;
+          
+          // Handle post-reauth form
+          const fa2 = finalPage.match(/<form[^>]*action="([^"]+)"/);
+          if (fa2) {
+            const im2 = [...finalPage.matchAll(/<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"/g)];
+            const fd2 = new URLSearchParams();
+            for (const m of im2) fd2.append(m[1], m[2]);
+            const { text: np2 } = await sessionFetch(fa2[1], {
+              method: "POST",
+              headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
+              body: fd2.toString(),
+            }, cookieJar);
+            finalPage = np2;
+          }
+
+          // Navigate to password change again
+          if (!finalPage.includes("OldPassword") && !finalPage.includes("apiCanary")) {
+            const { text: pwdPage2 } = await sessionFetch(
+              "https://account.live.com/password/Change",
+              { headers },
+              cookieJar
+            );
+            finalPage = pwdPage2;
+          }
+        }
+      }
+    }
+
+    return await submitPasswordChange(finalPage, email, oldPassword, newPassword, cookieJar, headers);
   } catch (err) {
     return { email, success: false, error: err.message };
   }
