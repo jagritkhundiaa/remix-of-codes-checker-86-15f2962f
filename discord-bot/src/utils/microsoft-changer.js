@@ -256,18 +256,97 @@ async function submitPasswordChange(pageHtml, email, oldPassword, newPassword, c
     return { email, success: false, error: "Password page not loaded", retryable: true };
   }
 
-  debug(`Page len: ${pageHtml.length}, has OldPassword: ${pageHtml.includes("OldPassword")}, has apiCanary: ${pageHtml.includes("apiCanary")}`);
+  // Debug: check for various field name patterns
+  const hasOldPwd = pageHtml.includes("OldPassword") || pageHtml.includes("iOldPwd") || 
+                    pageHtml.includes("oldPassword") || pageHtml.includes("currentPassword") ||
+                    pageHtml.includes("proofInput");
+  debug(`Page len: ${pageHtml.length}, has password field: ${hasOldPwd}, has apiCanary: ${pageHtml.includes("apiCanary")}`);
 
   try {
-    // Try API approach (modern Microsoft account)
+    // Extract canary tokens
     const canaryMatch = pageHtml.match(/"canary"\s*:\s*"([^"]+)"/s) ||
                         pageHtml.match(/canary\s*=\s*'([^']+)'/s) ||
                         pageHtml.match(/name="canary"[^>]*value="([^"]+)"/s);
     const apiCanary = pageHtml.match(/"apiCanary"\s*:\s*"([^"]+)"/s);
 
+    // Extract session ID and other config from the page
+    const sessionIdMatch = pageHtml.match(/"sessionId"\s*:\s*"([^"]+)"/s);
+    const sctxMatch = pageHtml.match(/"sCtx"\s*:\s*"([^"]+)"/s) ||
+                      pageHtml.match(/sCtx\s*=\s*'([^']+)'/s);
+    const flowTokenMatch = pageHtml.match(/"sFT"\s*:\s*"([^"]+)"/s) ||
+                           pageHtml.match(/sFT\s*:\s*'([^']+)'/s);
+
     if (apiCanary) {
-      debug("Using API method");
+      debug("Using API method (JSON)");
+      
+      // Try JSON API first (modern Microsoft account pages)
+      const jsonBody = JSON.stringify({
+        OldPassword: oldPassword,
+        NewPassword: newPassword,
+        RetypePassword: newPassword,
+        ...(flowTokenMatch ? { FlowToken: flowTokenMatch[1] } : {}),
+      });
+
       const { text: changeText, finalUrl: changeFinalUrl } = await sessionFetch(
+        "https://account.live.com/password/Change",
+        {
+          method: "POST",
+          headers: {
+            ...headers,
+            "Content-Type": "application/json",
+            "canary": apiCanary[1],
+            "hpgid": "Microsoft_Security_ChangePassword",
+            "hpgact": "commit",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          body: jsonBody,
+        },
+        cookieJar
+      );
+
+      debug(`API result URL: ${changeFinalUrl.substring(0, 80)}, len: ${changeText.length}`);
+      debug(`API response first 500: ${changeText.substring(0, 500)}`);
+
+      // Check for JSON response
+      let jsonResponse;
+      try { jsonResponse = JSON.parse(changeText); } catch {}
+
+      if (jsonResponse) {
+        debug(`JSON response keys: ${Object.keys(jsonResponse).join(", ")}`);
+        if (jsonResponse.error) {
+          const errCode = jsonResponse.error.code || jsonResponse.error;
+          debug(`API error: ${JSON.stringify(jsonResponse.error)}`);
+          if (String(errCode).includes("PasswordIncorrect") || String(errCode).includes("1003"))
+            return { email, success: false, error: "Current password incorrect", retryable: false };
+          if (String(errCode).includes("TooShort"))
+            return { email, success: false, error: "New password too short", retryable: false };
+          if (String(errCode).includes("SameAsOld"))
+            return { email, success: false, error: "New password same as old", retryable: false };
+          return { email, success: false, error: `API error: ${errCode}`, retryable: false };
+        }
+        if (jsonResponse.success || jsonResponse.State === 1 || jsonResponse.HasSucceeded) {
+          return { email, success: true, newPassword, retryable: false };
+        }
+      }
+
+      // Check HTML response indicators
+      if (changeText.includes("TooShort") || changeText.includes("too short"))
+        return { email, success: false, error: "New password too short", retryable: false };
+      if (changeText.includes("SameAsOld") || changeText.includes("same as your current"))
+        return { email, success: false, error: "New password same as old", retryable: false };
+      if (changeText.includes("PasswordIncorrect") || changeText.includes("incorrect"))
+        return { email, success: false, error: "Current password incorrect", retryable: false };
+      if (changeText.length < 100 && changeText.includes("Too Many"))
+        return { email, success: false, error: "Rate limited on change submit", retryable: true };
+      if (changeText.includes("PasswordChanged") || changeText.includes("Your password has been changed") ||
+          changeText.includes("password has been updated") || changeText.includes("You've successfully") ||
+          changeText.includes("successfully changed")) {
+        return { email, success: true, newPassword, retryable: false };
+      }
+
+      // If JSON API didn't work, try form-encoded POST with apiCanary
+      debug("JSON API didn't confirm, trying form-encoded with apiCanary");
+      const { text: formChangeText, finalUrl: formChangeFinalUrl } = await sessionFetch(
         "https://account.live.com/password/Change",
         {
           method: "POST",
@@ -282,26 +361,17 @@ async function submitPasswordChange(pageHtml, email, oldPassword, newPassword, c
         cookieJar
       );
 
-      debug(`Result URL: ${changeFinalUrl.substring(0, 60)}, len: ${changeText.length}`);
+      debug(`Form result URL: ${formChangeFinalUrl.substring(0, 80)}, len: ${formChangeText.length}`);
+      debug(`Form response first 500: ${formChangeText.substring(0, 500)}`);
 
-      if (changeText.includes("TooShort") || changeText.includes("too short"))
-        return { email, success: false, error: "New password too short", retryable: false };
-      if (changeText.includes("SameAsOld") || changeText.includes("same as your current"))
-        return { email, success: false, error: "New password same as old", retryable: false };
-      if (changeText.includes("PasswordIncorrect") || changeText.includes("incorrect"))
-        return { email, success: false, error: "Current password incorrect", retryable: false };
-      if (changeText.includes("OldPassword") && changeText.includes("NewPassword"))
-        return { email, success: false, error: "Password change failed (form re-displayed)", retryable: false };
-      if (changeText.length < 100 && changeText.includes("Too Many"))
-        return { email, success: false, error: "Rate limited on change submit", retryable: true };
-
-      if (changeText.includes("PasswordChanged") || changeText.includes("Your password has been changed") ||
-          changeText.includes("password has been updated") || changeText.includes("You've successfully") ||
-          changeText.includes("successfully changed")) {
+      if (formChangeText.includes("PasswordChanged") || formChangeText.includes("Your password has been changed") ||
+          formChangeText.includes("password has been updated") || formChangeText.includes("successfully changed")) {
         return { email, success: true, newPassword, retryable: false };
       }
+      if (formChangeText.includes("PasswordIncorrect") || formChangeText.includes("incorrect"))
+        return { email, success: false, error: "Current password incorrect", retryable: false };
 
-      debug(`No confirmation. First 300: ${changeText.substring(0, 300)}`);
+      debug(`Neither method confirmed. Form first 300: ${formChangeText.substring(0, 300)}`);
       return { email, success: false, error: "Password change not confirmed", retryable: false };
     }
 
