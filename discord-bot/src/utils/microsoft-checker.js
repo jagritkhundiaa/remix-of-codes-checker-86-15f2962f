@@ -112,13 +112,14 @@ async function checkSingleCode(code, wlid) {
   return { code: trimmedCode, status: "error", error: "Max retries exceeded" };
 }
 
-async function processWithWorkerPool(items, concurrency, fn, onProgress) {
+async function processWithWorkerPool(items, concurrency, fn, onProgress, signal) {
   const results = new Array(items.length);
   let currentIndex = 0;
   let completedCount = 0;
 
   async function worker() {
     while (true) {
+      if (signal && signal.aborted) break;
       const index = currentIndex++;
       if (index >= items.length) break;
       try {
@@ -137,14 +138,14 @@ async function processWithWorkerPool(items, concurrency, fn, onProgress) {
     .fill(null)
     .map(() => worker());
   await Promise.all(workers);
-  return results;
+  return results.filter(Boolean);
 }
 
 function delay(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function checkCodes(wlids, codes, threads = 10, onProgress) {
+async function checkCodes(wlids, codes, threads = 10, onProgress, signal) {
   const formattedWlids = wlids.map((w) =>
     w.includes("WLID1.0=") ? w.trim() : `WLID1.0="${w.trim()}"`
   );
@@ -164,7 +165,8 @@ async function checkCodes(wlids, codes, threads = 10, onProgress) {
     tasks,
     concurrency,
     async (task) => checkSingleCode(task.code, task.wlid),
-    onProgress
+    onProgress,
+    signal
   );
 
   return results;

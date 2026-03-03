@@ -3,7 +3,7 @@
 //  Supports both slash commands and dot-prefix commands
 // ============================================================
 
-const { Client, GatewayIntentBits, Partials } = require("discord.js");
+const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } = require("discord.js");
 const config = require("./config");
 const { AuthManager, parseDuration, formatDuration, formatExpiry } = require("./utils/auth-manager");
 const { ConcurrencyLimiter } = require("./utils/concurrency");
@@ -38,6 +38,9 @@ const client = new Client({
 const auth = new AuthManager();
 const limiter = new ConcurrencyLimiter(config.MAX_CONCURRENT_USERS);
 
+// Active abort controllers per user
+const activeAborts = new Map();
+
 // ── Helpers ──────────────────────────────────────────────────
 
 function isOwner(userId) {
@@ -63,9 +66,18 @@ async function fetchAttachmentLines(attachment) {
   return text.split("\n").map((l) => l.trim()).filter(Boolean);
 }
 
-async function updateProgress(msg, embed) {
+function stopButton(userId) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`stop_${userId}`)
+      .setLabel("Stop")
+      .setStyle(ButtonStyle.Secondary)
+  );
+}
+
+async function updateProgress(msg, embed, userId) {
   try {
-    await msg.edit({ embeds: [embed] });
+    await msg.edit({ embeds: [embed], components: [stopButton(userId)] });
   } catch { /* ignore rate limits */ }
 }
 
@@ -99,12 +111,12 @@ async function handleCheck(respond, userId, wlidsRaw, codesRaw, codesFile, threa
     return respond({ embeds: [errorEmbed(reason)] });
   }
 
+  const ac = new AbortController();
+  activeAborts.set(userId, ac);
+
   try {
-    // Use provided WLIDs or fall back to stored WLIDs
     let wlids = splitInput(wlidsRaw);
-    if (wlids.length === 0) {
-      wlids = getWlids();
-    }
+    if (wlids.length === 0) wlids = getWlids();
     
     let codes = splitInput(codesRaw);
     if (codesFile) codes = codes.concat(await fetchAttachmentLines(codesFile));
@@ -114,6 +126,7 @@ async function handleCheck(respond, userId, wlidsRaw, codesRaw, codesFile, threa
 
     const msg = await respond({
       embeds: [progressEmbed(0, codes.length, `Checking codes (${wlids.length} WLIDs)`)],
+      components: [stopButton(userId)],
       fetchReply: true,
     });
 
@@ -122,10 +135,11 @@ async function handleCheck(respond, userId, wlidsRaw, codesRaw, codesFile, threa
       const now = Date.now();
       if (now - lastUpdate > 2000) {
         lastUpdate = now;
-        updateProgress(msg, progressEmbed(done, total, "Checking codes"));
+        updateProgress(msg, progressEmbed(done, total, "Checking codes"), userId);
       }
-    });
+    }, ac.signal);
 
+    const stopped = ac.signal.aborted;
     const files = [];
     const valid = results.filter((r) => r.status === "valid");
     const used = results.filter((r) => r.status === "used");
@@ -141,10 +155,13 @@ async function handleCheck(respond, userId, wlidsRaw, codesRaw, codesFile, threa
     if (invalid.length > 0)
       files.push(textAttachment(invalid.map((r) => r.code), "invalid.txt"));
 
-    await msg.edit({ embeds: [checkResultsEmbed(results)], files });
+    const embed = checkResultsEmbed(results);
+    if (stopped) embed.setTitle("Check Results (Stopped)");
+    await msg.edit({ embeds: [embed], files, components: [] });
   } catch (err) {
     await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
   } finally {
+    activeAborts.delete(userId);
     limiter.release(userId);
   }
 }
@@ -162,6 +179,9 @@ async function handleClaim(respond, userId, accountsRaw, accountsFile, threads =
     return respond({ embeds: [errorEmbed(reason)] });
   }
 
+  const ac = new AbortController();
+  activeAborts.set(userId, ac);
+
   try {
     let accounts = splitInput(accountsRaw).filter((a) => a.includes(":"));
     if (accountsFile) {
@@ -173,6 +193,7 @@ async function handleClaim(respond, userId, accountsRaw, accountsFile, threads =
 
     const msg = await respond({
       embeds: [progressEmbed(0, accounts.length, "Claiming WLIDs")],
+      components: [stopButton(userId)],
       fetchReply: true,
     });
 
@@ -181,10 +202,11 @@ async function handleClaim(respond, userId, accountsRaw, accountsFile, threads =
       const now = Date.now();
       if (now - lastUpdate > 2000) {
         lastUpdate = now;
-        updateProgress(msg, progressEmbed(done, total, "Claiming WLIDs"));
+        updateProgress(msg, progressEmbed(done, total, "Claiming WLIDs"), userId);
       }
-    });
+    }, ac.signal);
 
+    const stopped = ac.signal.aborted;
     const files = [];
     const success = results.filter((r) => r.success && r.token);
     const failed = results.filter((r) => !r.success);
@@ -194,10 +216,13 @@ async function handleClaim(respond, userId, accountsRaw, accountsFile, threads =
     if (failed.length > 0)
       files.push(textAttachment(failed.map((r) => `${r.email}: ${r.error || "Unknown error"}`), "failed.txt"));
 
-    await msg.edit({ embeds: [claimResultsEmbed(results)], files });
+    const embed = claimResultsEmbed(results);
+    if (stopped) embed.setTitle("Claim Results (Stopped)");
+    await msg.edit({ embeds: [embed], files, components: [] });
   } catch (err) {
     await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
   } finally {
+    activeAborts.delete(userId);
     limiter.release(userId);
   }
 }
@@ -215,6 +240,9 @@ async function handlePull(respond, userId, accountsRaw, accountsFile) {
     return respond({ embeds: [errorEmbed(reason)] });
   }
 
+  const ac = new AbortController();
+  activeAborts.set(userId, ac);
+
   try {
     let accounts = splitInput(accountsRaw).filter((a) => a.includes(":"));
     if (accountsFile) {
@@ -226,6 +254,7 @@ async function handlePull(respond, userId, accountsRaw, accountsFile) {
 
     const msg = await respond({
       embeds: [pullFetchProgressEmbed({ done: 0, total: accounts.length, totalCodes: 0 })],
+      components: [stopButton(userId)],
       fetchReply: true,
     });
 
@@ -253,19 +282,19 @@ async function handlePull(respond, userId, accountsRaw, accountsFile) {
             lastAccount,
             lastCodes,
             lastError,
-          }));
+          }), userId);
         }
       } else if (phase === "validate_start") {
-        updateProgress(msg, progressEmbed(0, detail.total, "Validating codes"));
+        updateProgress(msg, progressEmbed(0, detail.total, "Validating codes"), userId);
       } else if (phase === "validate") {
         if (now - lastUpdate > 2000) {
           lastUpdate = now;
-          updateProgress(msg, progressEmbed(detail.done, detail.total, "Validating codes"));
+          updateProgress(msg, progressEmbed(detail.done, detail.total, "Validating codes"), userId);
         }
       }
-    });
+    }, ac.signal);
 
-    // Build result files — checker returns lowercase statuses: valid, used, expired, invalid, error
+    const stopped = ac.signal.aborted;
     const files = [];
     const valid = validateResults.filter((r) => r.status === "valid");
     const used = validateResults.filter((r) => r.status === "used");
@@ -281,10 +310,13 @@ async function handlePull(respond, userId, accountsRaw, accountsFile) {
     if (invalid.length > 0)
       files.push(textAttachment(invalid.map((r) => r.code), "invalid.txt"));
 
-    await msg.edit({ embeds: [pullResultsEmbed(fetchResults, validateResults)], files });
+    const embed = pullResultsEmbed(fetchResults, validateResults);
+    if (stopped) embed.setTitle("Pull Results (Stopped)");
+    await msg.edit({ embeds: [embed], files, components: [] });
   } catch (err) {
     await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
   } finally {
+    activeAborts.delete(userId);
     limiter.release(userId);
   }
 }
@@ -346,6 +378,22 @@ function formatUptime(seconds) {
 // ── Slash Commands ───────────────────────────────────────────
 
 client.on("interactionCreate", async (interaction) => {
+  // Handle stop button clicks
+  if (interaction.isButton() && interaction.customId.startsWith("stop_")) {
+    const targetUserId = interaction.customId.replace("stop_", "");
+    if (interaction.user.id !== targetUserId && !isOwner(interaction.user.id)) {
+      return interaction.reply({ content: "Only the command author can stop this.", ephemeral: true });
+    }
+    const ac = activeAborts.get(targetUserId);
+    if (ac) {
+      ac.abort();
+      await interaction.reply({ embeds: [infoEmbed("Stopped", "Process is stopping. Partial results will be shown.")], ephemeral: true });
+    } else {
+      await interaction.reply({ content: "No active process found.", ephemeral: true });
+    }
+    return;
+  }
+
   if (!interaction.isChatInputCommand()) return;
 
   const respond = (opts) => {
@@ -517,7 +565,7 @@ client.once("ready", () => {
   
   client.user.setPresence({
     status: "online",
-    activities: [{ name: "AutizMens v2.0", type: 3 }],
+    activities: [{ name: ".gg/autizmens", type: 3 }],
   });
 });
 

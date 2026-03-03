@@ -611,7 +611,7 @@ async function validateCodesWithStore(email, password, codes, onProgress) {
 /**
  * Full pull pipeline: fetch + validate.
  */
-async function pullCodes(accounts, onProgress) {
+async function pullCodes(accounts, onProgress, signal) {
   const parsed = accounts.map((a) => {
     const i = a.indexOf(":");
     return i === -1 ? { email: a, password: "" } : { email: a.substring(0, i), password: a.substring(i + 1) };
@@ -626,6 +626,7 @@ async function pullCodes(accounts, onProgress) {
 
   async function fetchWorker() {
     while (true) {
+      if (signal && signal.aborted) break;
       const idx = fetchDone++;
       if (idx >= parsed.length) break;
       const { email, password } = parsed[idx];
@@ -647,11 +648,10 @@ async function pullCodes(accounts, onProgress) {
   const fetchWorkers = Array(Math.min(threads, parsed.length)).fill(null).map(() => fetchWorker());
   await Promise.all(fetchWorkers);
 
-  if (allCodes.length === 0) {
-    return { fetchResults, validateResults: [] };
-  }
+  if (signal && signal.aborted) return { fetchResults, validateResults: [] };
+  if (allCodes.length === 0) return { fetchResults, validateResults: [] };
 
-  // Phase 2: Validate using WLID checker (same as .check / website)
+  // Phase 2: Validate using WLID checker
   const wlids = getWlids();
   if (wlids.length === 0) {
     const validateResults = allCodes.map((c) => ({ code: c, status: "error", message: `${c} | No WLIDs stored — use .wlidset first` }));
@@ -662,7 +662,7 @@ async function pullCodes(accounts, onProgress) {
 
   const validateResults = await checkCodes(wlids, allCodes, 10, (done, total) => {
     if (onProgress) onProgress("validate", { done, total });
-  });
+  }, signal);
 
   return { fetchResults, validateResults };
 }

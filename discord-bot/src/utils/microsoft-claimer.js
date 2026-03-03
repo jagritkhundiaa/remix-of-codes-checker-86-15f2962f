@@ -251,7 +251,7 @@ async function authenticateAccount(email, password) {
   }
 }
 
-async function claimWlids(accounts, threads = 5, onProgress) {
+async function claimWlids(accounts, threads = 5, onProgress, signal) {
   const parsedAccounts = accounts.map((acc) => {
     const i = acc.indexOf(":");
     return i === -1 ? { email: acc, password: "" } : { email: acc.substring(0, i), password: acc.substring(i + 1) };
@@ -263,6 +263,7 @@ async function claimWlids(accounts, threads = 5, onProgress) {
 
   async function worker() {
     while (true) {
+      if (signal && signal.aborted) break;
       const idx = currentIndex++;
       if (idx >= parsedAccounts.length) break;
       const { email, password } = parsedAccounts[idx];
@@ -274,7 +275,7 @@ async function claimWlids(accounts, threads = 5, onProgress) {
 
   const workers = Array(Math.min(threads, parsedAccounts.length)).fill(null).map(() => worker());
   await Promise.all(workers);
-  return results;
+  return results.filter(Boolean);
 }
 
 module.exports = { claimWlids, authenticateAccount };
