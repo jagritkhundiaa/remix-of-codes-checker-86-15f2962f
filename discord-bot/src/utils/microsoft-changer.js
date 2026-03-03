@@ -268,14 +268,13 @@ async function submitPasswordChange(pageHtml, email, oldPassword, newPassword, c
     const apiCanary = pageHtml.match(/"apiCanary":"([^"]+)"/s);
 
     if (apiCanary) {
-      // Modern API-based password change
-      const changeRes = await proxiedFetch(
+      // Modern API-based password change — follow redirects to verify actual outcome
+      const { res: changeRes, text: changeText, finalUrl: changeFinalUrl } = await sessionFetch(
         "https://account.live.com/password/Change",
         {
           method: "POST",
           headers: {
             ...headers,
-            Cookie: getCookieString(cookieJar),
             "Content-Type": "application/x-www-form-urlencoded",
             canary: apiCanary[1],
           },
@@ -285,20 +284,14 @@ async function submitPasswordChange(pageHtml, email, oldPassword, newPassword, c
             RetypePassword: newPassword,
             ...(canaryMatch ? { canary: canaryMatch[1] } : {}),
           }).toString(),
-        }
+        },
+        cookieJar
       );
 
-      extractCookiesFromResponse(changeRes, cookieJar);
-      const changeText = await changeRes.text();
+      const debug = (msg) => console.log(`[CHANGER][${email}] PWD-API: ${msg}`);
+      debug(`Final URL: ${changeFinalUrl}, status: ${changeRes.status}, length: ${changeText.length}`);
 
-      if (changeRes.status === 200 || changeRes.status === 302) {
-        if (changeText.includes("PasswordChanged") || changeText.includes("success") ||
-            changeText.includes("Your password has been changed") || changeRes.status === 302) {
-          return { email, success: true, newPassword };
-        }
-      }
-
-      // Check for specific errors
+      // Check for specific errors FIRST before declaring success
       if (changeText.includes("TooShort") || changeText.includes("too short")) {
         return { email, success: false, error: "New password too short" };
       }
@@ -308,6 +301,25 @@ async function submitPasswordChange(pageHtml, email, oldPassword, newPassword, c
       if (changeText.includes("PasswordIncorrect") || changeText.includes("incorrect")) {
         return { email, success: false, error: "Current password incorrect" };
       }
+      if (changeText.includes("OldPassword") && changeText.includes("NewPassword")) {
+        // Still on the password change form — it didn't work
+        return { email, success: false, error: "Password change form re-displayed (change failed)" };
+      }
+
+      // Only confirm success with explicit indicators
+      if (changeText.includes("PasswordChanged") || changeText.includes("Your password has been changed") ||
+          changeText.includes("password has been updated") || changeText.includes("You've successfully")) {
+        return { email, success: true, newPassword };
+      }
+
+      // If redirected away from /password/Change and no error indicators, likely success
+      if (!changeFinalUrl.includes("/password/Change") && !changeText.includes("error") && !changeText.includes("Error")) {
+        debug(`Redirected away from change page — cautious success`);
+        return { email, success: true, newPassword };
+      }
+
+      debug(`No clear success/error signal. First 300 chars: ${changeText.substring(0, 300)}`);
+      return { email, success: false, error: "Password change outcome unclear" };
     }
 
     // Try form-based approach
@@ -330,18 +342,29 @@ async function submitPasswordChange(pageHtml, email, oldPassword, newPassword, c
         if (!formBody.has(m[1])) formBody.append(m[1], m[2]);
       }
 
-      const { res: changeRes, text: changeText } = await sessionFetch(action, {
+      const { res: changeRes, text: changeText, finalUrl: formFinalUrl } = await sessionFetch(action, {
         method: "POST",
         headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
         body: formBody.toString(),
       }, cookieJar);
 
-      if (changeRes.status === 302 || changeText.includes("success") || changeText.includes("PasswordChanged")) {
+      // Check errors first
+      if (changeText.includes("incorrect") || changeText.includes("PasswordIncorrect")) {
+        return { email, success: false, error: "Current password incorrect" };
+      }
+      if (changeText.includes("OldPassword") && changeText.includes("NewPassword")) {
+        return { email, success: false, error: "Password change form re-displayed (change failed)" };
+      }
+
+      // Then check success
+      if (changeText.includes("PasswordChanged") || changeText.includes("Your password has been changed") ||
+          changeText.includes("password has been updated") || changeText.includes("You've successfully")) {
         return { email, success: true, newPassword };
       }
 
-      if (changeText.includes("incorrect")) {
-        return { email, success: false, error: "Current password incorrect" };
+      // Redirected away from change page with no errors = likely success
+      if (!formFinalUrl.includes("/password/Change") && !changeText.includes("error")) {
+        return { email, success: true, newPassword };
       }
 
       return { email, success: false, error: "Password change did not confirm success" };
