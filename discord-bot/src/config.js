@@ -27,13 +27,14 @@ module.exports = {
   USE_PROXIES: false,
 
   // Embed color palette — monochrome
+  // Invisible dark embeds — matches Discord dark theme background
   COLORS: {
-    PRIMARY:  0xffffff,   // white
-    SUCCESS:  0xd4d4d4,   // neutral-300
-    ERROR:    0x737373,   // neutral-500
-    WARNING:  0xa3a3a3,   // neutral-400
-    EXPIRED:  0x525252,   // neutral-600
-    INFO:     0xe5e5e5,   // neutral-200
-    MUTED:    0x404040,   // neutral-700
+    PRIMARY:  0x2b2d31,
+    SUCCESS:  0x2b2d31,
+    ERROR:    0x2b2d31,
+    WARNING:  0x2b2d31,
+    EXPIRED:  0x2b2d31,
+    INFO:     0x2b2d31,
+    MUTED:    0x2b2d31,
   },
 };
