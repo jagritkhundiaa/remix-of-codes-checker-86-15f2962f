@@ -306,20 +306,14 @@ async function submitPasswordChange(pageHtml, email, oldPassword, newPassword, c
         return { email, success: false, error: "Password change form re-displayed (change failed)" };
       }
 
-      // Only confirm success with explicit indicators
+      // Only confirm success with EXPLICIT indicators — never assume
       if (changeText.includes("PasswordChanged") || changeText.includes("Your password has been changed") ||
           changeText.includes("password has been updated") || changeText.includes("You've successfully")) {
         return { email, success: true, newPassword };
       }
 
-      // If redirected away from /password/Change and no error indicators, likely success
-      if (!changeFinalUrl.includes("/password/Change") && !changeText.includes("error") && !changeText.includes("Error")) {
-        debug(`Redirected away from change page — cautious success`);
-        return { email, success: true, newPassword };
-      }
-
-      debug(`No clear success/error signal. First 300 chars: ${changeText.substring(0, 300)}`);
-      return { email, success: false, error: "Password change outcome unclear" };
+      debug(`No explicit success confirmation. URL: ${changeFinalUrl}, First 300 chars: ${changeText.substring(0, 300)}`);
+      return { email, success: false, error: "Password change not confirmed" };
     }
 
     // Try form-based approach
@@ -356,18 +350,13 @@ async function submitPasswordChange(pageHtml, email, oldPassword, newPassword, c
         return { email, success: false, error: "Password change form re-displayed (change failed)" };
       }
 
-      // Then check success
+      // Only confirm success with EXPLICIT indicators
       if (changeText.includes("PasswordChanged") || changeText.includes("Your password has been changed") ||
           changeText.includes("password has been updated") || changeText.includes("You've successfully")) {
         return { email, success: true, newPassword };
       }
 
-      // Redirected away from change page with no errors = likely success
-      if (!formFinalUrl.includes("/password/Change") && !changeText.includes("error")) {
-        return { email, success: true, newPassword };
-      }
-
-      return { email, success: false, error: "Password change did not confirm success" };
+      return { email, success: false, error: "Password change not confirmed" };
     }
 
     return { email, success: false, error: "Password change form not found" };
