@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Key, Code, Play, Loader2, CheckCircle, XCircle, RotateCcw, Users, Settings2, Hash } from 'lucide-react';
+import { Key, Code, Play, Loader2, CheckCircle, XCircle, Clock, AlertTriangle, RotateCcw, Users, Settings2, Hash } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { CodeInput } from '@/components/CodeInput';
 import { ResultCard } from '@/components/ResultCard';
@@ -66,7 +66,9 @@ export default function Index() {
 
   const checkStats = useMemo(() => ({
     valid: checkResults.filter(r => r.status === 'valid').length,
-    failed: checkResults.filter(r => r.status !== 'valid').length,
+    used: checkResults.filter(r => r.status === 'used').length,
+    expired: checkResults.filter(r => r.status === 'expired').length,
+    invalid: checkResults.filter(r => r.status === 'invalid').length,
     total: checkResults.length,
   }), [checkResults]);
 
@@ -75,8 +77,18 @@ export default function Index() {
     [checkResults]
   );
 
-  const failedCheckResults = useMemo(() => 
-    checkResults.filter(r => r.status !== 'valid').map(r => r.title ? `${r.code} | ${r.status} | ${r.title}` : `${r.code} | ${r.status}`),
+  const usedResults = useMemo(() => 
+    checkResults.filter(r => r.status === 'used').map(r => r.code),
+    [checkResults]
+  );
+
+  const expiredResults = useMemo(() => 
+    checkResults.filter(r => r.status === 'expired').map(r => r.title ? `${r.code} | ${r.title}` : r.code),
+    [checkResults]
+  );
+
+  const invalidResults = useMemo(() => 
+    checkResults.filter(r => r.status === 'invalid').map(r => r.code),
     [checkResults]
   );
 
@@ -425,24 +437,30 @@ export default function Index() {
 
             {/* Stats */}
             {checkResults.length > 0 && (
-              <div className="grid grid-cols-3 gap-4 max-w-xl mx-auto">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <StatsCard
-                  label="Success"
+                  label="Valid"
                   value={checkStats.valid}
                   icon={<CheckCircle className="w-5 h-5" />}
                   colorClass="text-success"
                 />
                 <StatsCard
-                  label="Failed"
-                  value={checkStats.failed}
+                  label="Used"
+                  value={checkStats.used}
                   icon={<XCircle className="w-5 h-5" />}
                   colorClass="text-destructive"
                 />
                 <StatsCard
-                  label="Total"
-                  value={checkStats.total}
-                  icon={<Hash className="w-5 h-5" />}
-                  colorClass="text-primary"
+                  label="Expired"
+                  value={checkStats.expired}
+                  icon={<Clock className="w-5 h-5" />}
+                  colorClass="text-expired"
+                />
+                <StatsCard
+                  label="Invalid"
+                  value={checkStats.invalid}
+                  icon={<AlertTriangle className="w-5 h-5" />}
+                  colorClass="text-warning"
                 />
               </div>
             )}
@@ -451,16 +469,28 @@ export default function Index() {
             {checkResults.length > 0 && (
               <div className="grid lg:grid-cols-2 gap-4">
                 <ResultCard
-                  title="Success"
+                  title="Valid Codes"
                   icon={<CheckCircle className="w-5 h-5" />}
                   items={validResults}
                   colorClass="text-success"
                 />
                 <ResultCard
-                  title="Failed"
+                  title="Used Codes"
                   icon={<XCircle className="w-5 h-5" />}
-                  items={failedCheckResults}
+                  items={usedResults}
                   colorClass="text-destructive"
+                />
+                <ResultCard
+                  title="Expired Codes"
+                  icon={<Clock className="w-5 h-5" />}
+                  items={expiredResults}
+                  colorClass="text-expired"
+                />
+                <ResultCard
+                  title="Invalid Codes"
+                  icon={<AlertTriangle className="w-5 h-5" />}
+                  items={invalidResults}
+                  colorClass="text-warning"
                 />
               </div>
             )}

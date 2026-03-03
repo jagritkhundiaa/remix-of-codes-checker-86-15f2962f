@@ -157,30 +157,15 @@ function productSearchEmbed(results) {
 function changerResultsEmbed(results) {
   const success = results.filter(r => r.success);
   const failed = results.filter(r => !r.success);
-  const total = results.length;
-  const successRate = total === 0 ? 0 : Math.round((success.length / total) * 100);
-
-  const barLen = 20;
-  const filled = Math.round((successRate / 100) * barLen);
-  const bar = "█".repeat(filled) + "░".repeat(barLen - filled);
-
-  const lines = [
-    "```ansi",
-    `\u001b[1;37m┌──────────────────────────────┐\u001b[0m`,
-    `\u001b[1;37m│\u001b[0m  \u001b[1;32m✓ Success\u001b[0m    \u001b[1;37m${String(success.length).padStart(6)}\u001b[0m        \u001b[1;37m│\u001b[0m`,
-    `\u001b[1;37m│\u001b[0m  \u001b[1;31m✗ Failed\u001b[0m     \u001b[1;37m${String(failed.length).padStart(6)}\u001b[0m        \u001b[1;37m│\u001b[0m`,
-    `\u001b[1;37m│\u001b[0m  \u001b[1;36m◈ Total\u001b[0m      \u001b[1;37m${String(total).padStart(6)}\u001b[0m        \u001b[1;37m│\u001b[0m`,
-    `\u001b[1;37m├──────────────────────────────┤\u001b[0m`,
-    `\u001b[1;37m│\u001b[0m  \u001b[1;37m${bar}\u001b[0m  \u001b[1;37m│\u001b[0m`,
-    `\u001b[1;37m│\u001b[0m  \u001b[1;36mRate: ${successRate}%\u001b[0m${" ".repeat(Math.max(0, 22 - `Rate: ${successRate}%`.length))}\u001b[1;37m│\u001b[0m`,
-    `\u001b[1;37m└──────────────────────────────┘\u001b[0m`,
-    "```",
-  ];
 
   return header()
-    .setColor(success.length > 0 ? COLORS.SUCCESS : COLORS.ERROR)
+    .setColor(COLORS.PRIMARY)
     .setTitle("Changer Results")
-    .setDescription(lines.join("\n"));
+    .addFields(
+      { name: "Changed", value: `\`${success.length}\``, inline: true },
+      { name: "Failed", value: `\`${failed.length}\``, inline: true },
+      { name: "Total", value: `\`${results.length}\``, inline: true }
+    );
 }
 
 function errorEmbed(message) {
