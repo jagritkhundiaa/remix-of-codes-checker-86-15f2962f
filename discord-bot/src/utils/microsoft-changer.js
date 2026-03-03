@@ -63,20 +63,18 @@ const DEFAULT_HEADERS = {
 async function changePassword(email, oldPassword, newPassword) {
   const cookieJar = [];
   const headers = { ...DEFAULT_HEADERS };
+  const debug = (step, msg) => console.log(`[CHANGER][${email}] Step ${step}: ${msg}`);
 
   try {
     // Step 1: Go to password change page - this will redirect to login.live.com
+    debug(1, "Navigating to account.live.com/password/Change");
     const { text: page1, finalUrl: url1 } = await sessionFetch(
       "https://account.live.com/password/Change",
       { headers },
       cookieJar
     );
-
-    // We should now be on a login page (login.live.com or login.microsoftonline.com)
-    // Extract PPFT and urlPost from whatever page we landed on
-    let ppft = null;
-    let urlPost = null;
-    let currentPage = page1;
+    debug(1, `Landed on: ${url1}`);
+    debug(1, `Page length: ${page1.length}, has sFT: ${page1.includes("sFT")}, has urlPost: ${page1.includes("urlPost")}, has PPFT: ${page1.includes("PPFT")}`);
 
     // Try multiple extraction patterns
     const ppftPatterns = [
@@ -90,6 +88,10 @@ async function changePassword(email, oldPassword, newPassword) {
       /urlPost:'([^']+)'/s,
     ];
 
+    let ppft = null;
+    let urlPost = null;
+    let currentPage = page1;
+
     for (const p of ppftPatterns) {
       const m = currentPage.match(p);
       if (m) { ppft = m[1]; break; }
@@ -99,14 +101,16 @@ async function changePassword(email, oldPassword, newPassword) {
       if (m) { urlPost = m[1]; break; }
     }
 
-    // If we didn't find login fields, maybe we need to look for a different login URL
+    // Fallback: try login.live.com directly
     if (!ppft || !urlPost) {
-      // Try going directly to login.live.com with wreply to password change
-      const { text: page2 } = await sessionFetch(
+      debug(2, "Login fields not found on page1, trying login.live.com with wreply");
+      const { text: page2, finalUrl: url2 } = await sessionFetch(
         "https://login.live.com/login.srf?wa=wsignin1.0&rpsnv=180&wreply=https%3A%2F%2Faccount.live.com%2Fpassword%2FChange",
         { headers },
         cookieJar
       );
+      debug(2, `Landed on: ${url2}`);
+      debug(2, `Page length: ${page2.length}, has sFT: ${page2.includes("sFT")}, has urlPost: ${page2.includes("urlPost")}, has PPFT: ${page2.includes("PPFT")}`);
       currentPage = page2;
 
       for (const p of ppftPatterns) {
@@ -119,8 +123,9 @@ async function changePassword(email, oldPassword, newPassword) {
       }
     }
 
+    // Last resort: generic value= pattern
     if (!ppft || !urlPost) {
-      // Last resort: try the generic value= pattern like the puller does
+      debug(2, "Still no fields, trying generic value= pattern");
       const valMatch = currentPage.match(/value=\\?"(.+?)\\?"/s) || currentPage.match(/value="(.+?)"/s);
       if (valMatch) ppft = valMatch[1];
       const upMatch = currentPage.match(/"urlPost":"(.+?)"/s) || currentPage.match(/urlPost:'(.+?)'/s);
@@ -128,8 +133,12 @@ async function changePassword(email, oldPassword, newPassword) {
     }
 
     if (!ppft || !urlPost) {
+      debug("FAIL", `ppft found: ${!!ppft}, urlPost found: ${!!urlPost}`);
+      debug("FAIL", `First 500 chars of page: ${currentPage.substring(0, 500)}`);
       return { email, success: false, error: "Could not extract login form" };
     }
+
+    debug(3, `Login fields extracted. ppft length: ${ppft.length}, urlPost: ${urlPost.substring(0, 80)}...`);
 
     // Step 2: Submit login credentials
     const loginBody = new URLSearchParams({
@@ -144,6 +153,9 @@ async function changePassword(email, oldPassword, newPassword) {
       headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
       body: loginBody.toString(),
     }, cookieJar);
+
+    debug(4, `After login URL: ${afterLoginUrl}`);
+    debug(4, `Page length: ${afterLogin.length}, has incorrect: ${afterLogin.includes("incorrect")}, has form: ${afterLogin.includes("<form")}`);
 
     // Check for login failure
     if (afterLogin.includes("incorrect") || afterLogin.includes("AADSTS50126") || 
@@ -161,42 +173,51 @@ async function changePassword(email, oldPassword, newPassword) {
     let finalPage = afterLogin;
     const formAction = afterLogin.match(/<form[^>]*action="([^"]+)"/);
     if (formAction) {
+      debug(5, `Found intermediate form, submitting to: ${formAction[1].substring(0, 80)}`);
       const inputMatches = [...afterLogin.matchAll(/<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"/g)];
       const formData = new URLSearchParams();
       for (const m of inputMatches) formData.append(m[1], m[2]);
-      const { text: nextPage } = await sessionFetch(formAction[1], {
+      const { text: nextPage, finalUrl: nextUrl } = await sessionFetch(formAction[1], {
         method: "POST",
         headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
         body: formData.toString(),
       }, cookieJar);
+      debug(5, `After form submission URL: ${nextUrl}`);
       finalPage = nextPage;
     }
 
-    // Step 4: Check if we landed on the password change page, or need to navigate there
-    if (!finalPage.includes("OldPassword") && !finalPage.includes("NewPassword") && !finalPage.includes("ChangePassword") && !finalPage.includes("apiCanary")) {
-      // Navigate to password change page now that we're logged in
-      const { text: pwdPage } = await sessionFetch(
+    // Step 4: Check if we landed on the password change page
+    const hasPwdForm = finalPage.includes("OldPassword") || finalPage.includes("NewPassword") || 
+                       finalPage.includes("ChangePassword") || finalPage.includes("apiCanary");
+    debug(6, `Has password form: ${hasPwdForm}, page length: ${finalPage.length}`);
+
+    if (!hasPwdForm) {
+      debug(6, "Navigating to password change page after login");
+      const { text: pwdPage, finalUrl: pwdUrl } = await sessionFetch(
         "https://account.live.com/password/Change",
         { headers },
         cookieJar
       );
+      debug(6, `Password page URL: ${pwdUrl}, length: ${pwdPage.length}`);
+      debug(6, `Has OldPassword: ${pwdPage.includes("OldPassword")}, has apiCanary: ${pwdPage.includes("apiCanary")}, has sFT: ${pwdPage.includes("sFT")}`);
       finalPage = pwdPage;
 
-      // Might need to re-verify identity - handle another login prompt
-      if (finalPage.includes("urlPost") && finalPage.includes("sFT")) {
+      // Might need to re-verify identity
+      if (finalPage.includes("urlPost") && finalPage.includes("sFT") && !finalPage.includes("OldPassword")) {
+        debug(7, "Re-authentication required");
         let ppft2 = null, urlPost2 = null;
         for (const p of ppftPatterns) { const m = finalPage.match(p); if (m) { ppft2 = m[1]; break; } }
         for (const p of urlPostPatterns) { const m = finalPage.match(p); if (m) { urlPost2 = m[1]; break; } }
         if (ppft2 && urlPost2) {
           const reAuthBody = new URLSearchParams({ login: email, loginfmt: email, passwd: oldPassword, PPFT: ppft2 });
-          const { text: reAuthPage } = await sessionFetch(urlPost2, {
+          const { text: reAuthPage, finalUrl: reAuthUrl } = await sessionFetch(urlPost2, {
             method: "POST",
             headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
             body: reAuthBody.toString(),
           }, cookieJar);
+          debug(7, `After re-auth URL: ${reAuthUrl}`);
           finalPage = reAuthPage;
           
-          // Handle post-reauth form
           const fa2 = finalPage.match(/<form[^>]*action="([^"]+)"/);
           if (fa2) {
             const im2 = [...finalPage.matchAll(/<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"/g)];
@@ -210,23 +231,29 @@ async function changePassword(email, oldPassword, newPassword) {
             finalPage = np2;
           }
 
-          // Navigate to password change again
           if (!finalPage.includes("OldPassword") && !finalPage.includes("apiCanary")) {
-            const { text: pwdPage2 } = await sessionFetch(
+            const { text: pwdPage2, finalUrl: pwdUrl2 } = await sessionFetch(
               "https://account.live.com/password/Change",
               { headers },
               cookieJar
             );
+            debug(7, `Final pwd page URL: ${pwdUrl2}, has OldPassword: ${pwdPage2.includes("OldPassword")}`);
             finalPage = pwdPage2;
           }
         }
+      }
+
+      if (!finalPage.includes("OldPassword") && !finalPage.includes("apiCanary") && !finalPage.includes("ChangePassword")) {
+        debug("FAIL", `First 500 chars of final page: ${finalPage.substring(0, 500)}`);
       }
     }
 
     return await submitPasswordChange(finalPage, email, oldPassword, newPassword, cookieJar, headers);
   } catch (err) {
+    debug("ERROR", err.message);
     return { email, success: false, error: err.message };
   }
+}
 }
 
 async function submitPasswordChange(pageHtml, email, oldPassword, newPassword, cookieJar, headers) {
