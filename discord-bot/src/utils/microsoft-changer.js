@@ -212,13 +212,61 @@ async function navigateToPasswordChange(cookieJar, headers, email, debug) {
   debug("S3", "Navigating to password change page");
   await randomDelay(500, 1500);
 
-  const { text: pwdPage, finalUrl: pwdUrl } = await sessionFetch(
+  let { text: pwdPage, finalUrl: pwdUrl } = await sessionFetch(
     "https://account.live.com/password/Change",
     { headers },
     cookieJar
   );
 
   debug("S3", `Password page URL: ${pwdUrl.substring(0, 80)}, len: ${pwdPage.length}`);
+
+  // Handle auto-submit / session establishment forms (fmHF, ar/cancel, etc.)
+  for (let i = 0; i < 5; i++) {
+    // Check if we've reached the actual password change page
+    if (pwdPage.includes("apiCanary") || pwdPage.includes("ChangePassword") || pwdPage.includes("NewPassword")) {
+      debug("S3", `Reached password change page after ${i} intermediate forms`);
+      break;
+    }
+
+    // Check for auto-submit forms (like fmHF with document.fmHF.submit())
+    const formMatch = pwdPage.match(/<form[^>]*(?:name="fmHF"|id="fmHF"|action="([^"]+)")[^>]*>/);
+    const actionMatch = pwdPage.match(/<form[^>]*action="([^"]+)"[^>]*>/);
+    
+    if (!actionMatch || actionMatch[1].includes("javascript")) {
+      debug("S3", `No submittable form found at step ${i}`);
+      break;
+    }
+
+    const action = actionMatch[1];
+    const fullAction = action.startsWith("http") ? action : new URL(action, pwdUrl).href;
+    debug("S3", `Submitting intermediate form ${i + 1}: ${fullAction.substring(0, 80)}`);
+
+    // Extract all hidden inputs
+    const inputMatches = [...pwdPage.matchAll(/<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"/g)];
+    const formData = new URLSearchParams();
+    for (const m of inputMatches) formData.append(m[1], m[2]);
+
+    const result = await sessionFetch(fullAction, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
+      body: formData.toString(),
+    }, cookieJar);
+
+    pwdPage = result.text;
+    pwdUrl = result.finalUrl;
+    debug("S3", `After form ${i + 1}: URL=${pwdUrl.substring(0, 80)}, len: ${pwdPage.length}`);
+  }
+
+  // If we still don't have the password page, try navigating again with fresh session
+  if (!pwdPage.includes("apiCanary") && !pwdPage.includes("ChangePassword") && !pwdPage.includes("NewPassword")) {
+    debug("S3", "Still not on password page after forms, retrying navigation...");
+    await randomDelay(1000, 2000);
+    const retryResult = await sessionFetch("https://account.live.com/password/Change", { headers }, cookieJar);
+    pwdPage = retryResult.text;
+    pwdUrl = retryResult.finalUrl;
+    debug("S3", `Retry: URL=${pwdUrl.substring(0, 80)}, len: ${pwdPage.length}`);
+  }
+
   debug("S3", `Has OldPassword: ${pwdPage.includes("OldPassword")}, Has apiCanary: ${pwdPage.includes("apiCanary")}`);
 
   if (pwdPage.length < 100 && (pwdPage.includes("Too Many") || pwdPage.includes("429"))) {
@@ -228,7 +276,8 @@ async function navigateToPasswordChange(cookieJar, headers, email, debug) {
   let currentPage = pwdPage;
 
   // Handle re-auth if the password page requires it
-  if (currentPage.includes("urlPost") && currentPage.includes("value=") && !currentPage.includes("OldPassword")) {
+  if (currentPage.includes("urlPost") && currentPage.includes("value=") && 
+      !currentPage.includes("apiCanary") && !currentPage.includes("ChangePassword")) {
     debug("S3", "Re-authentication required on password page");
     const ppftMatch = currentPage.match(/sFT\s*:\s*'([^']+)'/s) ||
                       currentPage.match(/value=\\?"(.+?)\\?"/s) ||
@@ -242,7 +291,7 @@ async function navigateToPasswordChange(cookieJar, headers, email, debug) {
   }
 
   // Debug: log what we actually got
-  if (!currentPage.includes("OldPassword") && !currentPage.includes("apiCanary")) {
+  if (!currentPage.includes("apiCanary") && !currentPage.includes("ChangePassword")) {
     debug("S3", `Page does NOT contain password form. First 500 chars: ${currentPage.substring(0, 500)}`);
   }
 
