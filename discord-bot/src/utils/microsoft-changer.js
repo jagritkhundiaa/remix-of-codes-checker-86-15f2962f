@@ -254,7 +254,6 @@ async function changePassword(email, oldPassword, newPassword) {
     return { email, success: false, error: err.message };
   }
 }
-}
 
 async function submitPasswordChange(pageHtml, email, oldPassword, newPassword, cookieJar, headers) {
   try {
