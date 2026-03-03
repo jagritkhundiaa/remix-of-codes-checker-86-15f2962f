@@ -14,6 +14,16 @@ const config = require("../config");
 
 let proxies = [];
 let currentIndex = 0;
+let proxyStats = { total: 0, success: 0, failed: 0 };
+
+function resetProxyStats() {
+  proxyStats = { total: 0, success: 0, failed: 0 };
+}
+
+function getProxyStats() {
+  const rate = proxyStats.total > 0 ? Math.round((proxyStats.success / proxyStats.total) * 100) : 0;
+  return { ...proxyStats, successRate: rate };
+}
 
 /**
  * Parse any proxy format into a normalized { protocol, host, port, username, password } object.
@@ -205,18 +215,18 @@ async function proxiedFetch(url, options = {}) {
   }
 
   const agent = createAgent(proxy);
+  proxyStats.total++;
 
-  // node-fetch and undici support the `agent` or `dispatcher` option
-  // For Node 18+ built-in fetch, we need to use the agent differently
   try {
     const response = await fetch(url, {
       ...options,
-      agent, // Works with node-fetch
-      dispatcher: agent, // Works with undici
+      agent,
+      dispatcher: agent,
     });
+    proxyStats.success++;
     return response;
   } catch (err) {
-    // If proxy fails, log and try direct
+    proxyStats.failed++;
     console.warn(`[Proxy] Failed via ${proxy.host}:${proxy.port}: ${err.message}`);
     return fetch(url, options);
   }
@@ -236,6 +246,8 @@ module.exports = {
   getRandomProxy,
   isProxyEnabled,
   getProxyCount,
+  getProxyStats,
+  resetProxyStats,
   proxiedFetch,
   parseProxy,
 };

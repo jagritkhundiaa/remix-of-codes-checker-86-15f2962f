@@ -10,7 +10,8 @@ const { ConcurrencyLimiter } = require("./utils/concurrency");
 const { checkCodes } = require("./utils/microsoft-checker");
 const { claimWlids } = require("./utils/microsoft-claimer");
 const { pullCodes } = require("./utils/microsoft-puller");
-const { loadProxies, isProxyEnabled, getProxyCount, reloadProxies } = require("./utils/proxy-manager");
+const { loadProxies, isProxyEnabled, getProxyCount, getProxyStats, reloadProxies } = require("./utils/proxy-manager");
+const blacklist = require("./utils/blacklist");
 const { setWlids, getWlids, getWlidCount } = require("./utils/wlid-store");
 const {
   progressEmbed,
@@ -48,6 +49,7 @@ function isOwner(userId) {
 }
 
 function canUse(userId) {
+  if (blacklist.isBlacklisted(userId)) return false;
   return isOwner(userId) || auth.isAuthorized(userId);
 }
 
@@ -100,8 +102,8 @@ async function handleWlidSet(respond, userId, wlidsRaw, wlidsFile) {
 
 // ── Check handler ────────────────────────────────────────────
 
-async function handleCheck(respond, userId, wlidsRaw, codesRaw, codesFile, threads = 10) {
-  if (!canUse(userId)) return respond({ embeds: [errorEmbed("You are not authorized to use this bot.")] });
+async function handleCheck(respond, userId, wlidsRaw, codesRaw, codesFile, threads = 10, dmUser = null) {
+  if (!canUse(userId)) return respond({ embeds: [errorEmbed(blacklist.isBlacklisted(userId) ? "You are blacklisted." : "You are not authorized to use this bot.")] });
 
   const acquire = limiter.acquire(userId, "check");
   if (!acquire.ok) {
@@ -157,7 +159,17 @@ async function handleCheck(respond, userId, wlidsRaw, codesRaw, codesFile, threa
 
     const embed = checkResultsEmbed(results);
     if (stopped) embed.setTitle("Check Results (Stopped)");
-    await msg.edit({ embeds: [embed], files, components: [] });
+
+    if (dmUser) {
+      try {
+        await dmUser.send({ embeds: [embed], files });
+        await msg.edit({ embeds: [infoEmbed("Check Complete", "Results sent to your DMs.")], components: [] });
+      } catch {
+        await msg.edit({ embeds: [embed], files, components: [] });
+      }
+    } else {
+      await msg.edit({ embeds: [embed], files, components: [] });
+    }
   } catch (err) {
     await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
   } finally {
@@ -168,8 +180,8 @@ async function handleCheck(respond, userId, wlidsRaw, codesRaw, codesFile, threa
 
 // ── Claim handler ────────────────────────────────────────────
 
-async function handleClaim(respond, userId, accountsRaw, accountsFile, threads = 5) {
-  if (!canUse(userId)) return respond({ embeds: [errorEmbed("You are not authorized to use this bot.")] });
+async function handleClaim(respond, userId, accountsRaw, accountsFile, threads = 5, dmUser = null) {
+  if (!canUse(userId)) return respond({ embeds: [errorEmbed(blacklist.isBlacklisted(userId) ? "You are blacklisted." : "You are not authorized to use this bot.")] });
 
   const acquire = limiter.acquire(userId, "claim");
   if (!acquire.ok) {
@@ -218,7 +230,17 @@ async function handleClaim(respond, userId, accountsRaw, accountsFile, threads =
 
     const embed = claimResultsEmbed(results);
     if (stopped) embed.setTitle("Claim Results (Stopped)");
-    await msg.edit({ embeds: [embed], files, components: [] });
+
+    if (dmUser) {
+      try {
+        await dmUser.send({ embeds: [embed], files });
+        await msg.edit({ embeds: [infoEmbed("Claim Complete", "Results sent to your DMs.")], components: [] });
+      } catch {
+        await msg.edit({ embeds: [embed], files, components: [] });
+      }
+    } else {
+      await msg.edit({ embeds: [embed], files, components: [] });
+    }
   } catch (err) {
     await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
   } finally {
@@ -229,8 +251,8 @@ async function handleClaim(respond, userId, accountsRaw, accountsFile, threads =
 
 // ── Pull handler ─────────────────────────────────────────────
 
-async function handlePull(respond, userId, accountsRaw, accountsFile) {
-  if (!canUse(userId)) return respond({ embeds: [errorEmbed("You are not authorized to use this bot.")] });
+async function handlePull(respond, userId, accountsRaw, accountsFile, dmUser = null) {
+  if (!canUse(userId)) return respond({ embeds: [errorEmbed(blacklist.isBlacklisted(userId) ? "You are blacklisted." : "You are not authorized to use this bot.")] });
 
   const acquire = limiter.acquire(userId, "pull");
   if (!acquire.ok) {
@@ -312,7 +334,17 @@ async function handlePull(respond, userId, accountsRaw, accountsFile) {
 
     const embed = pullResultsEmbed(fetchResults, validateResults);
     if (stopped) embed.setTitle("Pull Results (Stopped)");
-    await msg.edit({ embeds: [embed], files, components: [] });
+
+    if (dmUser) {
+      try {
+        await dmUser.send({ embeds: [embed], files });
+        await msg.edit({ embeds: [infoEmbed("Pull Complete", "Results sent to your DMs.")], components: [] });
+      } catch {
+        await msg.edit({ embeds: [embed], files, components: [] });
+      }
+    } else {
+      await msg.edit({ embeds: [embed], files, components: [] });
+    }
   } catch (err) {
     await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
   } finally {
@@ -349,7 +381,13 @@ async function handleStats(respond) {
   const activeCount = limiter.getActiveCount();
   const authCount = auth.getAllAuthorized().length;
   const wlidCount = getWlidCount();
+  const blCount = blacklist.getCount();
   const proxyStatus = isProxyEnabled() ? `Enabled (${getProxyCount()} loaded)` : "Disabled";
+  const ps = getProxyStats();
+  const proxyLine = isProxyEnabled()
+    ? `Proxies: \`${proxyStatus}\`\nProxy requests: \`${ps.total}\` (${ps.successRate}% success)`
+    : `Proxies: \`${proxyStatus}\``;
+
   return respond({
     embeds: [
       infoEmbed(
@@ -357,14 +395,43 @@ async function handleStats(respond) {
         [
           `Active sessions: \`${activeCount}/${config.MAX_CONCURRENT_USERS}\``,
           `Authorized users: \`${authCount}\``,
+          `Blacklisted users: \`${blCount}\``,
           `Stored WLIDs: \`${wlidCount}\``,
-          `Proxies: \`${proxyStatus}\``,
+          proxyLine,
           `Uptime: \`${formatUptime(process.uptime())}\``,
           `Ping: \`${client.ws.ping}ms\``,
         ].join("\n")
       ),
     ],
   });
+}
+
+// ── Blacklist handlers ──────────────────────────────────────
+
+async function handleBlacklist(respond, callerId, targetId, reason) {
+  if (!isOwner(callerId)) return respond({ embeds: [errorEmbed("Only the bot owner can blacklist users.")] });
+  if (targetId === callerId) return respond({ embeds: [errorEmbed("You cannot blacklist yourself.")] });
+  blacklist.add(targetId, reason || "No reason");
+  return respond({ embeds: [successEmbed(`<@${targetId}> has been blacklisted.\nReason: ${reason || "No reason"}`)] });
+}
+
+async function handleUnblacklist(respond, callerId, targetId) {
+  if (!isOwner(callerId)) return respond({ embeds: [errorEmbed("Only the bot owner can unblacklist users.")] });
+  const removed = blacklist.remove(targetId);
+  if (!removed) return respond({ embeds: [errorEmbed("That user is not blacklisted.")] });
+  return respond({ embeds: [successEmbed(`<@${targetId}> has been removed from the blacklist.`)] });
+}
+
+async function handleBlacklistShow(respond) {
+  const entries = blacklist.getAll();
+  if (entries.length === 0) {
+    return respond({ embeds: [infoEmbed("Blacklist", "No blacklisted users.")] });
+  }
+  const lines = entries.map((e, i) => {
+    const date = `<t:${Math.floor(e.addedAt / 1000)}:R>`;
+    return `\`${i + 1}.\` <@${e.userId}> — ${e.reason} (${date})`;
+  });
+  return respond({ embeds: [infoEmbed("Blacklist", lines.join("\n"))] });
 }
 
 function formatUptime(seconds) {
@@ -410,7 +477,8 @@ client.on("interactionCreate", async (interaction) => {
       const codes = interaction.options.getString("codes");
       const codesFile = interaction.options.getAttachment("codes_file");
       const threads = interaction.options.getInteger("threads") || 10;
-      await handleCheck(respond, user.id, wlids, codes, codesFile, threads);
+      const dm = interaction.options.getBoolean("dm") || false;
+      await handleCheck(respond, user.id, wlids, codes, codesFile, threads, dm ? user : null);
     }
 
     else if (commandName === "claim") {
@@ -418,14 +486,16 @@ client.on("interactionCreate", async (interaction) => {
       const accounts = interaction.options.getString("accounts");
       const accountsFile = interaction.options.getAttachment("accounts_file");
       const threads = interaction.options.getInteger("threads") || 5;
-      await handleClaim(respond, user.id, accounts, accountsFile, threads);
+      const dm = interaction.options.getBoolean("dm") || false;
+      await handleClaim(respond, user.id, accounts, accountsFile, threads, dm ? user : null);
     }
 
     else if (commandName === "pull") {
       await interaction.deferReply();
       const accounts = interaction.options.getString("accounts");
       const accountsFile = interaction.options.getAttachment("accounts_file");
-      await handlePull(respond, user.id, accounts, accountsFile);
+      const dm = interaction.options.getBoolean("dm") || false;
+      await handlePull(respond, user.id, accounts, accountsFile, dm ? user : null);
     }
 
     else if (commandName === "wlidset") {
@@ -447,6 +517,21 @@ client.on("interactionCreate", async (interaction) => {
 
     else if (commandName === "authlist") {
       await handleAuthList(respond);
+    }
+
+    else if (commandName === "blacklist") {
+      const target = interaction.options.getUser("user");
+      const reason = interaction.options.getString("reason");
+      await handleBlacklist(respond, user.id, target.id, reason);
+    }
+
+    else if (commandName === "unblacklist") {
+      const target = interaction.options.getUser("user");
+      await handleUnblacklist(respond, user.id, target.id);
+    }
+
+    else if (commandName === "blacklistshow") {
+      await handleBlacklistShow(respond);
     }
 
     else if (commandName === "stats") {
@@ -476,35 +561,38 @@ client.on("messageCreate", async (message) => {
 
   try {
     if (cmd === "check") {
-      // .check — uses stored WLIDs if no WLIDs provided inline
-      // attach codes.txt for codes
-      const wlidsRaw = args.join(" ");
+      const hasDm = args.includes("--dm");
+      const filteredArgs = args.filter(a => a !== "--dm");
+      const wlidsRaw = filteredArgs.join(" ");
       const attachment = message.attachments.first();
-      // If no args and no attachment, show usage
       if (!wlidsRaw && !attachment) {
         const storedCount = getWlidCount();
         const storedInfo = storedCount > 0 ? `\n\n**${storedCount} WLIDs stored** — just attach codes.txt to use them.` : "\n\nNo WLIDs stored. Use `.wlidset` first or provide WLIDs inline.";
-        return respond({ embeds: [infoEmbed("Usage", "`.check [wlid_tokens]` + attach codes.txt\n\nIf WLIDs are stored via `.wlidset`, just attach codes.\nOr provide WLIDs directly." + storedInfo)] });
+        return respond({ embeds: [infoEmbed("Usage", "`.check [wlid_tokens]` + attach codes.txt [--dm]\n\nIf WLIDs are stored via `.wlidset`, just attach codes.\nAdd `--dm` to receive results in DMs." + storedInfo)] });
       }
-      await handleCheck(respond, message.author.id, wlidsRaw, null, attachment, 10);
+      await handleCheck(respond, message.author.id, wlidsRaw, null, attachment, 10, hasDm ? message.author : null);
     }
 
     else if (cmd === "claim") {
-      const accountsRaw = args.join(" ");
+      const hasDm = args.includes("--dm");
+      const filteredArgs = args.filter(a => a !== "--dm");
+      const accountsRaw = filteredArgs.join(" ");
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) {
-        return respond({ embeds: [infoEmbed("Usage", "`.claim <accounts>`\nProvide email:password comma-separated or attach a `.txt` file.\n\nExample:\n`.claim email@test.com:pass123`")] });
+        return respond({ embeds: [infoEmbed("Usage", "`.claim <accounts>` [--dm]\nProvide email:password comma-separated or attach a `.txt` file.\nAdd `--dm` to receive results in DMs.\n\nExample:\n`.claim email@test.com:pass123 --dm`")] });
       }
-      await handleClaim(respond, message.author.id, accountsRaw, attachment, 5);
+      await handleClaim(respond, message.author.id, accountsRaw, attachment, 5, hasDm ? message.author : null);
     }
 
     else if (cmd === "pull") {
-      const accountsRaw = args.join(" ");
+      const hasDm = args.includes("--dm");
+      const filteredArgs = args.filter(a => a !== "--dm");
+      const accountsRaw = filteredArgs.join(" ");
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) {
-        return respond({ embeds: [infoEmbed("Usage", "`.pull <accounts>`\nProvide email:password comma-separated or attach a `.txt` file.\n\nFetches codes from Game Pass accounts and validates them.\n\nExample:\n`.pull email@test.com:pass123`")] });
+        return respond({ embeds: [infoEmbed("Usage", "`.pull <accounts>` [--dm]\nProvide email:password comma-separated or attach a `.txt` file.\nAdd `--dm` to receive results in DMs.\n\nExample:\n`.pull email@test.com:pass123 --dm`")] });
       }
-      await handlePull(respond, message.author.id, accountsRaw, attachment);
+      await handlePull(respond, message.author.id, accountsRaw, attachment, hasDm ? message.author : null);
     }
 
     else if (cmd === "wlidset") {
@@ -536,6 +624,27 @@ client.on("messageCreate", async (message) => {
 
     else if (cmd === "authlist") {
       await handleAuthList(respond);
+    }
+
+    else if (cmd === "blacklist") {
+      if (args.length < 1) {
+        return respond({ embeds: [infoEmbed("Usage", "`.blacklist <@user or user_id> [reason]`")] });
+      }
+      let targetId = args[0].replace(/[<@!>]/g, "");
+      const reason = args.slice(1).join(" ") || "No reason";
+      await handleBlacklist(respond, message.author.id, targetId, reason);
+    }
+
+    else if (cmd === "unblacklist") {
+      if (args.length < 1) {
+        return respond({ embeds: [infoEmbed("Usage", "`.unblacklist <@user or user_id>`")] });
+      }
+      let targetId = args[0].replace(/[<@!>]/g, "");
+      await handleUnblacklist(respond, message.author.id, targetId);
+    }
+
+    else if (cmd === "blacklistshow") {
+      await handleBlacklistShow(respond);
     }
 
     else if (cmd === "stats") {
