@@ -120,6 +120,11 @@ async function initiateRecovery(email) {
       return { success: false, error: "Could not find ACSR form URL", phase: "init" };
     }
 
+    // Resolve relative URLs to absolute
+    if (urlPost && !urlPost.startsWith("http")) {
+      urlPost = new URL(urlPost, finalUrl).href;
+    }
+
     // Step 2: Submit the email address
     const formBody = new URLSearchParams();
     formBody.append("login", email);
