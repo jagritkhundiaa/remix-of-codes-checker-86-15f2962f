@@ -53,9 +53,21 @@ async function sessionFetch(url, options, cookieJar, label = "") {
   let currentUrl = url;
   let method = options.method || "GET";
   let body = options.body;
-  let maxRedirects = 20;
+  let maxRedirects = 60;
+
+  const seenTransitions = new Map();
+  const trail = [];
 
   while (maxRedirects-- > 0) {
+    const bodyKey = typeof body === "string" ? body.slice(0, 180) : "";
+    const transitionKey = `${method} ${currentUrl} ${bodyKey}`;
+    const seenCount = (seenTransitions.get(transitionKey) || 0) + 1;
+    seenTransitions.set(transitionKey, seenCount);
+
+    if (seenCount > 4) {
+      throw new Error(`Redirect loop detected at ${currentUrl}`);
+    }
+
     log(`${label} ${method} ${currentUrl}`);
 
     const res = await proxiedFetch(currentUrl, {
@@ -72,14 +84,23 @@ async function sessionFetch(url, options, cookieJar, label = "") {
     cookieJar.extractFromResponse(res);
 
     const status = res.status;
+    trail.push(`${status}:${currentUrl}`);
     log(`${label} -> ${status}`);
 
     // HTTP redirect
     if (status >= 300 && status < 400) {
       const location = res.headers.get("location");
       if (!location) break;
-      currentUrl = resolveUrl(location, currentUrl);
-      log(`${label} redirect -> ${currentUrl}`);
+
+      const nextUrl = resolveUrl(location, currentUrl);
+      log(`${label} redirect -> ${nextUrl}`);
+
+      if (nextUrl === currentUrl) {
+        const text = await res.text();
+        return { res, text, finalUrl: currentUrl };
+      }
+
+      currentUrl = nextUrl;
       if (status !== 307 && status !== 308) {
         method = "GET";
         body = undefined;
@@ -90,32 +111,49 @@ async function sessionFetch(url, options, cookieJar, label = "") {
 
     const text = await res.text();
 
+    // If we already have meaningful recovery markers, stop auto-following and return this page.
+    if (hasRecoveryPageMarkers(text)) {
+      return { res, text, finalUrl: currentUrl };
+    }
+
     // Check for JS-disabled / intermediate pages and auto-submit
     const intermediateResult = detectIntermediatePage(text, currentUrl);
     if (intermediateResult) {
       log(`${label} intermediate page detected: ${intermediateResult.type}`);
-      if (intermediateResult.type === "meta_refresh") {
-        currentUrl = intermediateResult.url;
+
+      if (!intermediateResult.url) {
+        return { res, text, finalUrl: currentUrl };
+      }
+
+      if (intermediateResult.type === "meta_refresh" || intermediateResult.type === "js_redirect") {
+        const nextUrl = intermediateResult.url;
+        if (nextUrl === currentUrl) {
+          return { res, text, finalUrl: currentUrl };
+        }
+        currentUrl = nextUrl;
         method = "GET";
         body = undefined;
         continue;
       }
-      if (intermediateResult.type === "js_redirect") {
-        currentUrl = intermediateResult.url;
-        method = "GET";
-        body = undefined;
-        continue;
-      }
+
       if (intermediateResult.type === "auto_form") {
-        currentUrl = intermediateResult.url;
+        const nextUrl = intermediateResult.url;
+        const nextBody = intermediateResult.body || "";
+
+        if (nextUrl === currentUrl && method === "POST" && (typeof body === "string" ? body : "") === nextBody) {
+          return { res, text, finalUrl: currentUrl };
+        }
+
+        currentUrl = nextUrl;
         method = "POST";
-        body = intermediateResult.body;
+        body = nextBody;
         options = {
           ...options,
           headers: {
             ...options.headers,
             "Content-Type": "application/x-www-form-urlencoded",
             Referer: intermediateResult.referer,
+            "Sec-Fetch-Site": "same-origin",
           },
         };
         continue;
@@ -125,7 +163,7 @@ async function sessionFetch(url, options, cookieJar, label = "") {
     return { res, text, finalUrl: currentUrl };
   }
 
-  throw new Error("Too many redirects");
+  throw new Error(`Too many redirects (${trail.slice(-12).join(" -> ")})`);
 }
 
 /**
@@ -170,6 +208,24 @@ function detectIntermediatePage(html, pageUrl) {
   }
 
   return null;
+}
+
+/**
+ * Stop auto-navigation if page already contains meaningful recovery markers.
+ */
+function hasRecoveryPageMarkers(html) {
+  return [
+    "name=\"PPFT\"",
+    "urlPost",
+    "sFTTag",
+    "flowtoken",
+    "ProofConfirmation",
+    "hipImage",
+    "funcaptcha",
+    "ResetPassword",
+    "NewPassword",
+    "iResetPwdInput",
+  ].some((marker) => html.includes(marker));
 }
 
 /**
