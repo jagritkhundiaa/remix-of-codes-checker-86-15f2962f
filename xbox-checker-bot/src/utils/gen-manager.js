@@ -1,7 +1,3 @@
-// ============================================================
-//  Gen Manager — stock, categories, tiers, user tracking
-// ============================================================
-
 const fs = require("fs");
 const path = require("path");
 
@@ -39,7 +35,6 @@ class GenManager {
       categories: [],
       premium_users: {},
     });
-    // migrate old configs
     if (!this.config.categories) this.config.categories = [];
     if (!this.config.premium_users) this.config.premium_users = {};
     if (!this.config.free_limit) this.config.free_limit = 20;
@@ -51,19 +46,14 @@ class GenManager {
     saveJSON(CONFIG_FILE, this.config);
   }
 
-  // ── Categories ───────────────────────────────────────────
-
-  getCategories() {
-    return [...this.config.categories];
-  }
+  getCategories() { return [...this.config.categories]; }
 
   addCategory(name) {
     const key = name.toLowerCase().trim();
     if (this.config.categories.includes(key)) return false;
     this.config.categories.push(key);
-    // create empty stock file
-    const stockFile = path.join(STOCK_DIR, `${key}.txt`);
-    if (!fs.existsSync(stockFile)) fs.writeFileSync(stockFile, "");
+    const f = path.join(STOCK_DIR, `${key}.txt`);
+    if (!fs.existsSync(f)) fs.writeFileSync(f, "");
     this.save();
     return true;
   }
@@ -73,8 +63,8 @@ class GenManager {
     const idx = this.config.categories.indexOf(key);
     if (idx === -1) return false;
     this.config.categories.splice(idx, 1);
-    const stockFile = path.join(STOCK_DIR, `${key}.txt`);
-    if (fs.existsSync(stockFile)) fs.unlinkSync(stockFile);
+    const f = path.join(STOCK_DIR, `${key}.txt`);
+    if (fs.existsSync(f)) fs.unlinkSync(f);
     this.save();
     return true;
   }
@@ -83,162 +73,121 @@ class GenManager {
     return this.config.categories.includes(name.toLowerCase().trim());
   }
 
-  // ── Stock ────────────────────────────────────────────────
-
   getStock(category) {
-    const key = category.toLowerCase().trim();
-    const file = path.join(STOCK_DIR, `${key}.txt`);
-    if (!fs.existsSync(file)) return [];
-    return fs.readFileSync(file, "utf-8").split(/\r?\n/).filter((l) => l.trim());
+    const f = path.join(STOCK_DIR, `${category.toLowerCase().trim()}.txt`);
+    if (!fs.existsSync(f)) return [];
+    return fs.readFileSync(f, "utf-8").split(/\r?\n/).filter((l) => l.trim());
   }
 
-  getStockCount(category) {
-    return this.getStock(category).length;
-  }
+  getStockCount(cat) { return this.getStock(cat).length; }
 
   getAllStockCounts() {
-    const counts = {};
-    for (const cat of this.config.categories) {
-      counts[cat] = this.getStockCount(cat);
-    }
-    return counts;
+    const out = {};
+    for (const c of this.config.categories) out[c] = this.getStockCount(c);
+    return out;
   }
 
   addStock(category, lines) {
     const key = category.toLowerCase().trim();
     if (!this.categoryExists(key)) return 0;
-    const file = path.join(STOCK_DIR, `${key}.txt`);
+    const f = path.join(STOCK_DIR, `${key}.txt`);
     const existing = this.getStock(key);
-    const newLines = lines.filter((l) => l.trim());
-    const combined = [...existing, ...newLines];
-    fs.writeFileSync(file, combined.join("\n"));
-    return newLines.length;
+    const clean = lines.filter((l) => l.trim());
+    fs.writeFileSync(f, [...existing, ...clean].join("\n"));
+    return clean.length;
   }
 
   pullOne(category) {
     const key = category.toLowerCase().trim();
-    const file = path.join(STOCK_DIR, `${key}.txt`);
+    const f = path.join(STOCK_DIR, `${key}.txt`);
     const lines = this.getStock(key);
-    if (lines.length === 0) return null;
+    if (!lines.length) return null;
     const item = lines.shift();
-    fs.writeFileSync(file, lines.join("\n"));
+    fs.writeFileSync(f, lines.join("\n"));
     return item;
   }
 
   clearStock(category) {
-    const key = category.toLowerCase().trim();
-    const file = path.join(STOCK_DIR, `${key}.txt`);
-    if (fs.existsSync(file)) fs.writeFileSync(file, "");
+    const f = path.join(STOCK_DIR, `${category.toLowerCase().trim()}.txt`);
+    if (fs.existsSync(f)) fs.writeFileSync(f, "");
   }
 
-  // ── Premium ──────────────────────────────────────────────
+  isPremium(uid) { return !!this.config.premium_users[String(uid)]; }
 
-  isPremium(userId) {
-    return !!this.config.premium_users[String(userId)];
-  }
-
-  addPremium(userId) {
-    this.config.premium_users[String(userId)] = { addedAt: Date.now() };
+  addPremium(uid) {
+    this.config.premium_users[String(uid)] = { addedAt: Date.now() };
     this.save();
   }
 
-  removePremium(userId) {
-    delete this.config.premium_users[String(userId)];
+  removePremium(uid) {
+    delete this.config.premium_users[String(uid)];
     this.save();
   }
 
-  getPremiumUsers() {
-    return Object.keys(this.config.premium_users);
+  getPremiumUsers() { return Object.keys(this.config.premium_users); }
+
+  getFreeLimit() { return this.config.free_limit; }
+  getPremiumLimit() { return this.config.premium_limit; }
+
+  setFreeLimit(n) { this.config.free_limit = n; this.save(); }
+  setPremiumLimit(n) { this.config.premium_limit = n; this.save(); }
+
+  getDailyLimit(uid) {
+    return this.isPremium(uid) ? this.config.premium_limit : this.config.free_limit;
   }
 
-  // ── Limits ───────────────────────────────────────────────
-
-  getFreeLimit() {
-    return this.config.free_limit;
-  }
-
-  getPremiumLimit() {
-    return this.config.premium_limit;
-  }
-
-  setFreeLimit(n) {
-    this.config.free_limit = n;
-    this.save();
-  }
-
-  setPremiumLimit(n) {
-    this.config.premium_limit = n;
-    this.save();
-  }
-
-  getDailyLimit(userId) {
-    return this.isPremium(userId) ? this.config.premium_limit : this.config.free_limit;
-  }
-
-  // ── User tracking ────────────────────────────────────────
-
-  _ensureUser(userId) {
-    const uid = String(userId);
-    if (!this.users[uid]) {
-      this.users[uid] = {
-        total_generated: 0,
-        daily_generated: 0,
-        daily_reset: this._todayKey(),
-        history: {},
-      };
+  _ensureUser(uid) {
+    const id = String(uid);
+    if (!this.users[id]) {
+      this.users[id] = { total_generated: 0, daily_generated: 0, daily_reset: this._today(), history: {} };
     }
-    // reset daily if new day
-    if (this.users[uid].daily_reset !== this._todayKey()) {
-      this.users[uid].daily_generated = 0;
-      this.users[uid].daily_reset = this._todayKey();
+    if (this.users[id].daily_reset !== this._today()) {
+      this.users[id].daily_generated = 0;
+      this.users[id].daily_reset = this._today();
     }
-    return this.users[uid];
+    return this.users[id];
   }
 
-  _todayKey() {
-    return new Date().toISOString().slice(0, 10);
+  _today() { return new Date().toISOString().slice(0, 10); }
+
+  canGenerate(uid) {
+    const u = this._ensureUser(uid);
+    return u.daily_generated < this.getDailyLimit(uid);
   }
 
-  canGenerate(userId) {
-    const user = this._ensureUser(userId);
-    const limit = this.getDailyLimit(userId);
-    return user.daily_generated < limit;
+  getRemainingGens(uid) {
+    const u = this._ensureUser(uid);
+    return Math.max(0, this.getDailyLimit(uid) - u.daily_generated);
   }
 
-  getRemainingGens(userId) {
-    const user = this._ensureUser(userId);
-    const limit = this.getDailyLimit(userId);
-    return Math.max(0, limit - user.daily_generated);
-  }
-
-  recordGen(userId, category) {
-    const user = this._ensureUser(userId);
-    user.total_generated++;
-    user.daily_generated++;
-    if (!user.history[category]) user.history[category] = 0;
-    user.history[category]++;
+  recordGen(uid, category) {
+    const u = this._ensureUser(uid);
+    u.total_generated++;
+    u.daily_generated++;
+    if (!u.history[category]) u.history[category] = 0;
+    u.history[category]++;
     this.save();
   }
 
-  getUserStats(userId) {
-    const user = this._ensureUser(userId);
+  getUserStats(uid) {
+    const u = this._ensureUser(uid);
     return {
-      total: user.total_generated,
-      today: user.daily_generated,
-      remaining: this.getRemainingGens(userId),
-      limit: this.getDailyLimit(userId),
-      premium: this.isPremium(userId),
-      history: { ...user.history },
+      total: u.total_generated,
+      today: u.daily_generated,
+      remaining: this.getRemainingGens(uid),
+      limit: this.getDailyLimit(uid),
+      premium: this.isPremium(uid),
+      history: { ...u.history },
     };
   }
 
-  generate(userId, category) {
+  generate(uid, category) {
     if (!this.categoryExists(category)) return { error: "category_not_found" };
-    if (!this.canGenerate(userId)) return { error: "limit_reached" };
+    if (!this.canGenerate(uid)) return { error: "limit_reached" };
     const item = this.pullOne(category);
     if (!item) return { error: "out_of_stock" };
-    this.recordGen(userId, category);
-    return { success: true, item, remaining: this.getRemainingGens(userId) };
+    this.recordGen(uid, category);
+    return { success: true, item, remaining: this.getRemainingGens(uid) };
   }
 }
 

@@ -1,15 +1,6 @@
-// ============================================================
-//  Xbox Checker + Gen Bot — Discord Bot
-// ============================================================
-
 const {
-  Client,
-  GatewayIntentBits,
-  EmbedBuilder,
-  AttachmentBuilder,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
+  Client, GatewayIntentBits, EmbedBuilder, AttachmentBuilder,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle,
 } = require("discord.js");
 
 const config = require("./config");
@@ -17,557 +8,380 @@ const { checkAccounts } = require("./utils/xbox-checker");
 const { GenManager } = require("./utils/gen-manager");
 
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-  ],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
 });
 
 const gen = new GenManager();
 const activeAborts = new Map();
 
-// ── Helpers ──────────────────────────────────────────────────
-
-function isOwner(userId) {
-  return userId === config.OWNER_ID;
-}
+function isOwner(id) { return id === config.OWNER_ID; }
 
 function splitInput(raw) {
   if (!raw) return [];
   return raw.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
 }
 
-async function fetchAttachmentLines(attachment) {
+async function fetchLines(att) {
   try {
-    const res = await fetch(attachment.url);
-    const text = await res.text();
-    return text.split(/\r?\n/).filter((l) => l.trim());
-  } catch {
-    return [];
-  }
+    const r = await fetch(att.url);
+    return (await r.text()).split(/\r?\n/).filter((l) => l.trim());
+  } catch { return []; }
 }
 
-function stopButton(userId) {
+function stopBtn(uid) {
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`xboxstop_${userId}`)
-      .setLabel("Stop")
-      .setStyle(ButtonStyle.Danger)
+    new ButtonBuilder().setCustomId(`stop_${uid}`).setLabel("Stop").setStyle(ButtonStyle.Danger)
   );
 }
 
-function embed(color) {
-  return new EmbedBuilder()
-    .setColor(color || config.COLORS.PRIMARY)
-    .setFooter({ text: "Xbox Checker & Gen" })
-    .setTimestamp();
+function e(color) {
+  return new EmbedBuilder().setColor(color || config.COLORS.PRIMARY).setFooter({ text: config.FOOTER }).setTimestamp();
 }
 
-function progressBar(current, total, width = 20) {
-  const pct = total > 0 ? current / total : 0;
-  const filled = Math.round(pct * width);
-  return "\u2588".repeat(filled) + "\u2591".repeat(width - filled) + ` ${current}/${total}`;
+function bar(cur, tot, w = 20) {
+  const pct = tot > 0 ? cur / tot : 0;
+  const f = Math.round(pct * w);
+  return "\u2588".repeat(f) + "\u2591".repeat(w - f) + ` ${cur}/${tot}`;
 }
 
-function textAttachment(lines, filename) {
-  const buffer = Buffer.from(lines.join("\n"), "utf-8");
-  return new AttachmentBuilder(buffer, { name: filename });
+function txtFile(lines, name) {
+  return new AttachmentBuilder(Buffer.from(lines.join("\n"), "utf-8"), { name });
 }
 
-// ── Xbox Check Handler ──────────────────────────────────────
+function parseUid(s) {
+  if (!s) return null;
+  const m = s.match(/^<@!?(\d+)>$/);
+  if (m) return m[1];
+  return /^\d{17,20}$/.test(s) ? s : null;
+}
 
-async function handleXboxCheck(userId, accountsRaw, accountsFile, threads, respond, sendDM) {
-  let accounts = splitInput(accountsRaw).filter((a) => a.includes(":"));
-  if (accountsFile) {
-    const lines = await fetchAttachmentLines(accountsFile);
-    accounts = accounts.concat(lines.filter((l) => l.includes(":")));
-  }
-  accounts = [...new Set(accounts)];
+// xbox check
 
-  if (accounts.length === 0) {
-    return respond({ embeds: [embed().setDescription("No valid email:pass combos provided.")] });
-  }
+async function handleXboxCheck(uid, raw, file, threads, respond, dm) {
+  let accs = splitInput(raw).filter((a) => a.includes(":"));
+  if (file) accs = accs.concat((await fetchLines(file)).filter((l) => l.includes(":")));
+  accs = [...new Set(accs)];
 
-  const threadCount = Math.min(Math.max(threads || config.MAX_THREADS, 1), 50);
-  const progressEmbed = embed().setDescription(
-    `Starting check on ${accounts.length} accounts (${threadCount} threads)...\n\n\`${progressBar(0, accounts.length)}\``
-  );
-  const msg = await respond({ embeds: [progressEmbed], components: [stopButton(userId)], fetchReply: true });
+  if (!accs.length) return respond({ embeds: [e().setDescription("No valid email:pass combos provided.")] });
 
-  const abortController = new AbortController();
-  activeAborts.set(userId, abortController);
-  const startTime = Date.now();
-  let lastEdit = 0;
+  const tc = Math.min(Math.max(threads || config.MAX_THREADS, 1), 50);
+  const msg = await respond({
+    embeds: [e().setDescription(`Starting check on ${accs.length} accounts (${tc} threads)...\n\n\`${bar(0, accs.length)}\``)],
+    components: [stopBtn(uid)], fetchReply: true,
+  });
 
-  const results = await checkAccounts(
-    accounts, threadCount,
-    (completed, total) => {
-      const now = Date.now();
-      if (now - lastEdit < 3000) return;
-      lastEdit = now;
-      const elapsed = ((now - startTime) / 1000).toFixed(1);
-      const cpm = elapsed > 0 ? Math.round(completed / (elapsed / 60)) : 0;
-      const e = embed().setDescription(
-        `Checking...\n\n\`${progressBar(completed, total)}\`\n\nCPM: ${cpm} | Elapsed: ${elapsed}s`
-      );
-      msg.edit({ embeds: [e], components: [stopButton(userId)] }).catch(() => {});
-    },
-    abortController.signal
-  );
+  const ac = new AbortController();
+  activeAborts.set(uid, ac);
+  const t0 = Date.now();
+  let lastUp = 0;
 
-  activeAborts.delete(userId);
+  const results = await checkAccounts(accs, tc, (done, total) => {
+    const now = Date.now();
+    if (now - lastUp < 3000) return;
+    lastUp = now;
+    const sec = ((now - t0) / 1000).toFixed(1);
+    const cpm = sec > 0 ? Math.round(done / (sec / 60)) : 0;
+    msg.edit({ embeds: [e().setDescription(`Checking...\n\n\`${bar(done, total)}\`\n\nCPM: ${cpm} | ${sec}s`)], components: [stopBtn(uid)] }).catch(() => {});
+  }, ac.signal);
 
-  const stats = { checked: results.length, hits: 0, free: 0, locked: 0, fails: 0, retries: 0 };
-  const hitLines = [], freeLines = [], lockedLines = [];
+  activeAborts.delete(uid);
+
+  const s = { checked: results.length, hits: 0, free: 0, locked: 0, fails: 0 };
+  const hitL = [], freeL = [], lockL = [];
 
   for (const r of results) {
     if (r.status === "hit") {
-      stats.hits++;
-      const caps = Object.entries(r.captures || {}).map(([k, v]) => `${k}: ${v}`).join(" | ");
-      hitLines.push(`${r.user}:${r.password} | ${caps}`);
+      s.hits++;
+      hitL.push(`${r.user}:${r.password} | ${Object.entries(r.captures || {}).map(([k, v]) => `${k}: ${v}`).join(" | ")}`);
     } else if (r.status === "free") {
-      stats.free++;
-      const caps = Object.entries(r.captures || {}).map(([k, v]) => `${k}: ${v}`).join(" | ");
-      freeLines.push(`${r.user}:${r.password} | ${caps}`);
+      s.free++;
+      freeL.push(`${r.user}:${r.password} | ${Object.entries(r.captures || {}).map(([k, v]) => `${k}: ${v}`).join(" | ")}`);
     } else if (r.status === "locked") {
-      stats.locked++;
-      lockedLines.push(`${r.user}:${r.password} -> ${r.detail}`);
-    } else if (r.status === "retry") {
-      stats.retries++;
-    } else {
-      stats.fails++;
-    }
+      s.locked++;
+      lockL.push(`${r.user}:${r.password} -> ${r.detail}`);
+    } else { s.fails++; }
   }
 
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  stats.cpm = elapsed > 0 ? Math.round(stats.checked / (elapsed / 60)) : 0;
-  stats.elapsed = `${elapsed}s`;
+  const sec = ((Date.now() - t0) / 1000).toFixed(1);
+  s.cpm = sec > 0 ? Math.round(s.checked / (sec / 60)) : 0;
 
   const files = [];
-  if (hitLines.length > 0) files.push(textAttachment(hitLines, "Hits.txt"));
-  if (freeLines.length > 0) files.push(textAttachment(freeLines, "Free_Hits.txt"));
-  if (lockedLines.length > 0) files.push(textAttachment(lockedLines, "Locked.txt"));
+  if (hitL.length) files.push(txtFile(hitL, "Hits.txt"));
+  if (freeL.length) files.push(txtFile(freeL, "Free.txt"));
+  if (lockL.length) files.push(txtFile(lockL, "Locked.txt"));
 
-  const resultEmbed = embed()
-    .setTitle("Check Results")
-    .addFields(
-      { name: "Checked", value: `\`${stats.checked}\``, inline: true },
-      { name: "Hits", value: `\`${stats.hits}\``, inline: true },
-      { name: "Free", value: `\`${stats.free}\``, inline: true },
-      { name: "Locked", value: `\`${stats.locked}\``, inline: true },
-      { name: "Fails", value: `\`${stats.fails}\``, inline: true },
-      { name: "CPM", value: `\`${stats.cpm}\``, inline: true },
-    );
+  const re = e().setTitle("Check Results").addFields(
+    { name: "Checked", value: `\`${s.checked}\``, inline: true },
+    { name: "Hits", value: `\`${s.hits}\``, inline: true },
+    { name: "Free", value: `\`${s.free}\``, inline: true },
+    { name: "Locked", value: `\`${s.locked}\``, inline: true },
+    { name: "Fails", value: `\`${s.fails}\``, inline: true },
+    { name: "CPM", value: `\`${s.cpm}\``, inline: true },
+  );
 
-  if (sendDM) {
+  if (dm) {
     try {
-      const dmUser = await client.users.fetch(userId);
-      const dmChannel = await dmUser.createDM();
-      await dmChannel.send({ embeds: [resultEmbed], files });
-      await msg.edit({ embeds: [embed().setDescription("Done. Results sent to your DMs.")], components: [] });
-    } catch {
-      await msg.edit({ embeds: [resultEmbed], files, components: [] });
-    }
+      const u = await client.users.fetch(uid);
+      await (await u.createDM()).send({ embeds: [re], files });
+      await msg.edit({ embeds: [e().setDescription("Done. Results sent to DMs.")], components: [] });
+    } catch { await msg.edit({ embeds: [re], files, components: [] }); }
   } else {
-    await msg.edit({ embeds: [resultEmbed], files, components: [] });
+    await msg.edit({ embeds: [re], files, components: [] });
   }
 }
 
-// ── Gen Handlers ─────────────────────────────────────────────
+// gen
 
-async function handleGen(userId, category, respond) {
-  if (!category) {
+async function handleGen(uid, cat, respond) {
+  if (!cat) {
     const cats = gen.getCategories();
-    if (cats.length === 0) {
-      return respond({ embeds: [embed().setDescription("No categories available.")] });
-    }
-    const stocks = gen.getAllStockCounts();
-    const lines = cats.map((c) => `\`${c}\` — ${stocks[c]} in stock`);
-    return respond({
-      embeds: [embed().setTitle("Available Categories").setDescription(
-        lines.join("\n") + `\n\nUsage: \`${config.PREFIX}gen <category>\``
-      )],
-    });
+    if (!cats.length) return respond({ embeds: [e().setDescription("No categories available.")] });
+    const st = gen.getAllStockCounts();
+    return respond({ embeds: [e().setTitle("Categories").setDescription(
+      cats.map((c) => `\`${c}\` — ${st[c]} in stock`).join("\n") + `\n\nUsage: \`${config.PREFIX}gen <category>\``
+    )] });
   }
 
-  const result = gen.generate(userId, category.toLowerCase());
+  const res = gen.generate(uid, cat.toLowerCase());
 
-  if (result.error === "category_not_found") {
-    return respond({ embeds: [embed(config.COLORS.ERROR).setDescription(`Category \`${category}\` does not exist.`)] });
+  if (res.error === "category_not_found") return respond({ embeds: [e(config.COLORS.ERROR).setDescription(`Category \`${cat}\` not found.`)] });
+  if (res.error === "limit_reached") {
+    const st = gen.getUserStats(uid);
+    return respond({ embeds: [e(config.COLORS.ERROR).setDescription(`Limit reached. ${st.today}/${st.limit} used.\nResets midnight UTC.`)] });
   }
-  if (result.error === "limit_reached") {
-    const stats = gen.getUserStats(userId);
-    return respond({
-      embeds: [embed(config.COLORS.ERROR).setDescription(
-        `Daily limit reached. ${stats.today}/${stats.limit} used.\nResets at midnight UTC.`
-      )],
-    });
-  }
-  if (result.error === "out_of_stock") {
-    return respond({ embeds: [embed(config.COLORS.WARNING).setDescription(`\`${category}\` is out of stock.`)] });
-  }
+  if (res.error === "out_of_stock") return respond({ embeds: [e(config.COLORS.WARNING).setDescription(`\`${cat}\` out of stock.`)] });
 
-  // DM the item to user
   try {
-    const dmUser = await client.users.fetch(userId);
-    const dmChannel = await dmUser.createDM();
-    await dmChannel.send({
-      embeds: [
-        embed(config.COLORS.SUCCESS)
-          .setTitle("Generated")
-          .addFields(
-            { name: "Category", value: `\`${category}\``, inline: true },
-            { name: "Remaining", value: `\`${result.remaining}\``, inline: true },
-          )
-          .setDescription(`\`\`\`\n${result.item}\n\`\`\``)
-      ],
-    });
-    return respond({
-      embeds: [embed(config.COLORS.SUCCESS).setDescription(
-        `Sent to your DMs. ${result.remaining} gens remaining today.`
-      )],
-    });
+    const u = await client.users.fetch(uid);
+    await (await u.createDM()).send({ embeds: [
+      e(config.COLORS.SUCCESS).setTitle("Generated")
+        .addFields({ name: "Category", value: `\`${cat}\``, inline: true }, { name: "Remaining", value: `\`${res.remaining}\``, inline: true })
+        .setDescription(`\`\`\`\n${res.item}\n\`\`\``)
+    ] });
+    return respond({ embeds: [e(config.COLORS.SUCCESS).setDescription(`Sent to DMs. ${res.remaining} left today.`)] });
   } catch {
-    return respond({
-      embeds: [embed(config.COLORS.ERROR).setDescription("Could not send DM. Enable DMs from server members.")],
-    });
+    return respond({ embeds: [e(config.COLORS.ERROR).setDescription("Could not DM you. Check your privacy settings.")] });
   }
 }
 
 async function handleStock(respond) {
   const cats = gen.getCategories();
-  if (cats.length === 0) {
-    return respond({ embeds: [embed().setDescription("No categories configured.")] });
-  }
-  const stocks = gen.getAllStockCounts();
-  const total = Object.values(stocks).reduce((a, b) => a + b, 0);
-  const lines = cats.map((c) => `\`${c}\` — \`${stocks[c]}\``);
+  if (!cats.length) return respond({ embeds: [e().setDescription("No categories.")] });
+  const st = gen.getAllStockCounts();
+  const total = Object.values(st).reduce((a, b) => a + b, 0);
+  const lines = cats.map((c) => `\`${c}\` — \`${st[c]}\``);
   lines.push(`\nTotal: \`${total}\``);
-  return respond({ embeds: [embed().setTitle("Stock Overview").setDescription(lines.join("\n"))] });
+  return respond({ embeds: [e().setTitle("Stock").setDescription(lines.join("\n"))] });
 }
 
-async function handleRestock(userId, category, attachment, respond) {
-  if (!isOwner(userId)) {
-    return respond({ embeds: [embed(config.COLORS.ERROR).setDescription("Owner only.")] });
-  }
-  if (!category) {
-    return respond({ embeds: [embed(config.COLORS.ERROR).setDescription("Specify a category.")] });
-  }
-  if (!gen.categoryExists(category)) {
-    return respond({ embeds: [embed(config.COLORS.ERROR).setDescription(`Category \`${category}\` does not exist.`)] });
-  }
-  if (!attachment) {
-    return respond({ embeds: [embed(config.COLORS.ERROR).setDescription("Attach a .txt file with stock lines.")] });
-  }
-  const lines = await fetchAttachmentLines(attachment);
-  if (lines.length === 0) {
-    return respond({ embeds: [embed(config.COLORS.ERROR).setDescription("File is empty.")] });
-  }
-  const added = gen.addStock(category, lines);
-  return respond({
-    embeds: [embed(config.COLORS.SUCCESS).setDescription(
-      `Added \`${added}\` items to \`${category}\`.\nTotal: \`${gen.getStockCount(category)}\``
-    )],
-  });
+async function handleRestock(uid, cat, att, respond) {
+  if (!isOwner(uid)) return respond({ embeds: [e(config.COLORS.ERROR).setDescription("Owner only.")] });
+  if (!cat) return respond({ embeds: [e(config.COLORS.ERROR).setDescription("Specify a category.")] });
+  if (!gen.categoryExists(cat)) return respond({ embeds: [e(config.COLORS.ERROR).setDescription(`\`${cat}\` doesn't exist.`)] });
+  if (!att) return respond({ embeds: [e(config.COLORS.ERROR).setDescription("Attach a .txt file.")] });
+  const lines = await fetchLines(att);
+  if (!lines.length) return respond({ embeds: [e(config.COLORS.ERROR).setDescription("Empty file.")] });
+  const added = gen.addStock(cat, lines);
+  return respond({ embeds: [e(config.COLORS.SUCCESS).setDescription(`+${added} to \`${cat}\`. Total: \`${gen.getStockCount(cat)}\``)] });
 }
 
-async function handleAddCategory(userId, name, respond) {
-  if (!isOwner(userId)) {
-    return respond({ embeds: [embed(config.COLORS.ERROR).setDescription("Owner only.")] });
-  }
-  if (!name) {
-    return respond({ embeds: [embed(config.COLORS.ERROR).setDescription("Specify a category name.")] });
-  }
-  if (gen.addCategory(name)) {
-    return respond({ embeds: [embed(config.COLORS.SUCCESS).setDescription(`Category \`${name.toLowerCase()}\` created.`)] });
-  }
-  return respond({ embeds: [embed(config.COLORS.ERROR).setDescription(`Category \`${name.toLowerCase()}\` already exists.`)] });
+async function handleAddCat(uid, name, respond) {
+  if (!isOwner(uid)) return respond({ embeds: [e(config.COLORS.ERROR).setDescription("Owner only.")] });
+  if (!name) return respond({ embeds: [e(config.COLORS.ERROR).setDescription("Specify a name.")] });
+  if (gen.addCategory(name)) return respond({ embeds: [e(config.COLORS.SUCCESS).setDescription(`\`${name.toLowerCase()}\` created.`)] });
+  return respond({ embeds: [e(config.COLORS.ERROR).setDescription(`\`${name.toLowerCase()}\` already exists.`)] });
 }
 
-async function handleRemoveCategory(userId, name, respond) {
-  if (!isOwner(userId)) {
-    return respond({ embeds: [embed(config.COLORS.ERROR).setDescription("Owner only.")] });
-  }
-  if (!name) {
-    return respond({ embeds: [embed(config.COLORS.ERROR).setDescription("Specify a category name.")] });
-  }
-  if (gen.removeCategory(name)) {
-    return respond({ embeds: [embed(config.COLORS.SUCCESS).setDescription(`Category \`${name.toLowerCase()}\` removed.`)] });
-  }
-  return respond({ embeds: [embed(config.COLORS.ERROR).setDescription(`Category \`${name.toLowerCase()}\` not found.`)] });
+async function handleRemoveCat(uid, name, respond) {
+  if (!isOwner(uid)) return respond({ embeds: [e(config.COLORS.ERROR).setDescription("Owner only.")] });
+  if (!name) return respond({ embeds: [e(config.COLORS.ERROR).setDescription("Specify a name.")] });
+  if (gen.removeCategory(name)) return respond({ embeds: [e(config.COLORS.SUCCESS).setDescription(`\`${name.toLowerCase()}\` removed.`)] });
+  return respond({ embeds: [e(config.COLORS.ERROR).setDescription(`\`${name.toLowerCase()}\` not found.`)] });
 }
 
-async function handleClearStock(userId, category, respond) {
-  if (!isOwner(userId)) {
-    return respond({ embeds: [embed(config.COLORS.ERROR).setDescription("Owner only.")] });
-  }
-  if (!category || !gen.categoryExists(category)) {
-    return respond({ embeds: [embed(config.COLORS.ERROR).setDescription("Invalid category.")] });
-  }
-  gen.clearStock(category);
-  return respond({ embeds: [embed(config.COLORS.SUCCESS).setDescription(`Stock cleared for \`${category}\`.`)] });
+async function handleClearStock(uid, cat, respond) {
+  if (!isOwner(uid)) return respond({ embeds: [e(config.COLORS.ERROR).setDescription("Owner only.")] });
+  if (!cat || !gen.categoryExists(cat)) return respond({ embeds: [e(config.COLORS.ERROR).setDescription("Invalid category.")] });
+  gen.clearStock(cat);
+  return respond({ embeds: [e(config.COLORS.SUCCESS).setDescription(`Cleared \`${cat}\`.`)] });
 }
 
-async function handleUserStats(userId, targetId, respond) {
-  const uid = targetId || userId;
-  const stats = gen.getUserStats(uid);
-  const tier = stats.premium ? "Premium" : "Free";
-  const historyLines = Object.entries(stats.history).map(([k, v]) => `  ${k}: ${v}`);
-
-  return respond({
-    embeds: [
-      embed()
-        .setTitle("User Stats")
-        .addFields(
-          { name: "User", value: `<@${uid}>`, inline: true },
-          { name: "Tier", value: `\`${tier}\``, inline: true },
-          { name: "Daily", value: `\`${stats.today}/${stats.limit}\``, inline: true },
-          { name: "Remaining", value: `\`${stats.remaining}\``, inline: true },
-          { name: "Total Generated", value: `\`${stats.total}\``, inline: true },
-        )
-        .setDescription(historyLines.length > 0 ? "```\n" + historyLines.join("\n") + "\n```" : "No history yet."),
-    ],
-  });
+async function handleStats(uid, target, respond) {
+  const id = target || uid;
+  const st = gen.getUserStats(id);
+  const hist = Object.entries(st.history).map(([k, v]) => `  ${k}: ${v}`);
+  return respond({ embeds: [
+    e().setTitle("Stats")
+      .addFields(
+        { name: "User", value: `<@${id}>`, inline: true },
+        { name: "Tier", value: `\`${st.premium ? "Premium" : "Free"}\``, inline: true },
+        { name: "Daily", value: `\`${st.today}/${st.limit}\``, inline: true },
+        { name: "Left", value: `\`${st.remaining}\``, inline: true },
+        { name: "All Time", value: `\`${st.total}\``, inline: true },
+      )
+      .setDescription(hist.length ? "```\n" + hist.join("\n") + "\n```" : ""),
+  ] });
 }
 
-async function handleAddPremium(userId, targetId, respond) {
-  if (!isOwner(userId)) {
-    return respond({ embeds: [embed(config.COLORS.ERROR).setDescription("Owner only.")] });
-  }
-  if (!targetId) {
-    return respond({ embeds: [embed(config.COLORS.ERROR).setDescription("Mention or provide a user ID.")] });
-  }
-  gen.addPremium(targetId);
-  return respond({ embeds: [embed(config.COLORS.SUCCESS).setDescription(`<@${targetId}> is now Premium.`)] });
+async function handleAddPremium(uid, target, respond) {
+  if (!isOwner(uid)) return respond({ embeds: [e(config.COLORS.ERROR).setDescription("Owner only.")] });
+  if (!target) return respond({ embeds: [e(config.COLORS.ERROR).setDescription("Mention a user.")] });
+  gen.addPremium(target);
+  return respond({ embeds: [e(config.COLORS.SUCCESS).setDescription(`<@${target}> added to premium.`)] });
 }
 
-async function handleRemovePremium(userId, targetId, respond) {
-  if (!isOwner(userId)) {
-    return respond({ embeds: [embed(config.COLORS.ERROR).setDescription("Owner only.")] });
-  }
-  if (!targetId) {
-    return respond({ embeds: [embed(config.COLORS.ERROR).setDescription("Mention or provide a user ID.")] });
-  }
-  gen.removePremium(targetId);
-  return respond({ embeds: [embed(config.COLORS.SUCCESS).setDescription(`<@${targetId}> removed from Premium.`)] });
+async function handleRemovePremium(uid, target, respond) {
+  if (!isOwner(uid)) return respond({ embeds: [e(config.COLORS.ERROR).setDescription("Owner only.")] });
+  if (!target) return respond({ embeds: [e(config.COLORS.ERROR).setDescription("Mention a user.")] });
+  gen.removePremium(target);
+  return respond({ embeds: [e(config.COLORS.SUCCESS).setDescription(`<@${target}> removed from premium.`)] });
 }
 
-async function handlePremiumList(userId, respond) {
-  if (!isOwner(userId)) {
-    return respond({ embeds: [embed(config.COLORS.ERROR).setDescription("Owner only.")] });
-  }
-  const users = gen.getPremiumUsers();
-  if (users.length === 0) {
-    return respond({ embeds: [embed().setDescription("No premium users.")] });
-  }
-  const lines = users.map((u, i) => `\`${i + 1}.\` <@${u}>`);
-  return respond({ embeds: [embed().setTitle("Premium Users").setDescription(lines.join("\n"))] });
+async function handlePremiumList(uid, respond) {
+  if (!isOwner(uid)) return respond({ embeds: [e(config.COLORS.ERROR).setDescription("Owner only.")] });
+  const list = gen.getPremiumUsers();
+  if (!list.length) return respond({ embeds: [e().setDescription("None.")] });
+  return respond({ embeds: [e().setTitle("Premium Users").setDescription(list.map((u, i) => `\`${i + 1}.\` <@${u}>`).join("\n"))] });
 }
 
-async function handleSetLimit(userId, type, value, respond) {
-  if (!isOwner(userId)) {
-    return respond({ embeds: [embed(config.COLORS.ERROR).setDescription("Owner only.")] });
-  }
-  const n = parseInt(value);
-  if (isNaN(n) || n < 1) {
-    return respond({ embeds: [embed(config.COLORS.ERROR).setDescription("Provide a valid number.")] });
-  }
-  if (type === "free") {
-    gen.setFreeLimit(n);
-    return respond({ embeds: [embed(config.COLORS.SUCCESS).setDescription(`Free daily limit set to \`${n}\`.`)] });
-  } else {
-    gen.setPremiumLimit(n);
-    return respond({ embeds: [embed(config.COLORS.SUCCESS).setDescription(`Premium daily limit set to \`${n}\`.`)] });
-  }
+async function handleSetLimit(uid, type, val, respond) {
+  if (!isOwner(uid)) return respond({ embeds: [e(config.COLORS.ERROR).setDescription("Owner only.")] });
+  const n = parseInt(val);
+  if (isNaN(n) || n < 1) return respond({ embeds: [e(config.COLORS.ERROR).setDescription("Invalid number.")] });
+  if (type === "free") { gen.setFreeLimit(n); return respond({ embeds: [e(config.COLORS.SUCCESS).setDescription(`Free limit: \`${n}/day\``)] }); }
+  gen.setPremiumLimit(n);
+  return respond({ embeds: [e(config.COLORS.SUCCESS).setDescription(`Premium limit: \`${n}/day\``)] });
 }
 
-async function handleGenHelp(respond) {
-  const sections = [
+async function handleHelp(respond) {
+  const p = config.PREFIX;
+  const lines = [
     "```",
     "GENERATOR",
-    `  ${config.PREFIX}gen <category>        Generate an item (sent via DM)`,
-    `  ${config.PREFIX}gen                   List available categories`,
-    `  ${config.PREFIX}stock                 View stock counts`,
-    `  ${config.PREFIX}stats [@user|id]      View user gen stats`,
+    `  ${p}gen <category>        Generate (DM)`,
+    `  ${p}gen                   List categories`,
+    `  ${p}stock                 Stock counts`,
+    `  ${p}stats [@user|id]      User stats`,
     "",
     "ADMIN",
-    `  ${config.PREFIX}addcategory <name>    Create a new category`,
-    `  ${config.PREFIX}removecategory <name> Remove a category`,
-    `  ${config.PREFIX}restock <cat> + .txt  Add stock from file`,
-    `  ${config.PREFIX}clearstock <cat>      Clear all stock in category`,
-    `  ${config.PREFIX}addpremium <@user>    Grant premium tier`,
-    `  ${config.PREFIX}removepremium <@user> Revoke premium tier`,
-    `  ${config.PREFIX}premiumlist           List premium users`,
-    `  ${config.PREFIX}setfree <n>           Set free daily limit`,
-    `  ${config.PREFIX}setpremium <n>        Set premium daily limit`,
+    `  ${p}addcategory <name>    New category`,
+    `  ${p}removecategory <name> Delete category`,
+    `  ${p}restock <cat> + .txt  Add stock`,
+    `  ${p}clearstock <cat>      Wipe stock`,
+    `  ${p}addpremium <@user>    Grant premium`,
+    `  ${p}removepremium <@user> Revoke premium`,
+    `  ${p}premiumlist           Premium users`,
+    `  ${p}setfree <n>           Free daily cap`,
+    `  ${p}setpremium <n>        Premium daily cap`,
     "",
-    "XBOX CHECKER",
-    `  ${config.PREFIX}xboxcheck + .txt      Check Xbox/MS accounts`,
-    `  ${config.PREFIX}xboxhelp              Xbox checker help`,
+    "XBOX",
+    `  ${p}xboxcheck + .txt      Check accounts`,
+    `  ${p}xboxhelp              Checker help`,
     "",
-    "TIERS",
-    `  Free:    ${gen.getFreeLimit()}/day`,
-    `  Premium: ${gen.getPremiumLimit()}/day  (admin grant)`,
-    "  Resets at midnight UTC.",
+    `Free: ${gen.getFreeLimit()}/day  |  Premium: ${gen.getPremiumLimit()}/day`,
+    "Resets midnight UTC",
     "```",
   ];
-
-  return respond({
-    embeds: [embed().setTitle("Command Reference").setDescription(sections.join("\n"))],
-  });
+  return respond({ embeds: [e().setTitle("Commands").setDescription(lines.join("\n"))] });
 }
 
-// ── Parse user ID from mention or raw ────────────────────────
+// slash commands
 
-function parseUserId(str) {
-  if (!str) return null;
-  const mention = str.match(/^<@!?(\d+)>$/);
-  if (mention) return mention[1];
-  if (/^\d{17,20}$/.test(str)) return str;
-  return null;
-}
-
-// ── Interactions (Slash Commands) ────────────────────────────
-
-client.on("interactionCreate", async (interaction) => {
-  if (interaction.isButton() && interaction.customId.startsWith("xboxstop_")) {
-    const targetUser = interaction.customId.split("_")[1];
-    if (interaction.user.id !== targetUser && !isOwner(interaction.user.id)) {
-      return interaction.reply({ content: "Not your process.", ephemeral: true });
-    }
-    const controller = activeAborts.get(targetUser);
-    if (controller) { controller.abort(); activeAborts.delete(targetUser); }
-    return interaction.reply({ content: "Stopped.", ephemeral: true });
+client.on("interactionCreate", async (ix) => {
+  if (ix.isButton() && ix.customId.startsWith("stop_")) {
+    const t = ix.customId.split("_")[1];
+    if (ix.user.id !== t && !isOwner(ix.user.id)) return ix.reply({ content: "Not yours.", ephemeral: true });
+    const c = activeAborts.get(t);
+    if (c) { c.abort(); activeAborts.delete(t); }
+    return ix.reply({ content: "Stopped.", ephemeral: true });
   }
 
-  if (!interaction.isChatInputCommand()) return;
-  const uid = interaction.user.id;
-  const reply = (opts) => {
-    if (interaction.deferred || interaction.replied) return interaction.editReply(opts);
-    return interaction.reply(opts);
-  };
+  if (!ix.isChatInputCommand()) return;
+  const uid = ix.user.id;
+  const rp = (o) => (ix.deferred || ix.replied) ? ix.editReply(o) : ix.reply(o);
 
-  switch (interaction.commandName) {
-    case "xboxcheck": {
-      await interaction.deferReply();
-      return handleXboxCheck(
-        uid,
-        interaction.options.getString("accounts"),
-        interaction.options.getAttachment("file"),
-        interaction.options.getInteger("threads"),
-        (opts) => interaction.editReply(opts),
-        true
-      );
-    }
-    case "xboxhelp": {
-      const e = embed().setTitle("Xbox Checker Help").setDescription(
-        "Use `/xboxcheck` or `.xboxcheck` with email:pass combos.\nAttach a `.txt` for bulk.\nResults sent via DM."
-      );
-      return reply({ embeds: [e] });
-    }
-    case "gen": {
-      const cat = interaction.options.getString("category");
-      return handleGen(uid, cat, reply);
-    }
+  switch (ix.commandName) {
+    case "xboxcheck":
+      await ix.deferReply();
+      return handleXboxCheck(uid, ix.options.getString("accounts"), ix.options.getAttachment("file"), ix.options.getInteger("threads"), (o) => ix.editReply(o), true);
+    case "xboxhelp":
+      return rp({ embeds: [e().setTitle("Xbox Checker").setDescription(`\`${config.PREFIX}xboxcheck\` or \`/xboxcheck\` with email:pass combos.\nAttach .txt for bulk. Results via DM.`)] });
+    case "gen":
+      return handleGen(uid, ix.options.getString("category"), rp);
     case "stock":
-      return handleStock(reply);
-    case "restock": {
-      await interaction.deferReply();
-      return handleRestock(uid, interaction.options.getString("category"), interaction.options.getAttachment("file"), (opts) => interaction.editReply(opts));
-    }
+      return handleStock(rp);
+    case "restock":
+      await ix.deferReply();
+      return handleRestock(uid, ix.options.getString("category"), ix.options.getAttachment("file"), (o) => ix.editReply(o));
     case "addcategory":
-      return handleAddCategory(uid, interaction.options.getString("name"), reply);
+      return handleAddCat(uid, ix.options.getString("name"), rp);
     case "removecategory":
-      return handleRemoveCategory(uid, interaction.options.getString("name"), reply);
+      return handleRemoveCat(uid, ix.options.getString("name"), rp);
     case "clearstock":
-      return handleClearStock(uid, interaction.options.getString("category"), reply);
-    case "genstats": {
-      const target = interaction.options.getUser("user");
-      return handleUserStats(uid, target?.id, reply);
-    }
-    case "addpremium": {
-      const target = interaction.options.getUser("user");
-      return handleAddPremium(uid, target?.id, reply);
-    }
-    case "removepremium": {
-      const target = interaction.options.getUser("user");
-      return handleRemovePremium(uid, target?.id, reply);
-    }
+      return handleClearStock(uid, ix.options.getString("category"), rp);
+    case "genstats":
+      return handleStats(uid, ix.options.getUser("user")?.id, rp);
+    case "addpremium":
+      return handleAddPremium(uid, ix.options.getUser("user")?.id, rp);
+    case "removepremium":
+      return handleRemovePremium(uid, ix.options.getUser("user")?.id, rp);
     case "premiumlist":
-      return handlePremiumList(uid, reply);
+      return handlePremiumList(uid, rp);
     case "setfree":
-      return handleSetLimit(uid, "free", String(interaction.options.getInteger("limit")), reply);
+      return handleSetLimit(uid, "free", String(ix.options.getInteger("limit")), rp);
     case "setpremium":
-      return handleSetLimit(uid, "premium", String(interaction.options.getInteger("limit")), reply);
+      return handleSetLimit(uid, "premium", String(ix.options.getInteger("limit")), rp);
     case "genhelp":
-      return handleGenHelp(reply);
+      return handleHelp(rp);
   }
 });
 
-// ── Prefix Commands ──────────────────────────────────────────
+// prefix commands
 
-client.on("messageCreate", async (message) => {
-  if (message.author.bot) return;
-  if (!message.content.startsWith(config.PREFIX)) return;
-
-  const args = message.content.slice(config.PREFIX.length).trim().split(/\s+/);
+client.on("messageCreate", async (msg) => {
+  if (msg.author.bot || !msg.content.startsWith(config.PREFIX)) return;
+  const args = msg.content.slice(config.PREFIX.length).trim().split(/\s+/);
   const cmd = args.shift()?.toLowerCase();
-  const uid = message.author.id;
-  const reply = (opts) => message.reply(opts);
+  const uid = msg.author.id;
+  const rp = (o) => msg.reply(o);
 
   switch (cmd) {
-    case "xboxcheck": {
-      const raw = args.join("\n");
-      const file = message.attachments.first();
-      const threadMatch = args.find((a) => /^\d+$/.test(a));
-      return handleXboxCheck(uid, raw, file, threadMatch ? parseInt(threadMatch) : null, reply, true);
-    }
-    case "xboxhelp": {
-      return reply({
-        embeds: [embed().setTitle("Xbox Checker Help").setDescription(
-          "Use `/xboxcheck` or `.xboxcheck` with email:pass combos.\nAttach a `.txt` for bulk.\nResults sent via DM."
-        )],
-      });
-    }
+    case "xboxcheck":
+      return handleXboxCheck(uid, args.join("\n"), msg.attachments.first(), parseInt(args.find((a) => /^\d+$/.test(a))) || null, rp, true);
+    case "xboxhelp":
+      return rp({ embeds: [e().setTitle("Xbox Checker").setDescription(`\`${config.PREFIX}xboxcheck\` with email:pass combos.\nAttach .txt for bulk. Results via DM.`)] });
     case "gen":
-      return handleGen(uid, args[0], reply);
+      return handleGen(uid, args[0], rp);
     case "stock":
-      return handleStock(reply);
+      return handleStock(rp);
     case "restock":
-      return handleRestock(uid, args[0], message.attachments.first(), reply);
+      return handleRestock(uid, args[0], msg.attachments.first(), rp);
     case "addcategory":
-      return handleAddCategory(uid, args[0], reply);
+      return handleAddCat(uid, args[0], rp);
     case "removecategory":
-      return handleRemoveCategory(uid, args[0], reply);
+      return handleRemoveCat(uid, args[0], rp);
     case "clearstock":
-      return handleClearStock(uid, args[0], reply);
-    case "stats": {
-      const targetId = parseUserId(args[0]);
-      return handleUserStats(uid, targetId, reply);
-    }
+      return handleClearStock(uid, args[0], rp);
+    case "stats":
+      return handleStats(uid, parseUid(args[0]), rp);
     case "addpremium":
-      return handleAddPremium(uid, parseUserId(args[0]), reply);
+      return handleAddPremium(uid, parseUid(args[0]), rp);
     case "removepremium":
-      return handleRemovePremium(uid, parseUserId(args[0]), reply);
+      return handleRemovePremium(uid, parseUid(args[0]), rp);
     case "premiumlist":
-      return handlePremiumList(uid, reply);
+      return handlePremiumList(uid, rp);
     case "setfree":
-      return handleSetLimit(uid, "free", args[0], reply);
+      return handleSetLimit(uid, "free", args[0], rp);
     case "setpremium":
-      return handleSetLimit(uid, "premium", args[0], reply);
-    case "genhelp":
-    case "help":
-      return handleGenHelp(reply);
+      return handleSetLimit(uid, "premium", args[0], rp);
+    case "genhelp": case "help":
+      return handleHelp(rp);
   }
 });
 
-// ── Ready ────────────────────────────────────────────────────
-
 client.on("ready", () => {
-  console.log(`Logged in as ${client.user.tag}`);
-  console.log(`Guilds: ${client.guilds.cache.size}`);
-  client.user.setActivity("Gen & Xbox | " + config.PREFIX + "help", { type: 3 });
+  console.log(`${client.user.tag} online | ${client.guilds.cache.size} guilds`);
+  client.user.setActivity(`${config.PREFIX}help`, { type: 3 });
 });
 
 client.login(config.BOT_TOKEN);
