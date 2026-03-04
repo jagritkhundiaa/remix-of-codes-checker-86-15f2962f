@@ -163,22 +163,6 @@ const commands = [
     .setName("help")
     .setDescription("Show all available commands"),
 
-  // ── OTP / Session commands ──
-  new SlashCommandBuilder()
-    .setName("request_otp")
-    .setDescription("Request a 6-digit OTP code sent to your DMs"),
-
-  new SlashCommandBuilder()
-    .setName("verify_otp")
-    .setDescription("Verify your OTP code to authenticate")
-    .addStringOption((o) =>
-      o.setName("code").setDescription("The 6-digit OTP from your DMs").setRequired(true)
-    ),
-
-  new SlashCommandBuilder()
-    .setName("logout")
-    .setDescription("End your current OTP session"),
-
   // ── Admin commands ──
   new SlashCommandBuilder()
     .setName("admin")

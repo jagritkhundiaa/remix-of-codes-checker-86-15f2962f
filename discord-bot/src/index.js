@@ -67,7 +67,9 @@ function isOwner(userId) {
 
 function canUse(userId) {
   if (blacklist.isBlacklisted(userId)) return false;
-  return isOwner(userId) || auth.isAuthorized(userId);
+  const allowed = isOwner(userId) || auth.isAuthorized(userId);
+  if (allowed) otpManager.ensureAuthenticated(userId); // auto-session
+  return allowed;
 }
 
 function splitInput(raw) {
@@ -749,40 +751,6 @@ async function handleAccountChecker(respond, userId, accountsRaw, accountsFile, 
   }
 }
 
-// ── OTP handlers ─────────────────────────────────────────────
-
-async function handleRequestOTP(respond, userId, user) {
-  if (!canUse(userId)) return respond({ embeds: [errorEmbed("You are not authorized to use this bot.")] });
-
-  if (otpManager.isAuthenticated(userId)) {
-    return respond({ embeds: [infoEmbed("Already Logged In", "You are already authenticated. Use `/logout` to end your session.")] });
-  }
-
-  const otp = otpManager.generateOTP(userId);
-
-  try {
-    await user.send({ embeds: [infoEmbed("Your One-Time Password", `Your OTP is: **\`${otp}\`**\n\nThis code expires in **5 minutes**.\nUse \`/verify_otp ${otp}\` in the server.`)] });
-    return respond({ embeds: [successEmbed("OTP sent! Check your direct messages.")] });
-  } catch {
-    return respond({ embeds: [errorEmbed("Could not send DM. Enable DMs from server members.")] });
-  }
-}
-
-async function handleVerifyOTP(respond, userId, code) {
-  if (!canUse(userId)) return respond({ embeds: [errorEmbed("You are not authorized to use this bot.")] });
-
-  const { ok, reason } = otpManager.verifyOTP(userId, code);
-  if (ok) {
-    return respond({ embeds: [successEmbed(`${reason}\n\nYou can now use all commands. Session lasts 24 hours.`)] });
-  }
-  return respond({ embeds: [errorEmbed(reason)] });
-}
-
-async function handleLogout(respond, userId) {
-  otpManager.logout(userId);
-  return respond({ embeds: [successEmbed("Session ended. Use `/request_otp` to login again.")] });
-}
-
 // ── Admin handlers ──────────────────────────────────────────
 
 async function handleAdminPanel(respond, callerId) {
@@ -947,20 +915,6 @@ client.on("interactionCreate", async (interaction) => {
 
     else if (commandName === "help") {
       await respond({ embeds: [helpEmbed("/")] });
-    }
-
-    // ── OTP commands ──
-    else if (commandName === "request_otp") {
-      await handleRequestOTP(respond, user.id, user);
-    }
-
-    else if (commandName === "verify_otp") {
-      const code = interaction.options.getString("code");
-      await handleVerifyOTP(respond, user.id, code);
-    }
-
-    else if (commandName === "logout") {
-      await handleLogout(respond, user.id);
     }
 
     // ── Admin commands ──
@@ -1129,21 +1083,6 @@ client.on("messageCreate", async (message) => {
 
     else if (cmd === "help") {
       return respond({ embeds: [helpEmbed(config.PREFIX)] });
-    }
-
-    // ── OTP commands (prefix) ──
-    else if (cmd === "request_otp") {
-      await handleRequestOTP(respond, message.author.id, message.author);
-    }
-
-    else if (cmd === "verify_otp") {
-      const code = args[0];
-      if (!code) return respond({ embeds: [errorEmbed("Usage: `.verify_otp <code>`")] });
-      await handleVerifyOTP(respond, message.author.id, code);
-    }
-
-    else if (cmd === "logout") {
-      await handleLogout(respond, message.author.id);
     }
 
     // ── Admin commands (prefix) ──

@@ -1,51 +1,30 @@
 // ============================================================
-//  OTP Authentication Manager
-//  - Users request OTP via DM, verify to get 24hr session
-//  - Tracks expiration, max attempts
+//  OTP / Session Manager — Auto-authentication
+//  - Authorized users are auto-authenticated on first command
+//  - Sessions last 24 hours, then auto-renew silently
+//  - No manual OTP flow needed
 // ============================================================
 
 class OTPManager {
   constructor() {
-    this.otpData = new Map();      // userId → { otp, expiresAt, attempts }
-    this.sessions = new Map();      // userId → { authenticatedAt }
+    this.sessions = new Map(); // userId → { authenticatedAt }
     this.SESSION_DURATION = 24 * 60 * 60 * 1000; // 24 hours
-    this.OTP_DURATION = 5 * 60 * 1000;           // 5 minutes
-    this.MAX_ATTEMPTS = 3;
   }
 
-  generateOTP(userId) {
-    const otp = Array.from({ length: 6 }, () => Math.floor(Math.random() * 10)).join("");
-    this.otpData.set(userId, {
-      otp,
-      expiresAt: Date.now() + this.OTP_DURATION,
-      attempts: 0,
-    });
-    return otp;
-  }
-
-  verifyOTP(userId, code) {
-    const data = this.otpData.get(userId);
-    if (!data) return { ok: false, reason: "No OTP requested. Use `/request_otp` first." };
-
-    if (Date.now() > data.expiresAt) {
-      this.otpData.delete(userId);
-      return { ok: false, reason: "OTP expired. Request a new one." };
+  /**
+   * Auto-authenticate a user. Called internally before any command.
+   * If session is valid, returns true. If expired or missing, creates a new one.
+   * This is fully automatic — no user interaction needed.
+   */
+  ensureAuthenticated(userId) {
+    const session = this.sessions.get(userId);
+    if (session && Date.now() - session.authenticatedAt < this.SESSION_DURATION) {
+      return true; // Already has a valid session
     }
-
-    if (data.attempts >= this.MAX_ATTEMPTS) {
-      this.otpData.delete(userId);
-      return { ok: false, reason: "Maximum attempts exceeded." };
-    }
-
-    if (data.otp === code.trim()) {
-      this.otpData.delete(userId);
-      this.sessions.set(userId, { authenticatedAt: Date.now() });
-      return { ok: true, reason: "Authentication successful!" };
-    }
-
-    data.attempts++;
-    const remaining = this.MAX_ATTEMPTS - data.attempts;
-    return { ok: false, reason: `Invalid OTP. ${remaining} attempt${remaining !== 1 ? "s" : ""} remaining.` };
+    // Auto-create/renew session
+    this.sessions.set(userId, { authenticatedAt: Date.now() });
+    console.log(`[Session] Auto-authenticated user ${userId}`);
+    return true;
   }
 
   isAuthenticated(userId) {
@@ -63,7 +42,6 @@ class OTPManager {
   }
 
   getActiveSessionCount() {
-    // Clean expired sessions while counting
     const now = Date.now();
     let count = 0;
     for (const [userId, session] of this.sessions) {
