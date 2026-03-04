@@ -219,11 +219,6 @@ function authListEmbed(entries) {
 function helpEmbed(prefix) {
   const sections = [
     "```",
-    "AUTHENTICATION",
-    `  ${prefix}request_otp  — Get 6-digit code in DM`,
-    `  ${prefix}verify_otp <code>  — Login with OTP`,
-    `  ${prefix}logout  — End your session`,
-    "",
     "CHECKER",
     `  ${prefix}check [wlids] + attach codes.txt [--dm]`,
     "  Check codes against WLID tokens.",
