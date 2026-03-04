@@ -9,6 +9,7 @@ import threading
 import config
 from checker import check_accounts
 from gen_manager import GenManager
+from netflix_checker import check_netflix_cookies
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -296,6 +297,101 @@ async def cmd_setprem(ctx, n: int = 0):
     gen.set_premium_limit(n)
     await ctx.send(embed=e().add_field(name="", value=f"Premium limit: `{n}/day`"))
 
+@bot.command(name="check")
+async def cmd_check(ctx, service=None):
+    if not service:
+        em = e()
+        em.title = "Available Services"
+        em.description = f"Usage: `{config.PREFIX}check <service>` + attach cookie .txt files\n\n"
+        em.description += "**Cookie-based:**\n`netflix`\n\n"
+        em.description += "More services coming soon."
+        return await ctx.send(embed=em)
+
+    service = service.lower().strip()
+
+    if service == "netflix":
+        await do_netflix_check(ctx)
+    else:
+        await ctx.send(embed=e().add_field(name="", value=f"Unknown service `{service}`. Use `{config.PREFIX}check` to see available services."))
+
+
+async def do_netflix_check(ctx):
+    if not ctx.message.attachments:
+        return await ctx.send(embed=e().add_field(name="", value="Attach one or more cookie .txt files."))
+
+    cookie_items = []
+    for att in ctx.message.attachments:
+        try:
+            data = await att.read()
+            content = data.decode("utf-8", errors="ignore")
+            if not content.strip():
+                continue
+            cookie_items.append((att.filename, content))
+        except:
+            continue
+
+    if not cookie_items:
+        return await ctx.send(embed=e().add_field(name="", value="No valid cookie files found."))
+
+    msg = await ctx.send(embed=e().add_field(name="", value=f"Checking {len(cookie_items)} Netflix cookie(s)...\n\n`{bar(0, len(cookie_items))}`"))
+
+    stop = threading.Event()
+    active_stops[str(ctx.author.id)] = stop
+    t0 = time.time()
+    last_edit = [0]
+
+    def on_progress(done, total):
+        now = time.time()
+        if now - last_edit[0] < 3:
+            return
+        last_edit[0] = now
+        sec = now - t0
+        em = e()
+        em.description = f"Checking Netflix cookies...\n\n`{bar(done, total)}`\n\n{sec:.1f}s elapsed"
+        asyncio.run_coroutine_threadsafe(msg.edit(embed=em), bot.loop)
+
+    results = await check_netflix_cookies(cookie_items, max_concurrent=5,
+                                          on_progress=on_progress, stop_event=stop)
+
+    active_stops.pop(str(ctx.author.id), None)
+
+    hits, fails = [], []
+    for r in results:
+        fn = r.get('filename', '?')
+        if r['status'] == 'Hit':
+            caps = []
+            if r['email'] != 'N/A': caps.append(f"Email: {r['email']}")
+            if r['plan'] != 'N/A': caps.append(f"Plan: {r['plan']}")
+            if r['country'] != 'N/A': caps.append(f"Country: {r['country']}")
+            if r['payment_method'] != 'N/A': caps.append(f"Payment: {r['payment_method']}")
+            if r['video_quality'] != 'N/A': caps.append(f"Quality: {r['video_quality']}")
+            if r['max_streams']: caps.append(f"Streams: {r['max_streams']}")
+            if r['extra_member']: caps.append("Extra Member: Yes")
+            if r.get('auto_login_link'): caps.append(f"AutoLogin: {r['auto_login_link']}")
+            hits.append(f"{fn} | " + " | ".join(caps))
+        else:
+            fails.append(f"{fn} -> {r.get('error') or r['status']}")
+
+    sec = time.time() - t0
+    re_em = e()
+    re_em.title = "Netflix Check Results"
+    re_em.add_field(name="Total", value=f"`{len(results)}`", inline=True)
+    re_em.add_field(name="Hits", value=f"`{len(hits)}`", inline=True)
+    re_em.add_field(name="Failed", value=f"`{len(fails)}`", inline=True)
+    re_em.add_field(name="Time", value=f"`{sec:.1f}s`", inline=True)
+
+    files = []
+    if hits: files.append(txt_file(hits, "Netflix_Hits.txt"))
+    if fails: files.append(txt_file(fails, "Netflix_Failed.txt"))
+
+    try:
+        dm = await ctx.author.create_dm()
+        await dm.send(embed=re_em, files=files)
+        await msg.edit(embed=e().add_field(name="", value=f"Done. {len(hits)} hits / {len(fails)} failed. Results sent to DMs."))
+    except:
+        await msg.edit(embed=re_em, files=files)
+
+
 @bot.command(name="stop")
 async def cmd_stop(ctx):
     ev = active_stops.get(str(ctx.author.id))
@@ -331,6 +427,10 @@ async def cmd_help(ctx):
         "XBOX",
         f"  {p}xboxcheck + .txt      Check accounts",
         f"  {p}xboxhelp              Checker help",
+        "",
+        "COOKIE CHECKER",
+        f"  {p}check <service>       Check cookies (.txt)",
+        f"  {p}check                 List services",
         f"  {p}stop                  Stop running task",
         "",
         f"Free: {gen.free_limit}/day  |  Premium: {gen.premium_limit}/day",
