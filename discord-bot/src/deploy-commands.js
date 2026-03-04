@@ -162,6 +162,38 @@ const commands = [
   new SlashCommandBuilder()
     .setName("help")
     .setDescription("Show all available commands"),
+
+  // ── OTP / Session commands ──
+  new SlashCommandBuilder()
+    .setName("request_otp")
+    .setDescription("Request a 6-digit OTP code sent to your DMs"),
+
+  new SlashCommandBuilder()
+    .setName("verify_otp")
+    .setDescription("Verify your OTP code to authenticate")
+    .addStringOption((o) =>
+      o.setName("code").setDescription("The 6-digit OTP from your DMs").setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("logout")
+    .setDescription("End your current OTP session"),
+
+  // ── Admin commands ──
+  new SlashCommandBuilder()
+    .setName("admin")
+    .setDescription("[ADMIN] View admin control panel"),
+
+  new SlashCommandBuilder()
+    .setName("setwebhook")
+    .setDescription("[ADMIN] Set webhook URL for results")
+    .addStringOption((o) =>
+      o.setName("url").setDescription("Discord webhook URL").setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("botstats")
+    .setDescription("[ADMIN] View detailed processing statistics"),
 ].map((c) => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(BOT_TOKEN);

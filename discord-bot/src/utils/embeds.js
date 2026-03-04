@@ -219,6 +219,11 @@ function authListEmbed(entries) {
 function helpEmbed(prefix) {
   const sections = [
     "```",
+    "AUTHENTICATION",
+    `  ${prefix}request_otp  — Get 6-digit code in DM`,
+    `  ${prefix}verify_otp <code>  — Login with OTP`,
+    `  ${prefix}logout  — End your session`,
+    "",
     "CHECKER",
     `  ${prefix}check [wlids] + attach codes.txt [--dm]`,
     "  Check codes against WLID tokens.",
@@ -270,6 +275,11 @@ function helpEmbed(prefix) {
     `  ${prefix}blacklistshow`,
     "  Show all blacklisted users.",
     "",
+    "ADMIN  [Owner]",
+    `  ${prefix}admin  — Admin control panel`,
+    `  ${prefix}setwebhook <url>  — Set webhook for results`,
+    `  ${prefix}botstats  — Detailed statistics`,
+    "",
     "INFO",
     `  ${prefix}stats   — Bot status and metrics`,
     `  ${prefix}help    — This message`,
@@ -280,6 +290,36 @@ function helpEmbed(prefix) {
     .setColor(COLORS.PRIMARY)
     .setTitle("Command Reference")
     .setDescription(sections.join("\n"));
+}
+
+function adminPanelEmbed(stats, authCount, activeOtpSessions, activeProcesses, webhookSet) {
+  return header()
+    .setColor(COLORS.PRIMARY)
+    .setTitle("Admin Control Panel")
+    .addFields(
+      { name: "Stats", value: `Users: \`${authCount}\`\nOTP Sessions: \`${activeOtpSessions}\`\nActive: \`${activeProcesses}\``, inline: true },
+      { name: "Processing", value: `Total: \`${stats.total_processed}\`\nSuccess: \`${stats.total_success}\`\nFailed: \`${stats.total_failed}\``, inline: true },
+      { name: "Status", value: `Bot: Online\nWebhook: ${webhookSet ? "Set" : "Not Set"}`, inline: true },
+    );
+}
+
+function detailedStatsEmbed(stats, topUsers) {
+  const rate = stats.total_processed > 0
+    ? Math.round((stats.total_success / stats.total_processed) * 100)
+    : 0;
+
+  const topText = topUsers.length > 0
+    ? topUsers.map(([uid, d]) => `<@${uid}>: ${d.processed} processed (${d.success} success)`).join("\n")
+    : "No data";
+
+  return header()
+    .setColor(COLORS.PRIMARY)
+    .setTitle("Detailed Statistics")
+    .addFields(
+      { name: "Processing", value: `Processed: \`${stats.total_processed}\`\nSuccess: \`${stats.total_success}\`\nFailed: \`${stats.total_failed}\``, inline: true },
+      { name: "Success Rate", value: `\`${rate}%\``, inline: true },
+      { name: "Top Users", value: topText, inline: false },
+    );
 }
 
 /**
@@ -306,5 +346,7 @@ module.exports = {
   infoEmbed,
   authListEmbed,
   helpEmbed,
+  adminPanelEmbed,
+  detailedStatsEmbed,
   textAttachment,
 };
