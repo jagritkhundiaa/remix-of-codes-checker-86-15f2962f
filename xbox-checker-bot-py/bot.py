@@ -9,7 +9,6 @@ import threading
 import config
 from checker import check_accounts
 from gen_manager import GenManager
-from netflix_checker import check_netflix_cookies
 from netflix_mailpass_checker import check_netflix_accounts
 
 intents = discord.Intents.default()
