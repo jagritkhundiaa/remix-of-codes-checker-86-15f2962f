@@ -178,6 +178,27 @@ const commands = [
   new SlashCommandBuilder()
     .setName("botstats")
     .setDescription("[ADMIN] View detailed processing statistics"),
+
+  new SlashCommandBuilder()
+    .setName("autopull")
+    .setDescription("[ADMIN] Schedule automatic code pulls at intervals")
+    .addStringOption((o) =>
+      o.setName("action").setDescription("start / stop / list").setRequired(false)
+        .addChoices(
+          { name: "Start", value: "start" },
+          { name: "Stop", value: "stop" },
+          { name: "List", value: "list" }
+        )
+    )
+    .addStringOption((o) =>
+      o.setName("interval").setDescription("Pull interval (e.g. 30m, 6h, 12h, 1d)").setRequired(false)
+    )
+    .addAttachmentOption((o) =>
+      o.setName("accounts_file").setDescription("Text file with email:password per line").setRequired(false)
+    )
+    .addStringOption((o) =>
+      o.setName("accounts").setDescription("Accounts as email:password (comma-separated)").setRequired(false)
+    ),
 ].map((c) => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(BOT_TOKEN);

@@ -15,6 +15,10 @@ const config = require("../config");
 let proxies = [];
 let currentIndex = 0;
 let proxyStats = { total: 0, success: 0, failed: 0 };
+let proxyFailCounts = new Map(); // proxy key → consecutive fail count
+const DEAD_PROXY_THRESHOLD = 5; // remove after 5 consecutive failures
+const AUTO_RELOAD_THRESHOLD = 40; // reload from file when success rate drops below 40%
+let lastAutoReload = 0;
 
 function resetProxyStats() {
   proxyStats = { total: 0, success: 0, failed: 0 };
@@ -217,6 +221,8 @@ async function proxiedFetch(url, options = {}) {
   const agent = createAgent(proxy);
   proxyStats.total++;
 
+  const proxyKey = `${proxy.host}:${proxy.port}`;
+  
   try {
     const response = await fetch(url, {
       ...options,
@@ -224,10 +230,38 @@ async function proxiedFetch(url, options = {}) {
       dispatcher: agent,
     });
     proxyStats.success++;
+    // Reset fail count on success
+    proxyFailCounts.set(proxyKey, 0);
     return response;
   } catch (err) {
     proxyStats.failed++;
-    console.warn(`[Proxy] Failed via ${proxy.host}:${proxy.port}: ${err.message}`);
+    
+    // Track consecutive failures per proxy
+    const failCount = (proxyFailCounts.get(proxyKey) || 0) + 1;
+    proxyFailCounts.set(proxyKey, failCount);
+    
+    // Auto-remove dead proxy
+    if (failCount >= DEAD_PROXY_THRESHOLD) {
+      const idx = proxies.findIndex(p => `${p.host}:${p.port}` === proxyKey);
+      if (idx !== -1) {
+        proxies.splice(idx, 1);
+        proxyFailCounts.delete(proxyKey);
+        console.warn(`[Proxy] Removed dead proxy ${proxyKey} (${failCount} consecutive failures). ${proxies.length} remaining.`);
+      }
+    } else {
+      console.warn(`[Proxy] Failed via ${proxyKey}: ${err.message} (fail ${failCount}/${DEAD_PROXY_THRESHOLD})`);
+    }
+    
+    // Auto-reload when success rate drops
+    const now = Date.now();
+    const stats = getProxyStats();
+    if (stats.successRate < AUTO_RELOAD_THRESHOLD && stats.total > 20 && now - lastAutoReload > 60000) {
+      lastAutoReload = now;
+      const reloaded = loadProxies();
+      proxyFailCounts.clear();
+      console.log(`[Proxy] Auto-reloaded ${reloaded} proxies (success rate was ${stats.successRate}%)`);
+    }
+    
     return fetch(url, options);
   }
 }

@@ -18,6 +18,8 @@ const { changePasswords, checkAccounts } = require("./utils/microsoft-changer");
 const { loadProxies, isProxyEnabled, getProxyCount, getProxyStats, reloadProxies } = require("./utils/proxy-manager");
 const blacklist = require("./utils/blacklist");
 const { setWlids, getWlids, getWlidCount } = require("./utils/wlid-store");
+const { autoRetry } = require("./utils/auto-retry");
+const { AutoPullScheduler } = require("./utils/auto-pull-scheduler");
 const {
   progressEmbed,
   checkResultsEmbed,
@@ -58,6 +60,7 @@ let webhookUrl = "";
 
 // Active abort controllers per user
 const activeAborts = new Map();
+const autoPullScheduler = new AutoPullScheduler();
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -160,12 +163,27 @@ async function handleCheck(respond, userId, wlidsRaw, codesRaw, codesFile, threa
       }
     }, ac.signal);
 
+    // Auto-retry failed items
+    const originalItems = codes.map((code, i) => ({ code, wlidIndex: Math.floor(i / 40) }));
+    const finalResults = await autoRetry(
+      async (items) => {
+        const retryCodes = items.map(it => it.code);
+        return checkCodes(wlids, retryCodes, Math.min(threads, 5));
+      },
+      results,
+      originalItems,
+      2,
+      (round, count) => {
+        updateProgress(msg, progressEmbed(results.length, results.length, `Retrying ${count} failed items (round ${round})`), userId);
+      }
+    );
+
     const stopped = ac.signal.aborted;
     const files = [];
-    const valid = results.filter((r) => r.status === "valid");
-    const used = results.filter((r) => r.status === "used");
-    const expired = results.filter((r) => r.status === "expired");
-    const invalid = results.filter((r) => r.status === "invalid" || r.status === "error");
+    const valid = finalResults.filter((r) => r.status === "valid");
+    const used = finalResults.filter((r) => r.status === "used");
+    const expired = finalResults.filter((r) => r.status === "expired");
+    const invalid = finalResults.filter((r) => r.status === "invalid" || r.status === "error");
 
     if (valid.length > 0)
       files.push(textAttachment(valid.map((r) => (r.title ? `${r.code} | ${r.title}` : r.code)), "valid.txt"));
@@ -176,7 +194,7 @@ async function handleCheck(respond, userId, wlidsRaw, codesRaw, codesFile, threa
     if (invalid.length > 0)
       files.push(textAttachment(invalid.map((r) => r.code), "invalid.txt"));
 
-    const embed = checkResultsEmbed(results);
+    const embed = checkResultsEmbed(finalResults);
     if (stopped) embed.setTitle("Check Results (Stopped)");
 
     if (dmUser) {
@@ -237,17 +255,28 @@ async function handleClaim(respond, userId, accountsRaw, accountsFile, threads =
       }
     }, ac.signal);
 
+    // Auto-retry failed claims
+    const finalResults = await autoRetry(
+      async (items) => claimWlids(items, Math.min(threads, 3)),
+      results,
+      accounts,
+      2,
+      (round, count) => {
+        updateProgress(msg, progressEmbed(results.length, results.length, `Retrying ${count} failed claims (round ${round})`), userId);
+      }
+    );
+
     const stopped = ac.signal.aborted;
     const files = [];
-    const success = results.filter((r) => r.success && r.token);
-    const failed = results.filter((r) => !r.success);
+    const success = finalResults.filter((r) => r.success && r.token);
+    const failed = finalResults.filter((r) => !r.success);
 
     if (success.length > 0)
       files.push(textAttachment(success.map((r) => r.token), "tokens.txt"));
     if (failed.length > 0)
       files.push(textAttachment(failed.map((r) => `${r.email}: ${r.error || "Unknown error"}`), "failed.txt"));
 
-    const embed = claimResultsEmbed(results);
+    const embed = claimResultsEmbed(finalResults);
     if (stopped) embed.setTitle("Claim Results (Stopped)");
 
     if (dmUser) {
@@ -784,6 +813,75 @@ async function handleBotStats(respond, callerId) {
   return respond({ embeds: [detailedStatsEmbed(stats, topUsers)] });
 }
 
+// ── Auto-Pull handler ───────────────────────────────────────
+
+async function handleAutoPull(respond, userId, channelId, channel, accountsRaw, accountsFile, intervalStr, action = "start") {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Only the bot owner can manage auto-pull.")] });
+
+  if (action === "stop") {
+    const cancelled = autoPullScheduler.cancel(channelId);
+    if (cancelled) return respond({ embeds: [successEmbed("Auto-pull cancelled for this channel.")] });
+    return respond({ embeds: [errorEmbed("No auto-pull scheduled for this channel.")] });
+  }
+
+  if (action === "list") {
+    const jobs = autoPullScheduler.getAll();
+    if (jobs.length === 0) return respond({ embeds: [infoEmbed("Auto-Pull Jobs", "No scheduled jobs.")] });
+    const lines = jobs.map((j, i) => {
+      const next = j.nextRun ? `<t:${Math.floor(j.nextRun / 1000)}:R>` : "N/A";
+      const last = j.lastRun ? `<t:${Math.floor(j.lastRun / 1000)}:R>` : "Never";
+      return `\`${i + 1}.\` <#${j.channelId}> — ${j.accounts} accounts, every ${j.interval}\n    Runs: \`${j.runCount}\` | Last: ${last} | Next: ${next}${j.running ? " | **Running**" : ""}`;
+    });
+    return respond({ embeds: [infoEmbed("Auto-Pull Jobs", lines.join("\n\n"))] });
+  }
+
+  // Start
+  let accounts = splitInput(accountsRaw).filter((a) => a.includes(":"));
+  if (accountsFile) {
+    const lines = await fetchAttachmentLines(accountsFile);
+    accounts = accounts.concat(lines.filter((l) => l.includes(":")));
+  }
+
+  if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided.")] });
+  if (!intervalStr) return respond({ embeds: [errorEmbed("No interval provided. Example: 6h, 12h, 1d")] });
+
+  const intervalMs = autoPullScheduler.parseInterval(intervalStr);
+  if (!intervalMs || intervalMs < 30 * 60 * 1000) {
+    return respond({ embeds: [errorEmbed("Invalid or too short interval. Minimum 30m. Examples: 30m, 6h, 12h, 1d")] });
+  }
+
+  autoPullScheduler.schedule(
+    channelId,
+    accounts,
+    intervalMs,
+    async (accts) => {
+      const { fetchResults, validateResults } = await pullCodes(accts, () => {});
+      return { fetchResults, validateResults };
+    },
+    async (results, runCount) => {
+      try {
+        const { fetchResults, validateResults } = results;
+        const files = [];
+        const valid = validateResults.filter((r) => r.status === "valid");
+        const used = validateResults.filter((r) => r.status === "used");
+        const expired = validateResults.filter((r) => r.status === "expired");
+
+        if (valid.length > 0) files.push(textAttachment(valid.map((r) => (r.title ? `${r.code} | ${r.title}` : r.code)), "valid.txt"));
+        if (used.length > 0) files.push(textAttachment(used.map((r) => r.code), "used.txt"));
+        if (expired.length > 0) files.push(textAttachment(expired.map((r) => (r.title ? `${r.code} | ${r.title}` : r.code)), "expired.txt"));
+
+        const embed = pullResultsEmbed(fetchResults, validateResults);
+        embed.setTitle(`Auto-Pull Results (Run #${runCount})`);
+        await channel.send({ embeds: [embed], files });
+      } catch (err) {
+        console.error("[AutoPull] Failed to send results:", err);
+      }
+    }
+  );
+
+  return respond({ embeds: [successEmbed(`Auto-pull scheduled every **${intervalStr}** for **${accounts.length}** accounts.\nResults will be posted in this channel.\n\nUse \`/autopull stop\` to cancel.`)] });
+}
+
 // ── Slash Commands ───────────────────────────────────────────
 
 client.on("interactionCreate", async (interaction) => {
@@ -929,6 +1027,14 @@ client.on("interactionCreate", async (interaction) => {
 
     else if (commandName === "botstats") {
       await handleBotStats(respond, user.id);
+    }
+
+    else if (commandName === "autopull") {
+      const action = interaction.options.getString("action") || "start";
+      const accounts = interaction.options.getString("accounts");
+      const accountsFile = interaction.options.getAttachment("accounts_file");
+      const interval = interaction.options.getString("interval");
+      await handleAutoPull(respond, user.id, interaction.channelId, interaction.channel, accounts, accountsFile, interval, action);
     }
   } catch (err) {
     console.error(`Slash command error [${commandName}]:`, err);
@@ -1098,6 +1204,19 @@ client.on("messageCreate", async (message) => {
 
     else if (cmd === "botstats") {
       await handleBotStats(respond, message.author.id);
+    }
+
+    else if (cmd === "autopull") {
+      const action = args[0] || "start";
+      if (action === "stop" || action === "list") {
+        await handleAutoPull(respond, message.author.id, message.channelId, message.channel, null, null, null, action);
+      } else {
+        // .autopull <interval> + attach accounts.txt  OR  .autopull <accounts> <interval>
+        const attachment = message.attachments.first();
+        const interval = args[args.length - 1]; // last arg is interval
+        const accountsRaw = args.slice(0, -1).join(" ");
+        await handleAutoPull(respond, message.author.id, message.channelId, message.channel, accountsRaw, attachment, interval, "start");
+      }
     }
   } catch (err) {
     console.error(`Prefix command error [${cmd}]:`, err);
