@@ -70,6 +70,48 @@ def _parse_lr(text, left, right):
         return ""
 
 
+def _find_nested_values(obj, key):
+    """Recursively collect values for a key inside nested dict/list JSON."""
+    out = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if str(k).lower() == key.lower():
+                out.append(v)
+            out.extend(_find_nested_values(v, key))
+    elif isinstance(obj, list):
+        for item in obj:
+            out.extend(_find_nested_values(item, key))
+    return out
+
+
+def _extract_total_messages(search_json, raw_text):
+    """Get the best Total value from Outlook search response."""
+    totals = []
+    for val in _find_nested_values(search_json, "Total"):
+        try:
+            totals.append(int(str(val).strip()))
+        except Exception:
+            continue
+
+    if totals:
+        return str(max(totals))
+
+    total_msgs = _parse_lr(raw_text, '"Total":', ',')
+    if total_msgs:
+        return total_msgs.strip()
+    return "0"
+
+
+def _extract_first_string(search_json, keys):
+    """Find first non-empty string value for any key in nested JSON."""
+    for key in keys:
+        vals = _find_nested_values(search_json, key)
+        for v in vals:
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+    return ""
+
+
 def _check_single(email, password, search_keyword=None):
     """
     Check a single Hotmail/Outlook account with retries.
@@ -410,27 +452,49 @@ def _attempt_check(email, password, search_keyword=None):
                     )
 
                     search_text = search_resp.text
+                    try:
+                        search_json = search_resp.json()
+                    except Exception:
+                        search_json = {}
 
                     # CAP "Total Msg From <keyword>"
-                    total_msgs = _parse_lr(search_text, '"Total":', ',')
-                    if not total_msgs:
-                        try:
-                            total_msgs = str(search_resp.json().get("Total", "0"))
-                        except Exception:
-                            total_msgs = "0"
+                    total_msgs = _extract_total_messages(search_json, search_text)
+                    try:
+                        total_int = int(total_msgs)
+                    except Exception:
+                        total_int = 0
+
                     kw_upper = search_keyword.upper()
-                    result["captures"][f"Total Msg From {kw_upper}"] = total_msgs.strip()
+                    result["captures"][f"Total Msg From {kw_upper}"] = str(total_int)
 
                     # CAP "Last MSG From Mail"
-                    snippet = _parse_lr(search_text, '"HitHighlightedSummary":"', '",')
+                    snippet = _extract_first_string(
+                        search_json,
+                        ["HitHighlightedSummary", "Summary", "Preview", "Snippet"],
+                    )
+                    if not snippet:
+                        snippet = _parse_lr(search_text, '"HitHighlightedSummary":"', '",')
+
                     snippet = re.sub(r'\[.*?\]', '', snippet).strip() if snippet else ""
                     if snippet:
                         result["captures"]["Last MSG From Mail"] = snippet[:120]
 
                     # CAP "Last Mail Msg" (date)
-                    last_date = _parse_lr(search_text, '"LastDeliveryTime":"', 'T')
+                    last_date = _extract_first_string(
+                        search_json,
+                        ["LastDeliveryTime", "ReceivedDateTime", "DateTimeSent"],
+                    )
+                    if not last_date:
+                        last_date = _parse_lr(search_text, '"LastDeliveryTime":"', 'T')
+                    if last_date and "T" in last_date:
+                        last_date = last_date.split("T", 1)[0]
                     if last_date:
                         result["captures"]["Last Mail Msg"] = last_date
+
+                    # Service checker semantics: only "hit" when service mail exists
+                    if total_int <= 0:
+                        result["status"] = "fail"
+                        result["detail"] = f"no {search_keyword} mail found"
 
                 except Exception:
                     pass
