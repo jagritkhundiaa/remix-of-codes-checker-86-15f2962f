@@ -465,7 +465,7 @@ def check_hotmail_accounts(accounts, search_keyword, max_threads=10,
         with lock:
             done[0] += 1
             if on_progress:
-                on_progress(done[0], total)
+                on_progress(done[0], total, r.get("status", "fail"))
         return r
 
     with ThreadPoolExecutor(max_workers=max_threads) as pool:

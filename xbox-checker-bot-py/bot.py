@@ -297,7 +297,7 @@ async def cmd_setprem(ctx, n: int = 0):
     gen.set_premium_limit(n)
     await ctx.send(embed=e().add_field(name="", value=f"Premium limit: `{n}/day`"))
 
-# ── Hotmail inbox checkers (netflix / roblox / crunchyroll) ──
+# ── Hotmail checkers (netflix / roblox / crunchyroll) ──
 
 SERVICES = {
     "netflix": {"keyword": "netflix", "label": "Netflix"},
@@ -310,7 +310,7 @@ async def cmd_check(ctx, service=None):
     if not service:
         em = e()
         em.title = "Available Services"
-        svc_list = "\n".join(f"`{k}` — Hotmail inbox check for {v['label']}" for k, v in SERVICES.items())
+        svc_list = "\n".join(f"`{k}` — {v['label']} checker" for k, v in SERVICES.items())
         em.description = f"Usage: `{config.PREFIX}check <service>` + attach mail:pass .txt\n\n{svc_list}"
         return await ctx.send(embed=em)
 
@@ -334,14 +334,20 @@ async def do_hotmail_check(ctx, svc):
 
     tc = min(max(config.MAX_THREADS, 1), 30)
     label = svc["label"]
-    msg = await ctx.send(embed=e().add_field(name="", value=f"Checking {len(accs)} accounts for {label} ({tc} threads)...\n\n`{bar(0, len(accs))}`"))
+    msg = await ctx.send(embed=e().add_field(name="", value=f"Checking {len(accs)} accounts ({tc} threads)...\n\n`{bar(0, len(accs))}`"))
 
     stop = threading.Event()
     active_stops[str(ctx.author.id)] = stop
     t0 = time.time()
     last_edit = [0]
+    live_hits = [0]
+    live_fails = [0]
 
-    def on_progress(done, total):
+    def on_progress(done, total, status=None):
+        if status == "hit":
+            live_hits[0] += 1
+        elif status and status not in ("2fa", "custom", "retry"):
+            live_fails[0] += 1
         now = time.time()
         if now - last_edit[0] < 3:
             return
@@ -349,7 +355,11 @@ async def do_hotmail_check(ctx, svc):
         sec = now - t0
         cpm = round(done / (sec / 60)) if sec > 0 else 0
         em = e()
-        em.description = f"Checking {label}...\n\n`{bar(done, total)}`\n\nCPM: {cpm} | {sec:.1f}s"
+        em.description = (
+            f"Checking {label}...\n\n`{bar(done, total)}`\n\n"
+            f"CPM: {cpm} | {sec:.1f}s\n"
+            f"Hits: {live_hits[0]} | Fails: {live_fails[0]}"
+        )
         asyncio.run_coroutine_threadsafe(msg.edit(embed=em), bot.loop)
 
     results = await bot.loop.run_in_executor(
@@ -437,9 +447,9 @@ async def cmd_help(ctx):
         f"  {p}xboxhelp              Checker help",
         "",
         "CHECKER",
-        f"  {p}check netflix + .txt  Netflix inbox check",
-        f"  {p}check roblox + .txt   Roblox inbox check",
-        f"  {p}check crunchyroll     Crunchyroll inbox check",
+        f"  {p}check netflix + .txt  Netflix checker",
+        f"  {p}check roblox + .txt   Roblox checker",
+        f"  {p}check crunchyroll     Crunchyroll checker",
         f"  {p}check                 List services",
         f"  {p}stop                  Stop running task",
         "",
