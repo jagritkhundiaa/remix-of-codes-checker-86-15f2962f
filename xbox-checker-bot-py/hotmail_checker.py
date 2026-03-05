@@ -605,7 +605,12 @@ def check_hotmail_accounts(accounts, search_keyword, max_threads=10,
         with lock:
             done[0] += 1
             if on_progress:
-                on_progress(done[0], total, r.get("status", "fail"))
+                status = r.get("status", "fail")
+                try:
+                    on_progress(done[0], total, status)
+                except TypeError:
+                    # Backward compatibility for older bot.py callbacks that only accept (done, total)
+                    on_progress(done[0], total)
         return r
 
     with ThreadPoolExecutor(max_workers=max_threads) as pool:
