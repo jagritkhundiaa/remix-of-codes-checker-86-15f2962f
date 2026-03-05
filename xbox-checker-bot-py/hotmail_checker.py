@@ -609,7 +609,6 @@ def check_hotmail_accounts(accounts, search_keyword, max_threads=10,
                 try:
                     on_progress(done[0], total, status)
                 except TypeError:
-                    # Backward compatibility for older bot.py callbacks that only accept (done, total)
                     on_progress(done[0], total)
         return r
 

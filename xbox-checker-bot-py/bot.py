@@ -357,8 +357,8 @@ async def do_hotmail_check(ctx, svc):
         em = e()
         em.description = (
             f"Checking {label}...\n\n`{bar(done, total)}`\n\n"
-            f"CPM: {cpm} | {sec:.1f}s\n"
-            f"Hits: {live_hits[0]} | Fails: {live_fails[0]}"
+            f"CPM: `{cpm}` | Time: `{sec:.1f}s`\n"
+            f"Valid: `{live_hits[0]}` | Invalid: `{live_fails[0]}`"
         )
         asyncio.run_coroutine_threadsafe(msg.edit(embed=em), bot.loop)
 
