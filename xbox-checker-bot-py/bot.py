@@ -52,28 +52,6 @@ async def fetch_lines(att):
     except Exception:
         return []
 
-def extract_combos(lines):
-    """Extract only email:pass from lines, stripping captures/extra data.
-    Returns (combos, had_extra) where had_extra is True if any line had more than email:pass."""
-    combos = []
-    had_extra = False
-    for line in lines:
-        if ":" not in line:
-            continue
-        # Split on | first (common capture separator), take first part
-        base = line.split("|")[0].strip()
-        # Now extract email:pass (first two colon-separated fields)
-        parts = base.split(":")
-        if len(parts) >= 2:
-            email = parts[0].strip()
-            password = parts[1].strip()
-            if email and password:
-                combos.append(f"{email}:{password}")
-                # Check if original line had extra data
-                if len(parts) > 2 or "|" in line:
-                    had_extra = True
-    return list(set(combos)), had_extra
-
 # ── Shared logic ──
 
 async def do_xbox_check(ctx_or_inter, accounts, threads, is_slash=False):
@@ -83,14 +61,14 @@ async def do_xbox_check(ctx_or_inter, accounts, threads, is_slash=False):
     async def send(embed=None, files=None, **kw):
         if is_slash:
             if files:
-                return await ctx_or_inter.followup.send(embed=embed, files=files, **kw)
+                await ctx_or_inter.followup.send(embed=embed, files=files, **kw)
             else:
-                return await ctx_or_inter.followup.send(embed=embed, **kw)
+                await ctx_or_inter.followup.send(embed=embed, **kw)
         else:
             if files:
-                return await ctx_or_inter.send(embed=embed, files=files, **kw)
+                await ctx_or_inter.send(embed=embed, files=files, **kw)
             else:
-                return await ctx_or_inter.send(embed=embed, **kw)
+                await ctx_or_inter.send(embed=embed, **kw)
 
     if not accounts:
         return await send(embed=e().add_field(name="", value="No valid email:pass combos provided."))
@@ -329,14 +307,11 @@ async def slash_xboxcheck(
     threads: app_commands.Range[int, 1, 50] = None
 ):
     await interaction.response.defer()
-    raw_lines = []
+    accs = []
     if accounts:
-        raw_lines.extend([l.strip() for l in accounts.replace(",", "\n").splitlines() if l.strip()])
+        accs.extend([l.strip() for l in accounts.replace(",", "\n").splitlines() if ":" in l.strip()])
     if accounts_file:
-        raw_lines.extend(await fetch_lines(accounts_file))
-    accs, had_extra = extract_combos(raw_lines)
-    if had_extra:
-        await interaction.followup.send(embed=e().add_field(name="", value="Captures/other data found.. extracting mails.."))
+        accs.extend([l for l in await fetch_lines(accounts_file) if ":" in l])
     await do_xbox_check(interaction, accs, threads or config.MAX_THREADS, is_slash=True)
 
 
@@ -361,14 +336,11 @@ async def slash_check(
     svc = SERVICES.get(service.value)
     if not svc:
         return await interaction.followup.send(embed=e().add_field(name="", value="Unknown service."))
-    raw_lines = []
+    accs = []
     if accounts:
-        raw_lines.extend([l.strip() for l in accounts.replace(",", "\n").splitlines() if l.strip()])
+        accs.extend([l.strip() for l in accounts.replace(",", "\n").splitlines() if ":" in l.strip()])
     if accounts_file:
-        raw_lines.extend(await fetch_lines(accounts_file))
-    accs, had_extra = extract_combos(raw_lines)
-    if had_extra:
-        await interaction.followup.send(embed=e().add_field(name="", value="Captures/other data found.. extracting mails.."))
+        accs.extend([l for l in await fetch_lines(accounts_file) if ":" in l])
     await do_hotmail_check(interaction, svc, accs, is_slash=True)
 
 
@@ -576,12 +548,9 @@ async def slash_help(interaction: discord.Interaction):
 
 @bot.command(name="xboxcheck")
 async def cmd_xboxcheck(ctx, *, raw=""):
-    raw_lines = [l.strip() for l in raw.replace(",", "\n").splitlines() if l.strip()]
+    accs = [l.strip() for l in raw.replace(",", "\n").splitlines() if ":" in l.strip()]
     for att in ctx.message.attachments:
-        raw_lines.extend(await fetch_lines(att))
-    accs, had_extra = extract_combos(raw_lines)
-    if had_extra:
-        await ctx.send(embed=e().add_field(name="", value="Captures/other data found.. extracting mails.."))
+        accs.extend([l for l in await fetch_lines(att) if ":" in l])
     await do_xbox_check(ctx, accs, config.MAX_THREADS)
 
 @bot.command(name="xboxhelp")
@@ -733,12 +702,9 @@ async def cmd_check(ctx, service=None):
     # Parse accounts from message
     raw = ctx.message.content.split(None, 2)
     raw_text = raw[2] if len(raw) > 2 else ""
-    raw_lines = [l.strip() for l in raw_text.replace(",", "\n").splitlines() if l.strip()]
+    accs = [l.strip() for l in raw_text.replace(",", "\n").splitlines() if ":" in l.strip()]
     for att in ctx.message.attachments:
-        raw_lines.extend(await fetch_lines(att))
-    accs, had_extra = extract_combos(raw_lines)
-    if had_extra:
-        await ctx.send(embed=e().add_field(name="", value="Captures/other data found.. extracting mails.."))
+        accs.extend([l for l in await fetch_lines(att) if ":" in l])
 
     await do_hotmail_check(ctx, SERVICES[service], accs)
 
