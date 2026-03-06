@@ -3,6 +3,7 @@ import requests
 from urllib.parse import unquote, quote
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 def parse_lr(text, left, right):
     m = re.search(f'{re.escape(left)}(.*?){re.escape(right)}', text, re.DOTALL)
@@ -54,6 +55,7 @@ def check_account(credential):
         return {"status": "fail", "user": credential, "password": "", "detail": "Bad format"}
 
     s = requests.Session()
+    s.max_redirects = 8
     s.headers.update(COMMON_HEADERS)
 
     try:

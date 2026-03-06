@@ -74,7 +74,12 @@ async def do_xbox_check(ctx_or_inter, accounts, threads, is_slash=False):
         return await send(embed=e().add_field(name="", value="No valid email:pass combos provided."))
 
     tc = min(max(threads or config.MAX_THREADS, 1), 50)
-    msg = await send(embed=e().add_field(name="", value=f"Starting check on {len(accounts)} accounts ({tc} threads)...\n\n`{bar(0, len(accounts))}`"))
+    total_accounts = len(accounts)
+    msg = await send(embed=e().add_field(name="", value=(
+        f"Starting check on {total_accounts} accounts ({tc} threads)...\n"
+        "Warm-up can take up to 30s before first completed result.\n\n"
+        f"`{bar(0, total_accounts)}`"
+    )))
 
     # For slash commands followup.send returns the message
     if is_slash and msg is None:
@@ -88,14 +93,17 @@ async def do_xbox_check(ctx_or_inter, accounts, threads, is_slash=False):
 
     def on_progress(done, total):
         now = time.time()
-        if now - last_edit[0] < 3:
+        if now - last_edit[0] < 2:
             return
         last_edit[0] = now
         sec = now - t0
         cpm = round(done / (sec / 60)) if sec > 0 else 0
         em = e()
         em.description = f"Checking...\n\n`{bar(done, total)}`\n\nCPM: {cpm} | {sec:.1f}s"
-        asyncio.run_coroutine_threadsafe(msg.edit(embed=em), bot.loop)
+        try:
+            asyncio.run_coroutine_threadsafe(msg.edit(embed=em), bot.loop)
+        except Exception:
+            pass
 
     results = await bot.loop.run_in_executor(
         None, lambda: check_accounts(accounts, tc, on_progress, stop)
