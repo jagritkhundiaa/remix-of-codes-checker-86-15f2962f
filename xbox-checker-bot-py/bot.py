@@ -83,14 +83,14 @@ async def do_xbox_check(ctx_or_inter, accounts, threads, is_slash=False):
     async def send(embed=None, files=None, **kw):
         if is_slash:
             if files:
-                await ctx_or_inter.followup.send(embed=embed, files=files, **kw)
+                return await ctx_or_inter.followup.send(embed=embed, files=files, **kw)
             else:
-                await ctx_or_inter.followup.send(embed=embed, **kw)
+                return await ctx_or_inter.followup.send(embed=embed, **kw)
         else:
             if files:
-                await ctx_or_inter.send(embed=embed, files=files, **kw)
+                return await ctx_or_inter.send(embed=embed, files=files, **kw)
             else:
-                await ctx_or_inter.send(embed=embed, **kw)
+                return await ctx_or_inter.send(embed=embed, **kw)
 
     if not accounts:
         return await send(embed=e().add_field(name="", value="No valid email:pass combos provided."))
