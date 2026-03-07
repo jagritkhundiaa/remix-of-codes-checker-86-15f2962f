@@ -18,6 +18,9 @@ module.exports = {
   // Max concurrent users allowed to run commands simultaneously
   MAX_CONCURRENT_USERS: 5,
 
+  // Lock all commands to this channel ID (leave "" to allow all channels)
+  ALLOWED_CHANNEL_ID: "1468201723767029782",
+
   // Discord webhook for logging valid codes / tokens (optional, leave "" to disable)
   DISCORD_WEBHOOK: "",
 

@@ -33,6 +33,7 @@ const {
   errorEmbed,
   successEmbed,
   infoEmbed,
+  ownerOnlyEmbed,
   authListEmbed,
   helpEmbed,
   adminPanelEmbed,
