@@ -1210,7 +1210,7 @@ client.on("messageCreate", async (message) => {
       if (!accountsRaw && !attachment) {
         return respond({ embeds: [infoEmbed("Usage", "`.pull <accounts>` [--dm]\nProvide email:password comma-separated or attach a `.txt` file.\nAdd `--dm` to receive results in DMs.\n\nExample:\n`.pull email@test.com:pass123 --dm`")] });
       }
-      await handlePull(respond, message.author.id, accountsRaw, attachment, hasDm ? message.author : null);
+      await handlePull(respond, message.author.id, accountsRaw, attachment, hasDm ? message.author : null, message.author.username);
     }
 
     else if (cmd === "wlidset") {
