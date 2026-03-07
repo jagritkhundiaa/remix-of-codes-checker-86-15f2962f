@@ -5,11 +5,11 @@
 const { EmbedBuilder, AttachmentBuilder } = require("discord.js");
 const { COLORS } = require("../config");
 
-const FOOTER_TEXT = "EliteCloud";
+const FOOTER_TEXT = "AutizMens | TalkNeon";
 
 function header() {
   return new EmbedBuilder()
-    .setAuthor({ name: "EliteCloud" })
+    .setAuthor({ name: "AutizMens" })
     .setFooter({ text: FOOTER_TEXT })
     .setTimestamp();
 }
