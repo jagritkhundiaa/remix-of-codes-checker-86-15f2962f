@@ -5,11 +5,11 @@
 const { EmbedBuilder, AttachmentBuilder } = require("discord.js");
 const { COLORS } = require("../config");
 
-const FOOTER_TEXT = "AutizMens | TalkNeon";
+const FOOTER_TEXT = "EliteCloud";
 
 function header() {
   return new EmbedBuilder()
-    .setAuthor({ name: "AutizMens" })
+    .setAuthor({ name: "EliteCloud" })
     .setFooter({ text: FOOTER_TEXT })
     .setTimestamp();
 }
@@ -67,8 +67,8 @@ function pullFetchProgressEmbed(details) {
   const lines = [`\`${bar}\` ${pct}%`, `${details.done} / ${details.total} accounts`];
   if (details.lastAccount) {
     const status = details.lastError
-      ? `${details.lastAccount} — Failed`
-      : `${details.lastAccount} — ${details.lastCodes} codes`;
+      ? `${details.lastAccount} -- Failed`
+      : `${details.lastAccount} -- ${details.lastCodes} codes`;
     lines.push(`\nLatest: \`${status}\``);
   }
   if (details.totalCodes !== undefined) {
@@ -81,31 +81,65 @@ function pullFetchProgressEmbed(details) {
     .setDescription(lines.join("\n"));
 }
 
-function pullResultsEmbed(fetchResults, validateResults) {
-  const totalFetched = fetchResults.reduce((sum, r) => sum + r.codes.length, 0);
-  const accountsSuccess = fetchResults.filter((r) => r.codes.length > 0).length;
-  const accountsFailed = fetchResults.filter((r) => r.error).length;
+/**
+ * Pull results embed — matches reference image layout exactly.
+ * Structured account analysis with sub-categories, elapsed time, DM notice.
+ */
+function pullResultsEmbed(fetchResults, validateResults, { elapsed, dmSent, username } = {}) {
+  const totalAccounts = fetchResults.length;
+  const workingAccounts = fetchResults.filter((r) => !r.error);
+  const failedAccounts = fetchResults.filter((r) => r.error);
+  const withCodes = workingAccounts.filter((r) => r.codes.length > 0);
+  const noCodes = workingAccounts.filter((r) => r.codes.length === 0);
+
+  const totalCodesFetched = fetchResults.reduce((sum, r) => sum + r.codes.length, 0);
 
   const valid = validateResults.filter((r) => r.status === "valid");
-  const used = validateResults.filter((r) => r.status === "used");
-  const expired = validateResults.filter((r) => r.status === "expired");
-  const invalid = validateResults.filter((r) => r.status === "invalid");
-  const errors = validateResults.filter((r) => r.status === "error");
+  const used = validateResults.filter((r) => r.status === "used" || r.status === "REDEEMED");
+  const expired = validateResults.filter((r) => r.status === "expired" || r.status === "EXPIRED");
+  const invalid = validateResults.filter((r) => r.status === "invalid" || r.status === "error" || r.status === "INVALID");
+  const balance = validateResults.filter((r) => r.status === "BALANCE_CODE");
+  const regionLocked = validateResults.filter((r) => r.status === "REGION_LOCKED");
 
-  return header()
+  const lines = [
+    `**Fetching Complete!**`,
+    ``,
+    `  **Account Analysis:**`,
+    `- **Total Accounts:** ${totalAccounts}`,
+    `- **Working Accounts:** ${workingAccounts.length}`,
+    `  \u2514 With Codes: ${withCodes.length}`,
+    `  \u2514 No Codes: ${noCodes.length}`,
+    `- **Failed Accounts:** ${failedAccounts.length}`,
+    `- **Codes Found:** ${totalCodesFetched}`,
+    `  \u2514 Working: ${valid.length}`,
+    `  \u2514 Claimed: ${used.length}`,
+    `  \u2514 Balance: ${balance.length}`,
+  ];
+
+  if (expired.length > 0) lines.push(`  \u2514 Expired: ${expired.length}`);
+  if (regionLocked.length > 0) lines.push(`  \u2514 Region Locked: ${regionLocked.length}`);
+  if (invalid.length > 0) lines.push(`  \u2514 Invalid: ${invalid.length}`);
+
+  // Links found (unique codes count)
+  lines.push(`- **Links Found:** ${totalCodesFetched}`);
+
+  if (elapsed) {
+    lines.push(`\n**Time:** ${elapsed}s`);
+  }
+
+  const embed = header()
     .setColor(COLORS.PRIMARY)
-    .setTitle("Pull Results")
-    .addFields(
-      { name: "Accounts", value: `\`${accountsSuccess} ok / ${accountsFailed} failed\``, inline: true },
-      { name: "Codes Fetched", value: `\`${totalFetched}\``, inline: true },
-      { name: "\u200b", value: "\u200b", inline: true },
-      { name: "Valid", value: `\`${valid.length}\``, inline: true },
-      { name: "Used", value: `\`${used.length}\``, inline: true },
-      { name: "Expired", value: `\`${expired.length}\``, inline: true },
-      { name: "Invalid", value: `\`${invalid.length}\``, inline: true },
-      { name: "Errors", value: `\`${errors.length}\``, inline: true },
-      { name: "\u200b", value: "\u200b", inline: true }
-    );
+    .setDescription(lines.join("\n"));
+
+  if (dmSent) {
+    embed.addFields({ name: "\u200b", value: "```\n>> Results sent to your DMs\n```", inline: false });
+  }
+
+  if (username) {
+    embed.setFooter({ text: `Pulled by ${username} | ${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` });
+  }
+
+  return embed;
 }
 
 function purchaseProgressEmbed(details) {
@@ -200,6 +234,24 @@ function infoEmbed(title, description) {
   return header().setColor(COLORS.INFO).setTitle(title).setDescription(description);
 }
 
+/**
+ * Owner-only restriction embed for features still under development.
+ */
+function ownerOnlyEmbed(featureName) {
+  return header()
+    .setColor(COLORS.PRIMARY)
+    .setDescription(
+      [
+        `**${featureName}** is currently in a closed development phase.`,
+        ``,
+        `This feature is exclusively available to **TalkNeon** during the testing period.`,
+        ``,
+        `Access will be rolled out once the module has been fully validated and stabilized.`,
+        `Check back later or contact TalkNeon for updates.`,
+      ].join("\n")
+    );
+}
+
 function authListEmbed(entries) {
   if (entries.length === 0) {
     return header().setColor(COLORS.MUTED).setTitle("Authorized Users").setDescription("No authorized users.");
@@ -207,7 +259,7 @@ function authListEmbed(entries) {
 
   const lines = entries.map((e, i) => {
     const expiry = e.expiresAt === "Infinity" ? "Permanent" : `<t:${Math.floor(e.expiresAt / 1000)}:R>`;
-    return `\`${i + 1}.\` <@${e.userId}> — Expires: ${expiry}`;
+    return `\`${i + 1}.\` <@${e.userId}> -- Expires: ${expiry}`;
   });
 
   return header()
@@ -233,23 +285,21 @@ function helpEmbed(prefix) {
     "  Fetch codes from Game Pass accounts,",
     "  then validate them automatically.",
     "",
-    "PURCHASER",
+    "PURCHASER  [Owner Only]",
     `  ${prefix}purchase <email:pass> <product_id> [--dm]`,
     "  Buy items from the Microsoft Store.",
-    "  Attach .txt for multiple accounts.",
     `  ${prefix}search <query>`,
     "  Search for products on the Microsoft Store.",
     "",
-    "CHANGER",
+    "CHANGER  [Owner Only]",
     `  ${prefix}changer <email:pass> <new_password> [--dm]`,
     "  Change password on Microsoft accounts.",
-    "  Attach .txt for multiple accounts.",
     `  ${prefix}checker <email:pass> or attach .txt [--dm]`,
-    "  Validate account credentials (valid/locked/invalid).",
+    "  Validate account credentials.",
     "",
     "RECOVERY",
     `  ${prefix}recover <email(s)> <new_password> [--dm]`,
-    "  Recover account(s) via ACSR. Attach .txt for bulk.",
+    "  Recover account(s) via ACSR.",
     `  ${prefix}captcha <solution>`,
     "  Submit CAPTCHA solution for active recovery.",
     "",
@@ -260,28 +310,22 @@ function helpEmbed(prefix) {
     "",
     "AUTHORIZATION  [Owner]",
     `  ${prefix}auth <@user> <duration>`,
-    "  Authorize a user. Duration: 1h, 7d, 1mo, forever",
     `  ${prefix}deauth <@user>`,
-    "  Remove authorization.",
     `  ${prefix}authlist`,
-    "  List all authorized users.",
     "",
     "BLACKLIST  [Owner]",
     `  ${prefix}blacklist <@user> [reason]`,
-    "  Permanently block a user.",
     `  ${prefix}unblacklist <@user>`,
-    "  Remove from blacklist.",
     `  ${prefix}blacklistshow`,
-    "  Show all blacklisted users.",
     "",
     "ADMIN  [Owner]",
-    `  ${prefix}admin  — Admin control panel`,
-    `  ${prefix}setwebhook <url>  — Set webhook for results`,
-    `  ${prefix}botstats  — Detailed statistics`,
+    `  ${prefix}admin  -- Admin control panel`,
+    `  ${prefix}setwebhook <url>  -- Set webhook`,
+    `  ${prefix}botstats  -- Detailed statistics`,
     "",
     "INFO",
-    `  ${prefix}stats   — Bot status and metrics`,
-    `  ${prefix}help    — This message`,
+    `  ${prefix}stats   -- Bot status`,
+    `  ${prefix}help    -- This message`,
     "```",
   ];
 
@@ -363,6 +407,7 @@ module.exports = {
   errorEmbed,
   successEmbed,
   infoEmbed,
+  ownerOnlyEmbed,
   authListEmbed,
   helpEmbed,
   adminPanelEmbed,
