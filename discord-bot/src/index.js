@@ -1172,38 +1172,32 @@ client.on("messageCreate", async (message) => {
 
   try {
     if (cmd === "check") {
-      const hasDm = args.includes("--dm");
-      const filteredArgs = args.filter(a => a !== "--dm");
-      const wlidsRaw = filteredArgs.join(" ");
+      const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
-      if (!wlidsRaw && !attachment) {
+      if (!accountsRaw && !attachment) {
         const storedCount = getWlidCount();
         const storedInfo = storedCount > 0 ? `\n\n**${storedCount} WLIDs stored** — just attach codes.txt to use them.` : "\n\nNo WLIDs stored. Use `.wlidset` first or provide WLIDs inline.";
-        return respond({ embeds: [infoEmbed("Usage", "`.check [wlid_tokens]` + attach codes.txt [--dm]\n\nIf WLIDs are stored via `.wlidset`, just attach codes.\nAdd `--dm` to receive results in DMs." + storedInfo)] });
+        return respond({ embeds: [infoEmbed("Usage", "`.check [wlid_tokens]` + attach codes.txt\n\nIf WLIDs are stored via `.wlidset`, just attach codes.\nResults are always sent to your DMs." + storedInfo)] });
       }
-      await handleCheck(respond, message.author.id, wlidsRaw, null, attachment, 10, hasDm ? message.author : null);
+      await handleCheck(respond, message.author.id, accountsRaw, null, attachment, 10, message.author);
     }
 
     else if (cmd === "claim") {
-      const hasDm = args.includes("--dm");
-      const filteredArgs = args.filter(a => a !== "--dm");
-      const accountsRaw = filteredArgs.join(" ");
+      const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) {
-        return respond({ embeds: [infoEmbed("Usage", "`.claim <accounts>` [--dm]\nProvide email:password comma-separated or attach a `.txt` file.\nAdd `--dm` to receive results in DMs.\n\nExample:\n`.claim email@test.com:pass123 --dm`")] });
+        return respond({ embeds: [infoEmbed("Usage", "`.claim <accounts>`\nProvide email:password comma-separated or attach a `.txt` file.\nResults are always sent to your DMs.")] });
       }
-      await handleClaim(respond, message.author.id, accountsRaw, attachment, 5, hasDm ? message.author : null);
+      await handleClaim(respond, message.author.id, accountsRaw, attachment, 5, message.author);
     }
 
     else if (cmd === "pull") {
-      const hasDm = args.includes("--dm");
-      const filteredArgs = args.filter(a => a !== "--dm");
-      const accountsRaw = filteredArgs.join(" ");
+      const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) {
-        return respond({ embeds: [infoEmbed("Usage", "`.pull <accounts>` [--dm]\nProvide email:password comma-separated or attach a `.txt` file.\nAdd `--dm` to receive results in DMs.\n\nExample:\n`.pull email@test.com:pass123 --dm`")] });
+        return respond({ embeds: [infoEmbed("Usage", "`.pull <accounts>`\nProvide email:password comma-separated or attach a `.txt` file.\nResults are always sent to your DMs.")] });
       }
-      await handlePull(respond, message.author.id, accountsRaw, attachment, hasDm ? message.author : null, message.author.username);
+      await handlePull(respond, message.author.id, accountsRaw, attachment, message.author, message.author.username);
     }
 
     else if (cmd === "wlidset") {
