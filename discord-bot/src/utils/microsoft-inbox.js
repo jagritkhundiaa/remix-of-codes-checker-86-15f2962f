@@ -46,6 +46,23 @@ const SERVICES = {
   "noreply@roblox.com": "Roblox",
   "noreply@ea.com": "EA",
   "account@nintendo.com": "Nintendo",
+  "noreply@tlauncher.org": "TLauncher",
+  "no-reply@pokemon.com": "Pokemon",
+  "noreply@pokemon.com": "Pokemon",
+  "no-reply@soundcloud.com": "SoundCloud",
+  "noreply@dazn.com": "DAZN",
+  "disneyplus@mail.disneyplus.com": "DisneyPlus",
+  "no-reply@disneyplus.com": "DisneyPlus",
+  "alerts@pornhub.com": "Pornhub",
+  "noreply@pornhub.com": "Pornhub",
+  "noreply@pandabuy.com": "PandaBuy",
+  "no-reply@pandabuy.com": "PandaBuy",
+  "noreply@minecraft.net": "Minecraft",
+  "noreply@mojang.com": "Minecraft",
+  "ebay@ebay.com": "eBay",
+  "noreply@ebay.com": "eBay",
+  "starplus@mail.starplus.com": "StarPlus",
+  "no-reply@starplus.com": "StarPlus",
 };
 
 const MAX_RETRIES = 3;
