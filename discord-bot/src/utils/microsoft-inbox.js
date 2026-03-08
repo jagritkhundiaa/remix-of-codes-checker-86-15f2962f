@@ -277,6 +277,49 @@ function extractTotalMessages(searchJson, rawText) {
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+// ── Manual redirect fetch (captures cookies at each hop) ────
+async function sessionFetch(url, options, cookieJar, maxRedirects = 8) {
+  let currentUrl = url;
+  for (let i = 0; i < maxRedirects; i++) {
+    const resp = await proxiedFetch(currentUrl, {
+      ...options,
+      redirect: "manual",
+      headers: {
+        ...(options.headers || {}),
+        Cookie: cookieJar.toString(),
+      },
+    });
+
+    // Capture cookies from this hop
+    cookieJar.parseFromHeaders(resp.headers);
+
+    const status = resp.status;
+    if (status >= 300 && status < 400) {
+      const location = resp.headers.get("location");
+      if (!location) break;
+      currentUrl = location.startsWith("http") ? location : new URL(location, currentUrl).href;
+      // Switch to GET on redirect
+      options = { ...options, method: "GET", body: undefined };
+      continue;
+    }
+
+    // Not a redirect — return with final URL attached
+    resp._finalUrl = currentUrl;
+    return resp;
+  }
+  // Exhausted redirects, do one final fetch
+  const finalResp = await proxiedFetch(currentUrl, {
+    ...options,
+    method: "GET",
+    body: undefined,
+    redirect: "manual",
+    headers: { ...(options.headers || {}), Cookie: cookieJar.toString() },
+  });
+  cookieJar.parseFromHeaders(finalResp.headers);
+  finalResp._finalUrl = currentUrl;
+  return finalResp;
+}
+
 // ── Cookie jar (simple Map-based) ───────────────────────────
 
 function createCookieJar() {
