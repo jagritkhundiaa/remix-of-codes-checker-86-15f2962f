@@ -272,18 +272,50 @@ def _attempt_check(email, password):
     session.max_redirects = 8
 
     try:
-        # Login
+        # ── Step 1: GET login page for fresh PPFT + urlPost ──
+        session.headers.update(COMMON_HEADERS)
+        r0 = session.get(AUTHORIZE_URL, allow_redirects=True, timeout=15)
+        page = r0.text
+
+        ppft = _parse_lr(page, 'name="PPFT" id="i0327" value="', '"')
+        if not ppft:
+            ppft = _parse_lr(page, "sFT:'", "'")
+        if not ppft:
+            result["status"] = "retry"
+            result["detail"] = "PPFT not found"
+            return result
+
+        url_post = _parse_lr(page, "urlPost:'", "'")
+        if not url_post:
+            url_post = _parse_lr(page, 'urlPost:"', '"')
+        if not url_post:
+            result["status"] = "retry"
+            result["detail"] = "urlPost not found"
+            return result
+
+        # ── Step 2: POST login with fresh values ──
         post_data = (
-            "ps=2&psRNGCDefaultType=&psRNGCEntropy=&psRNGCSLK=&canary=&ctx=&hpgrequestid="
-            "&PPFT=-Dim7vMfzjynvFHsYUX3COk7z2NZzCSnDj42yEbbf18uNb%21Gl%21I9kGKmv895GTY7Ilpr2XXnnVtOSLIiqU%21RssMLamTzQEfbiJbXxrOD4nPZ4vTDo8s*CJdw6MoHmVuCcuCyH1kBvpgtCLUcPsDdx09kFqsWFDy9co%21nwbCVhXJ*sjt8rZhAAUbA2nA7Z%21GK5uQ%24%24"
-            "&PPSX=PassportRN&NewUser=1&FoundMSAs=&fspost=0&i21=0&CookieDisclosure=0"
-            "&IsFidoSupported=1&isSignupPost=0&isRecoveryAttemptPost=0&i13=1"
+            f"ps=2&psRNGCDefaultType=&psRNGCEntropy=&psRNGCSLK=&canary=&ctx=&hpgrequestid="
+            f"&PPFT={urllib.parse.quote(ppft)}"
+            f"&PPSX=PassportRN&NewUser=1&FoundMSAs=&fspost=0&i21=0&CookieDisclosure=0"
+            f"&IsFidoSupported=1&isSignupPost=0&isRecoveryAttemptPost=0&i13=1"
             f"&login={urllib.parse.quote(email)}&loginfmt={urllib.parse.quote(email)}"
             f"&type=11&LoginOptions=1&lrt=&lrtPartition=&hisRegion=&hisScaleUnit="
             f"&passwd={urllib.parse.quote(password)}"
         )
 
-        resp = session.post(LOGIN_URL, headers=LOGIN_HEADERS, data=post_data,
+        post_headers = {
+            "Host": "login.live.com", "Connection": "keep-alive", "Cache-Control": "max-age=0",
+            "Origin": "https://login.live.com", "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-User": "?1", "Sec-Fetch-Dest": "document",
+            "Referer": str(r0.url), "Upgrade-Insecure-Requests": "1",
+            "Accept-Language": "en-US,en;q=0.9", "Accept-Encoding": "gzip, deflate",
+        }
+
+        resp = session.post(url_post, headers=post_headers, data=post_data,
                             allow_redirects=True, timeout=20)
         body = resp.text
         final_url = str(resp.url)
