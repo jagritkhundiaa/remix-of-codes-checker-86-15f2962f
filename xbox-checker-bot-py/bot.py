@@ -699,7 +699,7 @@ async def do_inboxaio(ctx_or_inter, accounts_raw=None, accounts_file=None, threa
         parsed, dirty = extract_combos(accounts_raw)
         accs.extend(parsed)
         if dirty:
-            await send(embed=e().add_field(name="", value="Captures/other data found.. extracting mails.."))
+            await send(embed=e().add_field(name="", value="Detected extra data.. parsing combos.."))
     if accounts_file:
         raw_lines = await fetch_lines(accounts_file)
         parsed, _ = extract_combos("\n".join(raw_lines))
@@ -711,7 +711,9 @@ async def do_inboxaio(ctx_or_inter, accounts_raw=None, accounts_file=None, threa
     if len(accs) > MAX_COMBO_LINES:
         return await send(embed=e().add_field(name="", value=f"Too many accounts. Max {MAX_COMBO_LINES} lines."))
 
-    msg = await send(embed=e().add_field(name="", value=f"Scanning {len(accs)} inboxes ({get_service_count()} services)...\n\n`{'█' * 0}{'░' * 20}` 0%"))
+    init_em = e()
+    init_em.description = f"```\n  Inbox Scanner\n  ---\n  Loaded {len(accs)} accounts\n  {get_service_count()} services tracked\n  Starting...\n```"
+    msg = await send(embed=init_em)
     if is_slash and msg is None:
         msg = await ctx_or_inter.original_response()
 
@@ -731,30 +733,30 @@ async def do_inboxaio(ctx_or_inter, accounts_raw=None, accounts_file=None, threa
         last_edit[0] = now
         sec = now - t0
         pct = int(done / total * 100) if total else 0
-        filled = int(pct / 100 * 20)
-        bar_str = "█" * filled + "░" * (20 - filled)
+        filled = int(pct / 100 * 25)
+        bar_str = "#" * filled + "-" * (25 - filled)
 
         em = e()
         cpm = int(done / sec * 60) if sec > 0 else 0
         block = [
-            f"  Progress    [{bar_str}] {pct}%",
-            f"  Processed   {done} / {total}",
-            f"  Hits        {hits}",
-            f"  Failed      {fails}",
-            f"  Speed       {cpm} checks/min",
-            f"  Elapsed     {sec:.1f}s",
+            f"  [{bar_str}] {pct}%",
+            f"  ---",
+            f"  Checked   {done}/{total}",
+            f"  Valid     {hits}",
+            f"  Invalid   {fails}",
+            f"  Rate      {cpm}/min",
+            f"  Time      {sec:.1f}s",
         ]
         em.description = f"```\n" + "\n".join(block) + "\n```"
 
-        # Live services - paginated 20 per field
         if live_svc_breakdown:
             top = sorted(live_svc_breakdown.items(), key=lambda x: x[1], reverse=True)
-            for page_idx in range(0, len(top), 20):
-                page = top[page_idx:page_idx + 20]
-                svc_text = "\n".join(f"◈ **{name}**: {count}" for name, count in page)
-                page_num = page_idx // 20 + 1
-                total_pages = (len(top) + 19) // 20
-                label = f"┃ Services ({page_num})" if total_pages > 1 else "┃ Services"
+            for page_idx in range(0, len(top), 15):
+                page = top[page_idx:page_idx + 15]
+                svc_text = "\n".join(f"> **{name}** — `{count}`" for name, count in page)
+                page_num = page_idx // 15 + 1
+                total_pages = (len(top) + 14) // 15
+                label = f"Detected ({page_num}/{total_pages})" if total_pages > 1 else "Detected"
                 em.add_field(name=label, value=svc_text, inline=False)
 
         asyncio.run_coroutine_threadsafe(msg.edit(embed=em), bot.loop)
@@ -766,70 +768,80 @@ async def do_inboxaio(ctx_or_inter, accounts_raw=None, accounts_file=None, threa
 
     hit_results = [r for r in results if r.get("status") == "hit" and r.get("services")]
     fail_results = [r for r in results if r.get("status") != "hit"]
-    locked_count = sum(1 for r in results if r.get("status") in ("2fa", "locked"))
+    locked_count = sum(1 for r in results if r.get("detail") and any(x in r["detail"] for x in ("locked", "abuse", "confirm", "identity")))
 
     elapsed = f"{time.time() - t0:.1f}s"
 
-    # Build service breakdown from all hits
+    # Build service breakdown
     service_breakdown = {}
     for r in hit_results:
         for svc_name in r.get("services", {}):
             service_breakdown[svc_name] = service_breakdown.get(svc_name, 0) + 1
 
     re_em = e()
-    re_em.title = "Inbox AIO  ─  Results"
+    re_em.title = "Inbox Scanner  —  Complete"
     block = [
-        f"  Total       {len(results)}",
-        f"  Hits        {len(hit_results)}",
-        f"  Failed      {len(fail_results)}",
-        f"  Locked/2FA  {locked_count}",
-        f"  Elapsed     {elapsed}",
+        f"  Accounts    {len(results)}",
+        f"  Valid       {len(hit_results)}",
+        f"  Invalid     {len(fail_results)}",
+        f"  Locked      {locked_count}",
+        f"  Duration    {elapsed}",
     ]
     re_em.description = f"```\n" + "\n".join(block) + "\n```"
 
     if service_breakdown:
         top = sorted(service_breakdown.items(), key=lambda x: x[1], reverse=True)
-        for page_idx in range(0, len(top), 20):
-            page = top[page_idx:page_idx + 20]
-            svc_text = "\n".join(f"◈ **{name}**: {count}" for name, count in page)
-            page_num = page_idx // 20 + 1
-            total_pages = (len(top) + 19) // 20
-            label = f"┃ Services ({page_num})" if total_pages > 1 else "┃ Services"
+        for page_idx in range(0, len(top), 15):
+            page = top[page_idx:page_idx + 15]
+            svc_text = "\n".join(f"> **{name}** — `{count}`" for name, count in page)
+            page_num = page_idx // 15 + 1
+            total_pages = (len(top) + 14) // 15
+            label = f"Detected ({page_num}/{total_pages})" if total_pages > 1 else "Detected"
             re_em.add_field(name=label, value=svc_text, inline=False)
     else:
-        re_em.add_field(name="┃ Services", value="No services detected.", inline=False)
+        re_em.add_field(name="Detected", value="Nothing found.", inline=False)
 
-    # Build files by category
+    # Build result files — group by service name
     files = []
-    categories = {}
+    svc_lines = {}
     for r in hit_results:
         for svc_name, svc_data in r.get("services", {}).items():
-            cat = svc_data.get("category", "Other")
-            if cat not in categories:
-                categories[cat] = []
-            snippet = svc_data.get("snippet", "")
-            date = svc_data.get("date", "")
-            line = f"{r['user']}:{r['password']} | {svc_name} ({svc_data.get('count', 0)} mails)"
-            if date:
-                line += f" | Last: {date}"
-            if snippet:
-                line += f" | {snippet[:80]}"
-            categories[cat].append(line)
+            svc_lines.setdefault(svc_name, [])
+            count = svc_data.get("count", 0)
+            subjects = svc_data.get("subjects", [])
+            line = f"{r['user']}:{r['password']} | {svc_name} ({count})"
+            if r.get("country"):
+                line += f" | {r['country']}"
+            if r.get("name"):
+                line += f" | {r['name']}"
+            if subjects:
+                line += f" | {subjects[0][:60]}"
+            svc_lines[svc_name].append(line)
 
-    for cat, lines in sorted(categories.items()):
-        files.append(txt_file(lines, f"{cat}_hits.txt"))
+    for svc_name, lines in sorted(svc_lines.items()):
+        safe_name = re.sub(r'[^a-zA-Z0-9_]', '_', svc_name).lower()
+        files.append(txt_file(lines, f"{safe_name}.txt"))
 
-    # Combined hits file
+    # Combined hits
     if hit_results:
         combined = []
         for r in hit_results:
             svcs = ", ".join(r.get("services", {}).keys())
+            line = f"{r['user']}:{r['password']} | {svcs}"
+            if r.get("country"):
+                line += f" | {r['country']}"
+            if r.get("name"):
+                line += f" | {r['name']}"
             caps = " | ".join(f"{k}: {v}" for k, v in r.get("captures", {}).items())
-            line = f"{r['user']}:{r['password']} | Services: {svcs}"
             if caps:
                 line += f" | {caps}"
             combined.append(line)
-        files.append(txt_file(combined, "all_hits.txt"))
+        files.append(txt_file(combined, "all_valid.txt"))
+
+    # Failed accounts
+    if fail_results:
+        fail_lines = [f"{r['user']}:{r['password']} | {r.get('detail', 'unknown')}" for r in fail_results]
+        files.append(txt_file(fail_lines, "invalid.txt"))
 
     try:
         dm = await user.create_dm()
@@ -839,7 +851,7 @@ async def do_inboxaio(ctx_or_inter, accounts_raw=None, accounts_file=None, threa
                 await dm.send(embed=re_em, files=batch)
             else:
                 await dm.send(files=batch)
-        await msg.edit(embed=e().add_field(name="", value=f"Done. {len(hit_results)} hits / {len(service_breakdown)} services. Results sent to DMs."))
+        await msg.edit(embed=e().add_field(name="", value=f"Scan complete — {len(hit_results)} valid, {len(service_breakdown)} services detected. Check DMs."))
     except Exception:
         await msg.edit(embed=re_em, files=files[:10])
 
