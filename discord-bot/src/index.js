@@ -181,6 +181,7 @@ async function handleCheck(respond, userId, wlidsRaw, codesRaw, codesFile, threa
 
     if (wlids.length === 0) return respond({ embeds: [errorEmbed("No WLID tokens provided and none stored.\nUse `/wlidset` or `.wlidset` to set WLIDs first, or provide them directly.")] });
     if (codes.length === 0) return respond({ embeds: [errorEmbed("No codes provided. Use the `codes` option or attach a `.txt` file.")] });
+    if (codes.length > MAX_COMBO_LINES) return respond({ embeds: [errorEmbed(`Too many codes. Max ${MAX_COMBO_LINES} lines allowed.`)] });
 
     const msg = await respond({
       embeds: [progressEmbed(0, codes.length, `Checking codes (${wlids.length} WLIDs)`)],
