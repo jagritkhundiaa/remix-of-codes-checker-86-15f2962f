@@ -1337,7 +1337,7 @@ async function handleInboxAio(respond, userId, accountsRaw, accountsFile, thread
     }
 
     // Build per-service file content (new format: services = { Name: { count, subjects } })
-    const files = [];
+    const zipEntries = [];
     const serviceFiles = {};
     for (const r of hitResults) {
       for (const [svcName, svcData] of Object.entries(r.services || {})) {
@@ -1357,7 +1357,7 @@ async function handleInboxAio(respond, userId, accountsRaw, accountsFile, thread
     for (const [svcName, lines] of Object.entries(serviceFiles)) {
       if (lines.length > 0) {
         const safeName = svcName.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase();
-        files.push(textAttachment(lines, `${safeName}_hits.txt`));
+        zipEntries.push({ name: `${safeName}_hits.txt`, content: lines.join("\n") });
       }
     }
 
@@ -1372,20 +1372,20 @@ async function handleInboxAio(respond, userId, accountsRaw, accountsFile, thread
         if (svcs) line += ` | ${svcs}`;
         return line;
       });
-      files.push(textAttachment(allHitLines, "all_hits.txt"));
+      zipEntries.push({ name: "all_hits.txt", content: allHitLines.join("\n") });
     }
 
     // Failed
     if (failResults.length > 0) {
-      files.push(textAttachment(failResults.map(r => `${r.user}:${r.password} | ${r.detail || "failed"}`), "failed.txt"));
+      zipEntries.push({ name: "failed.txt", content: failResults.map(r => `${r.user}:${r.password} | ${r.detail || "failed"}`).join("\n") });
     }
 
     // Locked / 2FA
     if (lockedResults.length > 0) {
-      files.push(textAttachment(lockedResults.map(r => `${r.user}:${r.password}`), "locked.txt"));
+      zipEntries.push({ name: "locked.txt", content: lockedResults.map(r => `${r.user}:${r.password}`).join("\n") });
     }
     if (twoFAResults.length > 0) {
-      files.push(textAttachment(twoFAResults.map(r => `${r.user}:${r.password}`), "2fa.txt"));
+      zipEntries.push({ name: "2fa.txt", content: twoFAResults.map(r => `${r.user}:${r.password}`).join("\n") });
     }
 
     const embed = inboxAioResultsEmbed({
@@ -1400,25 +1400,21 @@ async function handleInboxAio(respond, userId, accountsRaw, accountsFile, thread
     });
     if (stopped) embed.setDescription(embed.data.description + "\n\n*Stopped -- partial results*");
 
-    // Discord file limit is 10 per message, split if needed
-    const maxFilesPerMsg = 10;
+    // Bundle all results into a single ZIP file
+    const { AttachmentBuilder } = require("discord.js");
+    const { buildZipBuffer } = require("./utils/zip-builder");
+    const zipBuffer = buildZipBuffer(zipEntries);
+    const zipFile = new AttachmentBuilder(zipBuffer, { name: "inboxaio_results.zip" });
+
     if (dmUser) {
       try {
-        // Send results to DMs in batches
-        for (let i = 0; i < files.length; i += maxFilesPerMsg) {
-          const batch = files.slice(i, i + maxFilesPerMsg);
-          if (i === 0) {
-            await dmUser.send({ embeds: [embed], files: batch });
-          } else {
-            await dmUser.send({ files: batch });
-          }
-        }
-        await msg.edit({ embeds: [infoEmbed("Inbox AIO Complete", `Scanned ${results.length} accounts across ${getServiceCount()} services. Results sent to your DMs.`)], components: [] });
+        await dmUser.send({ embeds: [embed], files: [zipFile] });
+        await msg.edit({ embeds: [infoEmbed("Inbox AIO Complete", `Scanned ${results.length} accounts across ${getServiceCount()} services. Results sent to your DMs as a ZIP file.`)], components: [] });
       } catch {
-        await msg.edit({ embeds: [embed], files: files.slice(0, maxFilesPerMsg), components: [] });
+        await msg.edit({ embeds: [embed], files: [zipFile], components: [] });
       }
     } else {
-      await msg.edit({ embeds: [embed], files: files.slice(0, maxFilesPerMsg), components: [] });
+      await msg.edit({ embeds: [embed], files: [zipFile], components: [] });
     }
 
     statsManager.record(userId, "inboxaio", hitResults.length);
