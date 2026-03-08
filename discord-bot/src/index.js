@@ -1357,6 +1357,13 @@ client.on("interactionCreate", async (interaction) => {
       await handlePull(respond, user.id, accounts, accountsFile, user, user.username);
     }
 
+    else if (commandName === "promopuller") {
+      await interaction.deferReply();
+      const accounts = interaction.options.getString("accounts");
+      const accountsFile = interaction.options.getAttachment("accounts_file");
+      await handlePromoPull(respond, user.id, accounts, accountsFile, user, user.username);
+    }
+
     else if (commandName === "wlidset") {
       const wlids = interaction.options.getString("wlids");
       const wlidsFile = interaction.options.getAttachment("wlids_file");
