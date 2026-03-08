@@ -204,6 +204,19 @@ const commands = [
     .addStringOption((o) =>
       o.setName("solution").setDescription("CAPTCHA solution or token").setRequired(true)
     ),
+
+  new SlashCommandBuilder()
+    .setName("rewards")
+    .setDescription("Check Microsoft Rewards point balances for accounts")
+    .addAttachmentOption((o) =>
+      o.setName("accounts_file").setDescription("Text file with email:password per line").setRequired(false)
+    )
+    .addStringOption((o) =>
+      o.setName("accounts").setDescription("Accounts as email:password (comma-separated)").setRequired(false)
+    )
+    .addIntegerOption((o) =>
+      o.setName("threads").setDescription("Number of concurrent threads (1-10, default 3)").setMinValue(1).setMaxValue(10)
+    ),
 ].map((c) => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(BOT_TOKEN);
