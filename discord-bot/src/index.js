@@ -24,24 +24,29 @@ const {
   checkResultsEmbed,
   claimResultsEmbed,
   pullFetchProgressEmbed,
+  pullLiveProgressEmbed,
   pullResultsEmbed,
   purchaseResultsEmbed,
   purchaseProgressEmbed,
   productSearchEmbed,
   changerResultsEmbed,
   accountCheckerResultsEmbed,
+  rewardsResultsEmbed,
   errorEmbed,
   successEmbed,
   infoEmbed,
   ownerOnlyEmbed,
   authListEmbed,
-  helpEmbed,
+  helpOverviewEmbed,
+  helpCategoryEmbed,
+  helpSelectMenu,
   adminPanelEmbed,
   detailedStatsEmbed,
   textAttachment,
   recoverProgressEmbed,
   recoverResultEmbed,
 } = require("./utils/embeds");
+const { checkRewardsBalances } = require("./utils/microsoft-rewards");
 
 const client = new Client({
   intents: [
