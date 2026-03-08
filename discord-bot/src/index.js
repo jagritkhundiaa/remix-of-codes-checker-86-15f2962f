@@ -487,24 +487,22 @@ async function handlePromoPuller(respond, userId, accountsRaw, accountsFile, dmU
 
     let lastUpdate = Date.now();
     let totalLinksSoFar = 0;
+    let lastAccount = "";
+    let lastLinks = 0;
+    let lastError = null;
     let fetchWorking = 0;
     let fetchFailed = 0;
     let fetchWithLinks = 0;
     let fetchNoLinks = 0;
-    const accountLog = [];
 
     const { fetchResults, allLinks } = await pullLinks(accounts, (phase, detail) => {
       const now = Date.now();
 
       if (phase === "fetch") {
         totalLinksSoFar += detail.links;
-
-        accountLog.push({
-          email: detail.email,
-          links: detail.links,
-          error: detail.error,
-        });
-        if (accountLog.length > 15) accountLog.shift();
+        lastAccount = detail.email;
+        lastLinks = detail.links;
+        lastError = detail.error;
 
         if (detail.error) {
           fetchFailed++;
@@ -524,7 +522,9 @@ async function handlePromoPuller(respond, userId, accountsRaw, accountsFile, dmU
             failed: fetchFailed,
             withLinks: fetchWithLinks,
             noLinks: fetchNoLinks,
-            accountLog,
+            lastAccount,
+            lastLinks,
+            lastError,
             startTime,
             username,
           }), userId);

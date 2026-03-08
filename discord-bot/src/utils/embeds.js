@@ -265,30 +265,42 @@ function promoPullerFetchProgressEmbed(details) {
   const pct = details.total === 0 ? 0 : Math.round((details.done / details.total) * 100);
   const barLen = 20;
   const filled = Math.round((pct / 100) * barLen);
-  const bar = "█".repeat(filled) + "░".repeat(barLen - filled);
+  const bar = "#".repeat(filled) + "-".repeat(barLen - filled);
+
+  const working = details.working || 0;
+  const failed = details.failed || 0;
+  const withLinks = details.withLinks || 0;
+  const noLinks = details.noLinks || 0;
+  const totalLinks = details.totalLinks || 0;
   const elapsed = details.startTime ? ((Date.now() - details.startTime) / 1000).toFixed(1) : "...";
 
-  const embed = header({ thumbnail: false })
-    .setColor(COLORS.INFO)
-    .setDescription(`\`\`\`\n[${bar}] ${pct}%  (${details.done}/${details.total})\n\`\`\``)
-    .addFields(
-      { name: "Working", value: `\`${details.working || 0}\``, inline: true },
-      { name: "Failed", value: `\`${details.failed || 0}\``, inline: true },
-      { name: "Links Found", value: `\`${details.totalLinks || 0}\``, inline: true },
-      { name: "With Links", value: `\`${details.withLinks || 0}\``, inline: true },
-      { name: "No Links", value: `\`${details.noLinks || 0}\``, inline: true },
-      { name: "Elapsed", value: `\`${elapsed}s\``, inline: true },
-    );
+  const lines = [
+    "Fetching Links",
+    `  [${bar}] ${pct}%`,
+    "----------------------------",
+    "",
+    "  Account Analysis",
+    "",
+    `  ${pad("Total Accounts")}${details.total}`,
+    `  ${pad("Processed")}${details.done}`,
+    `  ${pad("Working")}${working}`,
+    `    > With Links       ${withLinks}`,
+    `    > No Links         ${noLinks}`,
+    `  ${pad("Failed")}${failed}`,
+    "",
+    `  ${pad("Links Found")}${totalLinks}`,
+  ];
 
-  // Per-account live status log
-  if (details.accountLog && details.accountLog.length > 0) {
-    const logLines = details.accountLog.slice(-10).map(entry => {
-      const icon = entry.error ? "✗" : entry.links > 0 ? "✓" : "—";
-      const info = entry.error ? "Failed" : `${entry.links} link${entry.links !== 1 ? "s" : ""}`;
-      return `${icon} ${entry.email.substring(0, 25).padEnd(25)} ${info}`;
-    });
-    embed.addFields({ name: "Recent Accounts", value: `\`\`\`\n${logLines.join("\n")}\n\`\`\``, inline: false });
+  if (details.lastAccount) {
+    const status = details.lastError
+      ? `Failed`
+      : `${details.lastLinks || 0} links`;
+    lines.push("", `  ${pad("Latest")}${details.lastAccount}`, `  ${pad("Status")}${status}`);
   }
+
+  lines.push("", "----------------------------", `  Time: ${elapsed}s`);
+
+  const embed = header({ thumbnail: false }).setColor(COLORS.INFO).setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
 
   if (details.username) {
     embed.setFooter({ text: `Pulled by ${details.username} | ${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` });
@@ -306,38 +318,29 @@ function promoPullerResultsEmbed(fetchResults, allLinks, { elapsed, dmSent, user
   const totalLinkCount = allLinks.length;
   const uniqueLinks = [...new Set(allLinks)];
 
+  const lines = [
+    "Promo Puller Complete!",
+    "----------------------------",
+    "",
+    "  Account Analysis",
+    "",
+    `  ${pad("Total Accounts")}${totalAccounts}`,
+    `  ${pad("Working")}${workingAccounts.length}`,
+    `    > With Links       ${withLinks.length}`,
+    `    > No Links         ${noLinks.length}`,
+    `  ${pad("Failed")}${failedAccounts.length}`,
+    "",
+    `  ${pad("Links Found")}${totalLinkCount}`,
+    `  ${pad("Unique Links")}${uniqueLinks.length}`,
+  ];
+
+  if (elapsed) {
+    lines.push("", "----------------------------", `  Time: ${elapsed}s`);
+  }
+
   const embed = header()
     .setColor(COLORS.PRIMARY)
-    .setDescription("**Promo Puller Complete**")
-    .addFields(
-      { name: "Accounts", value: `\`${totalAccounts}\``, inline: true },
-      { name: "Working", value: `\`${workingAccounts.length}\``, inline: true },
-      { name: "Failed", value: `\`${failedAccounts.length}\``, inline: true },
-      { name: "With Links", value: `\`${withLinks.length}\``, inline: true },
-      { name: "No Links", value: `\`${noLinks.length}\``, inline: true },
-      { name: "Elapsed", value: `\`${elapsed || "—"}s\``, inline: true },
-      { name: "Total Links", value: `\`${totalLinkCount}\``, inline: true },
-      { name: "Unique Links", value: `\`${uniqueLinks.length}\``, inline: true },
-      { name: "\u200b", value: "\u200b", inline: true },
-    );
-
-  // Per-account breakdown (top accounts with links, max 10)
-  const accountsWithLinks = fetchResults
-    .filter(r => !r.error && r.links && r.links.length > 0)
-    .sort((a, b) => b.links.length - a.links.length)
-    .slice(0, 10);
-
-  if (accountsWithLinks.length > 0) {
-    const breakdown = accountsWithLinks.map(r =>
-      `✓ ${r.email.substring(0, 28).padEnd(28)} ${r.links.length} link${r.links.length !== 1 ? "s" : ""}`
-    );
-    embed.addFields({ name: "Top Accounts", value: `\`\`\`\n${breakdown.join("\n")}\n\`\`\``, inline: false });
-  }
-
-  if (failedAccounts.length > 0 && failedAccounts.length <= 10) {
-    const failedList = failedAccounts.map(r => `✗ ${r.email.substring(0, 35)}`);
-    embed.addFields({ name: "Failed Accounts", value: `\`\`\`\n${failedList.join("\n")}\n\`\`\``, inline: false });
-  }
+    .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
 
   if (dmSent) {
     embed.addFields({ name: "\u200b", value: "```\n>> Results sent to your DMs\n```", inline: false });
