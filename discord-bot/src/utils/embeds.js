@@ -240,8 +240,6 @@ function pullResultsEmbed(fetchResults, validateResults, { elapsed, dmSent, user
   if (regionLocked.length > 0) lines.push(`    > Region Locked    ${regionLocked.length}`);
   if (invalid.length > 0) lines.push(`    > Invalid          ${invalid.length}`);
 
-  lines.push("", `  ${pad("Links Found")}${totalCodesFetched}`);
-
   if (elapsed) {
     lines.push("", "----------------------------", `  Time: ${elapsed}s`);
   }
