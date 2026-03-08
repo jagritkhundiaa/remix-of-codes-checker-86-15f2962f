@@ -786,11 +786,16 @@ async def do_inboxaio(ctx_or_inter, accounts_raw=None, accounts_file=None, threa
     re_em.description = f"```\n" + "\n".join(block) + "\n```"
 
     if service_breakdown:
-        top = sorted(service_breakdown.items(), key=lambda x: x[1], reverse=True)[:20]
-        svc_text = "\n".join(f"`{name}`: `{count}` accs" for name, count in top)
-        re_em.add_field(name="📬 Top Services", value=svc_text, inline=False)
+        top = sorted(service_breakdown.items(), key=lambda x: x[1], reverse=True)
+        for page_idx in range(0, len(top), 20):
+            page = top[page_idx:page_idx + 20]
+            svc_text = "\n".join(f"◈ **{name}**: {count}" for name, count in page)
+            page_num = page_idx // 20 + 1
+            total_pages = (len(top) + 19) // 20
+            label = f"┃ Services ({page_num})" if total_pages > 1 else "┃ Services"
+            re_em.add_field(name=label, value=svc_text, inline=False)
     else:
-        re_em.add_field(name="📬 Services", value="No services found.", inline=False)
+        re_em.add_field(name="┃ Services", value="No services detected.", inline=False)
 
     # Build files by category
     files = []
