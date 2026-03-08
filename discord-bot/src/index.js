@@ -1710,6 +1710,15 @@ client.on("messageCreate", async (message) => {
       await handlePromoPuller(respond, message.author.id, accountsRaw, attachment, message.author, message.author.username);
     }
 
+    else if (cmd === "inboxaio") {
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) {
+        return respond({ embeds: [infoEmbed("Usage", `\`.inboxaio <accounts>\` or attach a .txt file\n\nScans Hotmail/Outlook inboxes for ${getServiceCount()}+ services.\nResults sent to your DMs as organized files.`)] });
+      }
+      await handleInboxAio(respond, message.author.id, accountsRaw, attachment, 5, message.author);
+    }
+
     else if (cmd === "wlidset") {
       const wlidsRaw = args.join(" ");
       const attachment = message.attachments.first();
