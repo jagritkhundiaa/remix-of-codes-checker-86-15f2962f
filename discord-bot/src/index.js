@@ -348,6 +348,8 @@ async function handlePull(respond, userId, accountsRaw, accountsFile, dmUser = n
 
     let lastUpdate = Date.now();
     let totalCodesSoFar = 0;
+    let totalGpCodes = 0;
+    let totalPrsCodes = 0;
     let lastAccount = "";
     let lastCodes = 0;
     let lastError = null;
@@ -363,6 +365,8 @@ async function handlePull(respond, userId, accountsRaw, accountsFile, dmUser = n
 
       if (phase === "fetch") {
         totalCodesSoFar += detail.codes;
+        totalGpCodes += (detail.gpCodes || 0);
+        totalPrsCodes += (detail.prsCodes || 0);
         lastAccount = detail.email;
         lastCodes = detail.codes;
         lastError = detail.error;
@@ -381,6 +385,8 @@ async function handlePull(respond, userId, accountsRaw, accountsFile, dmUser = n
             done: detail.done,
             total: detail.total,
             totalCodes: totalCodesSoFar,
+            gpCodes: totalGpCodes,
+            prsCodes: totalPrsCodes,
             working: fetchWorking,
             failed: fetchFailed,
             withCodes: fetchWithCodes,

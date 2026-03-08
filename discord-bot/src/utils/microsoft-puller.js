@@ -1,12 +1,14 @@
 // ============================================================
 //  Xbox Code Fetcher + Validator (PrepareRedeem)
 //  100% exact same logic as the Python script, ported to Node.js
+//  Now also runs PRS (Rewards Scraper) in parallel per account
 // ============================================================
 
 const crypto = require("crypto");
 const { checkCodes } = require("./microsoft-checker");
 const { getWlids } = require("./wlid-store");
 const { proxiedFetch } = require("./proxy-manager");
+const { scrapeRewards } = require("./microsoft-rewards-scraper");
 
 // ── Code Format Validation (exact match to Python) ───────────
 
@@ -624,7 +626,7 @@ async function validateCodesWithStore(email, password, codes, onProgress) {
 }
 
 /**
- * Full pull pipeline: fetch codes + validate. (codes only, no links)
+ * Full pull pipeline: fetch Game Pass codes + PRS rewards codes in parallel, then validate all together.
  */
 async function pullCodes(accounts, onProgress, signal) {
   const parsed = accounts.map((a) => {
@@ -634,10 +636,12 @@ async function pullCodes(accounts, onProgress, signal) {
 
   const threads = Math.min(parsed.length, 10);
 
-  // Phase 1: Fetch codes
+  // Phase 1: Fetch codes from Game Pass perks + PRS rewards in parallel per account
   const allCodes = [];
   const fetchResults = [];
+  const prsResults = [];
   let fetchDone = 0;
+  let totalPrsCodes = 0;
 
   async function fetchWorker() {
     while (true) {
@@ -645,15 +649,40 @@ async function pullCodes(accounts, onProgress, signal) {
       const idx = fetchDone++;
       if (idx >= parsed.length) break;
       const { email, password } = parsed[idx];
-      const result = await fetchFromAccount(email, password);
-      // For pull, only track codes
-      fetchResults.push({ email: result.email, codes: result.codes, error: result.error });
-      allCodes.push(...result.codes);
+
+      // Run Game Pass fetch + PRS scrape in parallel for the same account
+      const [gpResult, prsResult] = await Promise.all([
+        fetchFromAccount(email, password),
+        scrapeRewards([`${email}:${password}`], "All", 1, null, signal)
+          .then(r => r)
+          .catch(() => ({ results: [], allCodes: [] })),
+      ]);
+
+      // Collect PRS codes (deduplicate against Game Pass codes)
+      const gpCodes = gpResult.codes || [];
+      const gpCodeSet = new Set(gpCodes);
+      const prsCodes = (prsResult.allCodes || [])
+        .map(c => c.code)
+        .filter(c => c && !gpCodeSet.has(c));
+
+      const accountPrsInfo = prsResult.allCodes || [];
+      prsResults.push({ email, codes: accountPrsInfo, status: prsResult.results?.[0]?.status || "ok" });
+      totalPrsCodes += prsCodes.length;
+
+      // Merge all unique codes
+      const mergedCodes = [...gpCodes, ...prsCodes];
+
+      fetchResults.push({ email: gpResult.email, codes: mergedCodes, gpCodes: gpCodes.length, prsCodes: prsCodes.length, error: gpResult.error });
+      allCodes.push(...mergedCodes);
+
       if (onProgress)
         onProgress("fetch", {
           email,
-          codes: result.codes.length,
-          error: result.error,
+          codes: mergedCodes.length,
+          gpCodes: gpCodes.length,
+          prsCodes: prsCodes.length,
+          totalPrsCodes,
+          error: gpResult.error,
           done: fetchResults.length,
           total: parsed.length,
         });
@@ -664,23 +693,23 @@ async function pullCodes(accounts, onProgress, signal) {
   const fetchWorkers = Array(Math.min(threads, parsed.length)).fill(null).map(() => fetchWorker());
   await Promise.all(fetchWorkers);
 
-  if (signal && signal.aborted) return { fetchResults, validateResults: [] };
-  if (allCodes.length === 0) return { fetchResults, validateResults: [] };
+  if (signal && signal.aborted) return { fetchResults, prsResults, validateResults: [] };
+  if (allCodes.length === 0) return { fetchResults, prsResults, validateResults: [] };
 
   // Phase 2: Validate using WLID checker
   const wlids = getWlids();
   if (wlids.length === 0) {
     const validateResults = allCodes.map((c) => ({ code: c, status: "error", message: `${c} | No WLIDs stored — use .wlidset first` }));
-    return { fetchResults, validateResults };
+    return { fetchResults, prsResults, validateResults };
   }
 
-  if (onProgress) onProgress("validate_start", { total: allCodes.length, fetchResults });
+  if (onProgress) onProgress("validate_start", { total: allCodes.length, fetchResults, totalPrsCodes });
 
   const validateResults = await checkCodes(wlids, allCodes, 10, (done, total, lastResult) => {
     if (onProgress) onProgress("validate", { done, total, status: lastResult?.status });
   }, signal);
 
-  return { fetchResults, validateResults };
+  return { fetchResults, prsResults, validateResults };
 }
 
 /**
