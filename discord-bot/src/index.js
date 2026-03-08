@@ -32,8 +32,6 @@ const {
   promoPullerResultsEmbed,
   inboxAioProgressEmbed,
   inboxAioResultsEmbed,
-  prsProgressEmbed,
-  prsResultsEmbed,
   purchaseResultsEmbed,
   purchaseProgressEmbed,
   productSearchEmbed,
