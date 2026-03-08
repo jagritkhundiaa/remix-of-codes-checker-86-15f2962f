@@ -344,11 +344,23 @@ async function handlePull(respond, userId, accountsRaw, accountsFile, dmUser = n
           }), userId);
         }
       } else if (phase === "validate_start") {
-        updateProgress(msg, progressEmbed(0, detail.total, "Validating codes"), userId);
+        // Show initial live structured view
+        validateCounts = { done: 0, total: detail.total, valid: 0, used: 0, balance: 0, expired: 0, regionLocked: 0, invalid: 0 };
+        updateProgress(msg, pullLiveProgressEmbed(fetchResultsRef, validateCounts, { username, startTime }), userId);
       } else if (phase === "validate") {
+        validateCounts.done = detail.done;
+        // Update counts from detail if available
+        if (detail.status) {
+          if (detail.status === "valid") validateCounts.valid++;
+          else if (detail.status === "used" || detail.status === "REDEEMED") validateCounts.used++;
+          else if (detail.status === "BALANCE_CODE") validateCounts.balance++;
+          else if (detail.status === "expired" || detail.status === "EXPIRED") validateCounts.expired++;
+          else if (detail.status === "REGION_LOCKED") validateCounts.regionLocked++;
+          else if (detail.status === "invalid" || detail.status === "error" || detail.status === "INVALID") validateCounts.invalid++;
+        }
         if (now - lastUpdate > 2000) {
           lastUpdate = now;
-          updateProgress(msg, progressEmbed(detail.done, detail.total, "Validating codes"), userId);
+          updateProgress(msg, pullLiveProgressEmbed(fetchResultsRef, validateCounts, { username, startTime }), userId);
         }
       }
     }, ac.signal);
