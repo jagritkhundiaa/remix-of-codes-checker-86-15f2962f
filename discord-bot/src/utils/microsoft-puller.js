@@ -658,10 +658,10 @@ async function pullCodes(accounts, onProgress, signal) {
     return { fetchResults, validateResults };
   }
 
-  if (onProgress) onProgress("validate_start", { total: allCodes.length });
+  if (onProgress) onProgress("validate_start", { total: allCodes.length, fetchResults });
 
-  const validateResults = await checkCodes(wlids, allCodes, 10, (done, total) => {
-    if (onProgress) onProgress("validate", { done, total });
+  const validateResults = await checkCodes(wlids, allCodes, 10, (done, total, lastResult) => {
+    if (onProgress) onProgress("validate", { done, total, status: lastResult?.status });
   }, signal);
 
   return { fetchResults, validateResults };

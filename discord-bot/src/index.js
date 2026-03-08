@@ -347,7 +347,8 @@ async function handlePull(respond, userId, accountsRaw, accountsFile, dmUser = n
           }), userId);
         }
       } else if (phase === "validate_start") {
-        // Show initial live structured view
+        // Capture fetch results for live display
+        if (detail.fetchResults) fetchResultsRef = detail.fetchResults;
         validateCounts = { done: 0, total: detail.total, valid: 0, used: 0, balance: 0, expired: 0, regionLocked: 0, invalid: 0 };
         updateProgress(msg, pullLiveProgressEmbed(fetchResultsRef, validateCounts, { username, startTime }), userId);
       } else if (phase === "validate") {
