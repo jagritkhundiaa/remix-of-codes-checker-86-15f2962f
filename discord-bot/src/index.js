@@ -29,6 +29,8 @@ const {
   pullResultsEmbed,
   promoPullerFetchProgressEmbed,
   promoPullerResultsEmbed,
+  inboxAioProgressEmbed,
+  inboxAioResultsEmbed,
   purchaseResultsEmbed,
   purchaseProgressEmbed,
   productSearchEmbed,
