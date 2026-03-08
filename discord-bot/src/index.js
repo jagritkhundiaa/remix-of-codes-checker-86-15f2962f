@@ -817,6 +817,7 @@ async function handleChanger(respond, userId, accountsRaw, accountsFile, newPass
     }
 
     if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided (email:password format).")] });
+    if (accounts.length > MAX_COMBO_LINES) return respond({ embeds: [errorEmbed(`Too many accounts. Max ${MAX_COMBO_LINES} lines allowed.`)] });
     if (!newPassword) return respond({ embeds: [errorEmbed("No new password provided.")] });
     if (newPassword.length < 8) return respond({ embeds: [errorEmbed("New password must be at least 8 characters.")] });
 
