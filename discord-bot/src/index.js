@@ -40,6 +40,7 @@ const {
   helpOverviewEmbed,
   helpCategoryEmbed,
   helpSelectMenu,
+  welcomeEmbed,
   adminPanelEmbed,
   detailedStatsEmbed,
   textAttachment,
