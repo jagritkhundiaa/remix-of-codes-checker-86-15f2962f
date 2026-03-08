@@ -33,6 +33,11 @@ module.exports = {
   // Recommended: 600x100 or similar wide format. Leave "" to disable.
   BANNER_URL: "",
 
+  // ── Supabase (for saving pulled codes) ──────────────────────
+  // Get these from your Lovable Cloud project settings
+  SUPABASE_URL: "https://tdtgyhtcumoetfhfycnn.supabase.co",
+  SUPABASE_SERVICE_KEY: "YOUR_SUPABASE_SERVICE_ROLE_KEY_HERE",
+
   // ── Proxy Settings ──────────────────────────────────────────
   // Set to true to route requests through proxies loaded from proxies.txt
   // Set to false for direct connections

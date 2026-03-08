@@ -14,7 +14,39 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      promos_unchecked: {
+        Row: {
+          code: string
+          created_at: string
+          discord_user_id: string | null
+          id: string
+          pulled_by: string | null
+          source_email: string | null
+          status: string | null
+          title: string | null
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          discord_user_id?: string | null
+          id?: string
+          pulled_by?: string | null
+          source_email?: string | null
+          status?: string | null
+          title?: string | null
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          discord_user_id?: string | null
+          id?: string
+          pulled_by?: string | null
+          source_email?: string | null
+          status?: string | null
+          title?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
