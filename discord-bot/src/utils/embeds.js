@@ -259,7 +259,100 @@ function pullResultsEmbed(fetchResults, validateResults, { elapsed, dmSent, user
   return embed;
 }
 
-// ── Purchase ─────────────────────────────────────────────────
+// ── PromoPuller Embeds ───────────────────────────────────────
+
+function promoPullerFetchProgressEmbed(details) {
+  const pct = details.total === 0 ? 0 : Math.round((details.done / details.total) * 100);
+  const barLen = 20;
+  const filled = Math.round((pct / 100) * barLen);
+  const bar = "#".repeat(filled) + "-".repeat(barLen - filled);
+
+  const working = details.working || 0;
+  const failed = details.failed || 0;
+  const withLinks = details.withLinks || 0;
+  const noLinks = details.noLinks || 0;
+  const totalLinks = details.totalLinks || 0;
+  const elapsed = details.startTime ? ((Date.now() - details.startTime) / 1000).toFixed(1) : "...";
+
+  const lines = [
+    "Fetching Links",
+    `  [${bar}] ${pct}%`,
+    "----------------------------",
+    "",
+    "  Account Analysis",
+    "",
+    `  ${pad("Total Accounts")}${details.total}`,
+    `  ${pad("Processed")}${details.done}`,
+    `  ${pad("Working")}${working}`,
+    `    > With Links       ${withLinks}`,
+    `    > No Links         ${noLinks}`,
+    `  ${pad("Failed")}${failed}`,
+    "",
+    `  ${pad("Links Found")}${totalLinks}`,
+  ];
+
+  if (details.lastAccount) {
+    const status = details.lastError
+      ? `Failed`
+      : `${details.lastLinks || 0} links`;
+    lines.push("", `  ${pad("Latest")}${details.lastAccount}`, `  ${pad("Status")}${status}`);
+  }
+
+  lines.push("", "----------------------------", `  Time: ${elapsed}s`);
+
+  const embed = header({ thumbnail: false }).setColor(COLORS.INFO).setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
+
+  if (details.username) {
+    embed.setFooter({ text: `Pulled by ${details.username} | ${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` });
+  }
+
+  return embed;
+}
+
+function promoPullerResultsEmbed(fetchResults, allLinks, { elapsed, dmSent, username } = {}) {
+  const totalAccounts = fetchResults.length;
+  const workingAccounts = fetchResults.filter((r) => !r.error);
+  const failedAccounts = fetchResults.filter((r) => r.error);
+  const withLinks = workingAccounts.filter((r) => r.links.length > 0);
+  const noLinks = workingAccounts.filter((r) => r.links.length === 0);
+  const totalLinkCount = allLinks.length;
+  const uniqueLinks = [...new Set(allLinks)];
+
+  const lines = [
+    "Promo Puller Complete!",
+    "----------------------------",
+    "",
+    "  Account Analysis",
+    "",
+    `  ${pad("Total Accounts")}${totalAccounts}`,
+    `  ${pad("Working")}${workingAccounts.length}`,
+    `    > With Links       ${withLinks.length}`,
+    `    > No Links         ${noLinks.length}`,
+    `  ${pad("Failed")}${failedAccounts.length}`,
+    "",
+    `  ${pad("Links Found")}${totalLinkCount}`,
+    `  ${pad("Unique Links")}${uniqueLinks.length}`,
+  ];
+
+  if (elapsed) {
+    lines.push("", "----------------------------", `  Time: ${elapsed}s`);
+  }
+
+  const embed = header()
+    .setColor(COLORS.PRIMARY)
+    .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
+
+  if (dmSent) {
+    embed.addFields({ name: "\u200b", value: "```\n>> Results sent to your DMs\n```", inline: false });
+  }
+
+  if (username) {
+    embed.setFooter({ text: `Pulled by ${username} | ${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` });
+  }
+
+  return embed;
+}
+
 
 function purchaseProgressEmbed(details) {
   const pct = details.total === 0 ? 0 : Math.round((details.done / details.total) * 100);
