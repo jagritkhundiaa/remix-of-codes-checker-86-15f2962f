@@ -658,12 +658,13 @@ async function pullCodes(accounts, onProgress, signal) {
           .catch(() => ({ results: [], allCodes: [] })),
       ]);
 
-      // Collect PRS codes (deduplicate against Game Pass codes)
+      // Collect PRS codes — only keep Microsoft-redeemable 25-char (5x5) codes, deduplicate against GP codes
       const gpCodes = gpResult.codes || [];
       const gpCodeSet = new Set(gpCodes);
+      const MS_CODE_RE = /^[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}$/;
       const prsCodes = (prsResult.allCodes || [])
         .map(c => c.code)
-        .filter(c => c && !gpCodeSet.has(c));
+        .filter(c => c && MS_CODE_RE.test(c) && !isInvalidCodeFormat(c) && !gpCodeSet.has(c));
 
       const accountPrsInfo = prsResult.allCodes || [];
       prsResults.push({ email, codes: accountPrsInfo, status: prsResult.results?.[0]?.status || "ok" });

