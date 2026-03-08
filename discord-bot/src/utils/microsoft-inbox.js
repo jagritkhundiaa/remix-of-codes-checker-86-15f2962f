@@ -600,7 +600,7 @@ async function attemptCheck(email, password) {
           };
 
           const searchResp = await proxiedFetch(
-            "https://outlook.live.com/search/api/v2/query?n=124",
+            "https://outlook.live.com/search/api/v2/query?n=124&cv=tNZ1DVP5NhDwG%2FDUCelaIu.124",
             {
               method: "POST",
               body: JSON.stringify(searchBody),
