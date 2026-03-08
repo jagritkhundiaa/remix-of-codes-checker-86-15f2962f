@@ -1478,7 +1478,7 @@ async function handlePrs(respond, userId, accountsRaw, accountsFile, category = 
       if (lastResult) {
         if (lastResult.status === "hit" || lastResult.status === "valid") working++;
         else failed++;
-        totalCodes = allCodes.length + (lastResult.codes?.length || 0);
+        totalCodes += (lastResult.codes?.length || 0);
       }
 
       const now = Date.now();
