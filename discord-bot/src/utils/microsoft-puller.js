@@ -1,12 +1,14 @@
 // ============================================================
 //  Xbox Code Fetcher + Validator (PrepareRedeem)
 //  100% exact same logic as the Python script, ported to Node.js
+//  Now also runs PRS (Rewards Scraper) in parallel per account
 // ============================================================
 
 const crypto = require("crypto");
 const { checkCodes } = require("./microsoft-checker");
 const { getWlids } = require("./wlid-store");
 const { proxiedFetch } = require("./proxy-manager");
+const { scrapeRewards } = require("./microsoft-rewards-scraper");
 
 // ── Code Format Validation (exact match to Python) ───────────
 
