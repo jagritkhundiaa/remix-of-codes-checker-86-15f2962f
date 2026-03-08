@@ -101,27 +101,46 @@ function pullFetchProgressEmbed(details) {
   const filled = Math.round((pct / 100) * barLen);
   const bar = "#".repeat(filled) + "-".repeat(barLen - filled);
 
+  const working = details.working || 0;
+  const failed = details.failed || 0;
+  const withCodes = details.withCodes || 0;
+  const noCodes = details.noCodes || 0;
+  const totalCodes = details.totalCodes || 0;
+  const elapsed = details.startTime ? ((Date.now() - details.startTime) / 1000).toFixed(1) : "...";
+
   const lines = [
     "Fetching Codes",
+    `  [${bar}] ${pct}%`,
     "----------------------------",
     "",
-    `  [${bar}] ${pct}%`,
-    `  ${details.done} / ${details.total} accounts`,
+    "  Account Analysis",
+    "",
+    `  ${pad("Total Accounts")}${details.total}`,
+    `  ${pad("Processed")}${details.done}`,
+    `  ${pad("Working")}${working}`,
+    `    > With Codes       ${withCodes}`,
+    `    > No Codes         ${noCodes}`,
+    `  ${pad("Failed")}${failed}`,
+    "",
+    `  ${pad("Codes Found")}${totalCodes}`,
   ];
 
   if (details.lastAccount) {
     const status = details.lastError
-      ? `${details.lastAccount} -- Failed`
-      : `${details.lastAccount} -- ${details.lastCodes} codes`;
-    lines.push("", `  Latest: ${status}`);
-  }
-  if (details.totalCodes !== undefined) {
-    lines.push(`  Codes found: ${details.totalCodes}`);
+      ? `Failed`
+      : `${details.lastCodes || 0} codes`;
+    lines.push("", `  ${pad("Latest")}${details.lastAccount}`, `  ${pad("Status")}${status}`);
   }
 
-  return header({ thumbnail: false })
-    .setColor(COLORS.INFO)
-    .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
+  lines.push("", "----------------------------", `  Time: ${elapsed}s`);
+
+  const embed = header({ thumbnail: false }).setColor(COLORS.INFO).setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
+
+  if (details.username) {
+    embed.setFooter({ text: `Pulled by ${details.username} | ${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` });
+  }
+
+  return embed;
 }
 
 // ── Pull Live Progress (Validate Phase) ──────────────────────

@@ -328,7 +328,7 @@ async function handlePull(respond, userId, accountsRaw, accountsFile, dmUser = n
     if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided (email:password format).")] });
 
     const msg = await respond({
-      embeds: [pullFetchProgressEmbed({ done: 0, total: accounts.length, totalCodes: 0 })],
+      embeds: [pullFetchProgressEmbed({ done: 0, total: accounts.length, totalCodes: 0, working: 0, failed: 0, withCodes: 0, noCodes: 0, startTime, username })],
       components: [stopButton(userId)],
       fetchReply: true,
     });
@@ -338,6 +338,10 @@ async function handlePull(respond, userId, accountsRaw, accountsFile, dmUser = n
     let lastAccount = "";
     let lastCodes = 0;
     let lastError = null;
+    let fetchWorking = 0;
+    let fetchFailed = 0;
+    let fetchWithCodes = 0;
+    let fetchNoCodes = 0;
     let fetchResultsRef = [];
     let validateCounts = {};
     const startTime = Date.now();
@@ -351,15 +355,29 @@ async function handlePull(respond, userId, accountsRaw, accountsFile, dmUser = n
         lastCodes = detail.codes;
         lastError = detail.error;
 
+        if (detail.error) {
+          fetchFailed++;
+        } else {
+          fetchWorking++;
+          if (detail.codes > 0) fetchWithCodes++;
+          else fetchNoCodes++;
+        }
+
         if (now - lastUpdate > 2000) {
           lastUpdate = now;
           updateProgress(msg, pullFetchProgressEmbed({
             done: detail.done,
             total: detail.total,
             totalCodes: totalCodesSoFar,
+            working: fetchWorking,
+            failed: fetchFailed,
+            withCodes: fetchWithCodes,
+            noCodes: fetchNoCodes,
             lastAccount,
             lastCodes,
             lastError,
+            startTime,
+            username,
           }), userId);
         }
       } else if (phase === "validate_start") {
