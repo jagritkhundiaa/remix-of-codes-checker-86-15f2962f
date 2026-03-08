@@ -107,6 +107,8 @@ async function sendWelcomeIfNeeded(respond, userId, username) {
   } catch {}
 }
 
+const MAX_COMBO_LINES = 4000;
+
 function splitInput(raw) {
   if (!raw) return [];
   return raw
