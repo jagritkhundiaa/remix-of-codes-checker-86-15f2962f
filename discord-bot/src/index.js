@@ -1403,42 +1403,43 @@ async function handleInboxAio(respond, userId, accountsRaw, accountsFile, thread
     // Bundle all files into a single ZIP
     const archiver = require("archiver");
     const { PassThrough } = require("stream");
-    const zipBuffer = await new Promise((resolve, reject) => {
-      const chunks = [];
-      const passthrough = new PassThrough();
-      passthrough.on("data", (chunk) => chunks.push(chunk));
-      passthrough.on("end", () => resolve(Buffer.concat(chunks)));
-      passthrough.on("error", reject);
+    const { AttachmentBuilder } = require("discord.js");
 
-      const archive = archiver("zip", { zlib: { level: 9 } });
-      archive.on("error", reject);
-      archive.pipe(passthrough);
+    let zipFile;
+    if (files.length > 0) {
+      const zipBuffer = await new Promise((resolve, reject) => {
+        const chunks = [];
+        const passthrough = new PassThrough();
+        passthrough.on("data", (chunk) => chunks.push(chunk));
+        passthrough.on("end", () => resolve(Buffer.concat(chunks)));
+        passthrough.on("error", reject);
 
-      for (const f of files) {
-        const name = f.name || f.attachment?.name || "file.txt";
-        const content = f.attachment || f;
-        if (Buffer.isBuffer(content)) {
-          archive.append(content, { name });
-        } else if (typeof content === "string") {
-          archive.append(content, { name });
-        } else if (content instanceof Buffer) {
+        const archive = archiver("zip", { zlib: { level: 9 } });
+        archive.on("error", reject);
+        archive.pipe(passthrough);
+
+        for (const f of files) {
+          // textAttachment returns AttachmentBuilder: f.name is the filename, f.attachment is the Buffer
+          const name = f.name || "file.txt";
+          const content = f.attachment;
           archive.append(content, { name });
         }
-      }
-      archive.finalize();
-    });
+        archive.finalize();
+      });
+      zipFile = new AttachmentBuilder(zipBuffer, { name: "inbox_results.zip" });
+    }
 
-    const zipFile = new (require("discord.js").AttachmentBuilder)(zipBuffer, { name: "inbox_results.zip" });
+    const sendFiles = zipFile ? [zipFile] : [];
 
     if (dmUser) {
       try {
-        await dmUser.send({ embeds: [embed], files: [zipFile] });
+        await dmUser.send({ embeds: [embed], files: sendFiles });
         await msg.edit({ embeds: [infoEmbed("Inbox AIO Complete", `Scanned ${results.length} accounts across ${getServiceCount()} services. Results sent to your DMs.`)], components: [] });
       } catch {
-        await msg.edit({ embeds: [embed], files: [zipFile], components: [] });
+        await msg.edit({ embeds: [embed], files: sendFiles, components: [] });
       }
     } else {
-      await msg.edit({ embeds: [embed], files: [zipFile], components: [] });
+      await msg.edit({ embeds: [embed], files: sendFiles, components: [] });
     }
 
     statsManager.record(userId, "inboxaio", hitResults.length);
