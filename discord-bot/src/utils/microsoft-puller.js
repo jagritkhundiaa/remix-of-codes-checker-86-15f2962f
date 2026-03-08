@@ -579,18 +579,18 @@ async function fetchFromAccount(email, password) {
 
   try {
     const { urlPost, ppft } = await fetchOAuthTokens(session);
-    if (!urlPost) return { email, codes: [], error: "OAuth failed" };
+    if (!urlPost) return { email, codes: [], links: [], error: "OAuth failed" };
 
     const rps = await fetchLogin(session, email, password, urlPost, ppft);
-    if (!rps) return { email, codes: [], error: "Login failed" };
+    if (!rps) return { email, codes: [], links: [], error: "Login failed" };
 
     const { uhs, xstsToken } = await getXboxTokens(rps);
-    if (!uhs) return { email, codes: [], error: "Xbox tokens failed" };
+    if (!uhs) return { email, codes: [], links: [], error: "Xbox tokens failed" };
 
-    const codes = await fetchCodesFromXbox(uhs, xstsToken);
-    return { email, codes };
+    const { codes, links } = await fetchCodesFromXbox(uhs, xstsToken);
+    return { email, codes, links };
   } catch (err) {
-    return { email, codes: [], error: err.message };
+    return { email, codes: [], links: [], error: err.message };
   }
 }
 
@@ -624,7 +624,7 @@ async function validateCodesWithStore(email, password, codes, onProgress) {
 }
 
 /**
- * Full pull pipeline: fetch + validate.
+ * Full pull pipeline: fetch codes + validate. (codes only, no links)
  */
 async function pullCodes(accounts, onProgress, signal) {
   const parsed = accounts.map((a) => {
@@ -646,7 +646,8 @@ async function pullCodes(accounts, onProgress, signal) {
       if (idx >= parsed.length) break;
       const { email, password } = parsed[idx];
       const result = await fetchFromAccount(email, password);
-      fetchResults.push(result);
+      // For pull, only track codes
+      fetchResults.push({ email: result.email, codes: result.codes, error: result.error });
       allCodes.push(...result.codes);
       if (onProgress)
         onProgress("fetch", {
@@ -682,4 +683,46 @@ async function pullCodes(accounts, onProgress, signal) {
   return { fetchResults, validateResults };
 }
 
-module.exports = { pullCodes, fetchFromAccount, validateCodesWithStore };
+/**
+ * Pull links only (promo links from Game Pass perks). No validation phase.
+ */
+async function pullLinks(accounts, onProgress, signal) {
+  const parsed = accounts.map((a) => {
+    const i = a.indexOf(":");
+    return i === -1 ? { email: a, password: "" } : { email: a.substring(0, i), password: a.substring(i + 1) };
+  });
+
+  const threads = Math.min(parsed.length, 10);
+  const allLinks = [];
+  const fetchResults = [];
+  let fetchDone = 0;
+
+  async function fetchWorker() {
+    while (true) {
+      if (signal && signal.aborted) break;
+      const idx = fetchDone++;
+      if (idx >= parsed.length) break;
+      const { email, password } = parsed[idx];
+      const result = await fetchFromAccount(email, password);
+      // For promopuller, only track links
+      fetchResults.push({ email: result.email, links: result.links, error: result.error });
+      allLinks.push(...result.links);
+      if (onProgress)
+        onProgress("fetch", {
+          email,
+          links: result.links.length,
+          error: result.error,
+          done: fetchResults.length,
+          total: parsed.length,
+        });
+    }
+  }
+
+  fetchDone = 0;
+  const fetchWorkers = Array(Math.min(threads, parsed.length)).fill(null).map(() => fetchWorker());
+  await Promise.all(fetchWorkers);
+
+  return { fetchResults, allLinks };
+}
+
+module.exports = { pullCodes, pullLinks, fetchFromAccount, validateCodesWithStore };
