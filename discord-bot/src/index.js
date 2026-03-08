@@ -450,7 +450,128 @@ async function handlePull(respond, userId, accountsRaw, accountsFile, dmUser = n
   }
 }
 
-// ── Auth handler ─────────────────────────────────────────────
+// ── PromoPuller handler ──────────────────────────────────────
+
+async function handlePromoPuller(respond, userId, accountsRaw, accountsFile, dmUser = null, username = null) {
+  if (!canUse(userId)) return respond({ embeds: [errorEmbed(blacklist.isBlacklisted(userId) ? "You are blacklisted." : "You are not authorized to use this bot.")] });
+
+  const acquire = limiter.acquire(userId, "promopuller");
+  if (!acquire.ok) {
+    const reason = acquire.reason === "busy"
+      ? "You already have a command running. Wait for it to finish."
+      : `Max concurrent users (${config.MAX_CONCURRENT_USERS}) reached. Try again later.`;
+    return respond({ embeds: [errorEmbed(reason)] });
+  }
+
+  const ac = new AbortController();
+  activeAborts.set(userId, ac);
+  const startTime = Date.now();
+
+  try {
+    let accounts = splitInput(accountsRaw).filter((a) => a.includes(":"));
+    if (accountsFile) {
+      const lines = await fetchAttachmentLines(accountsFile);
+      accounts = accounts.concat(lines.filter((l) => l.includes(":")));
+    }
+
+    if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided (email:password format).")] });
+    if (accounts.length > MAX_COMBO_LINES) return respond({ embeds: [errorEmbed(`Too many accounts. Max ${MAX_COMBO_LINES} lines allowed.`)] });
+
+    const msg = await respond({
+      embeds: [promoPullerFetchProgressEmbed({ done: 0, total: accounts.length, totalLinks: 0, working: 0, failed: 0, withLinks: 0, noLinks: 0, startTime, username })],
+      components: [stopButton(userId)],
+      fetchReply: true,
+    });
+
+    let lastUpdate = Date.now();
+    let totalLinksSoFar = 0;
+    let lastAccount = "";
+    let lastLinks = 0;
+    let lastError = null;
+    let fetchWorking = 0;
+    let fetchFailed = 0;
+    let fetchWithLinks = 0;
+    let fetchNoLinks = 0;
+
+    const { fetchResults, allLinks } = await pullLinks(accounts, (phase, detail) => {
+      const now = Date.now();
+
+      if (phase === "fetch") {
+        totalLinksSoFar += detail.links;
+        lastAccount = detail.email;
+        lastLinks = detail.links;
+        lastError = detail.error;
+
+        if (detail.error) {
+          fetchFailed++;
+        } else {
+          fetchWorking++;
+          if (detail.links > 0) fetchWithLinks++;
+          else fetchNoLinks++;
+        }
+
+        if (now - lastUpdate > 2000) {
+          lastUpdate = now;
+          updateProgress(msg, promoPullerFetchProgressEmbed({
+            done: detail.done,
+            total: detail.total,
+            totalLinks: totalLinksSoFar,
+            working: fetchWorking,
+            failed: fetchFailed,
+            withLinks: fetchWithLinks,
+            noLinks: fetchNoLinks,
+            lastAccount,
+            lastLinks,
+            lastError,
+            startTime,
+            username,
+          }), userId);
+        }
+      }
+    }, ac.signal);
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    const stopped = ac.signal.aborted;
+    const files = [];
+    const uniqueLinks = [...new Set(allLinks)];
+
+    if (allLinks.length > 0)
+      files.push(textAttachment(allLinks, "links_all.txt"));
+    if (uniqueLinks.length > 0 && uniqueLinks.length !== allLinks.length)
+      files.push(textAttachment(uniqueLinks, "links_unique.txt"));
+
+    // Per-account breakdown
+    const perAccount = fetchResults
+      .filter((r) => !r.error && r.links.length > 0)
+      .map((r) => `${r.email}\n${r.links.join("\n")}`);
+    if (perAccount.length > 0)
+      files.push(textAttachment(perAccount, "links_by_account.txt"));
+
+    const embed = promoPullerResultsEmbed(fetchResults, allLinks, {
+      elapsed,
+      dmSent: !!dmUser,
+      username: username || undefined,
+    });
+    if (stopped) embed.setDescription(embed.data.description + "\n\n*Stopped -- partial results*");
+
+    if (dmUser) {
+      try {
+        await dmUser.send({ embeds: [embed], files });
+        await msg.edit({ embeds: [promoPullerResultsEmbed(fetchResults, allLinks, { elapsed, dmSent: true, username: username || undefined })], components: [] });
+      } catch {
+        await msg.edit({ embeds: [embed], files, components: [] });
+      }
+    } else {
+      await msg.edit({ embeds: [embed], files, components: [] });
+    }
+  } catch (err) {
+    await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
+  } finally {
+    activeAborts.delete(userId);
+    limiter.release(userId);
+  }
+}
+
 
 async function handleAuth(respond, callerId, targetId, durationStr) {
   if (!isOwner(callerId)) return respond({ embeds: [errorEmbed("Only the bot owner can authorize users.")] });
