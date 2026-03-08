@@ -66,6 +66,12 @@ const SERVICES = {
   "noreply@eldorado.gg": "Eldorado.gg",
   "no-reply@eldorado.gg": "Eldorado.gg",
   "support@eldorado.gg": "Eldorado.gg",
+  "info@eldorado.gg": "Eldorado.gg",
+  "notifications@eldorado.gg": "Eldorado.gg",
+  "hello@eldorado.gg": "Eldorado.gg",
+  "orders@eldorado.gg": "Eldorado.gg",
+  "mail@eldorado.gg": "Eldorado.gg",
+  "eldorado.gg": "Eldorado.gg",
 };
 
 const MAX_RETRIES = 3;
