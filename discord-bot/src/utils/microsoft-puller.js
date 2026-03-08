@@ -639,9 +639,7 @@ async function pullCodes(accounts, onProgress, signal) {
   // Phase 1: Fetch codes from Game Pass perks + PRS rewards in parallel per account
   const allCodes = [];
   const fetchResults = [];
-  const prsResults = [];
   let fetchDone = 0;
-  let totalPrsCodes = 0;
 
   async function fetchWorker() {
     while (true) {
