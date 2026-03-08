@@ -152,8 +152,6 @@ function pullLiveProgressEmbed(fetchResults, validateProgress, { username, start
   const withCodes = workingAccounts.filter((r) => r.codes.length > 0);
   const noCodes = workingAccounts.filter((r) => r.codes.length === 0);
   const totalCodesFetched = fetchResults.reduce((sum, r) => sum + r.codes.length, 0);
-  const totalGpCodes = fetchResults.reduce((sum, r) => sum + (r.gpCodes || 0), 0);
-  const totalPrsCodes = fetchResults.reduce((sum, r) => sum + (r.prsCodes || 0), 0);
 
   const pct = validateProgress.total === 0 ? 0 : Math.round((validateProgress.done / validateProgress.total) * 100);
   const barLen = 20;
