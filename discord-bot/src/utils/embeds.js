@@ -231,8 +231,6 @@ function pullResultsEmbed(fetchResults, validateResults, { elapsed, dmSent, user
     `  ${pad("Failed")}${failedAccounts.length}`,
     "",
     `  ${pad("Codes Found")}${totalCodesFetched}`,
-    `    > Game Pass         ${totalGpCodes}`,
-    `    > Rewards (PRS)     ${totalPrsCodes}`,
     `    > Working           ${valid.length}`,
     `    > Claimed           ${used.length}`,
     `    > Balance           ${balance.length}`,
