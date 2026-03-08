@@ -289,29 +289,31 @@ function generateReferenceId() {
 
 async function getStoreCartState(session) {
   try {
-    const msCv = crypto.randomUUID().replace(/-/g, "").substring(0, 16) + ".1";
+    const msCv = "xddT7qMNbECeJpTq.6.2";
     const payload = new URLSearchParams({
       data: '{"usePurchaseSdk":true}',
       market: "US",
       cV: msCv,
-      locale: "en-US",
+      locale: "en-GB",
       msaTicket: session.token,
       pageFormat: "full",
-      urlRef: "https://www.microsoft.com/store",
-      clientType: "MicrosoftCom",
+      urlRef: "https://account.microsoft.com/billing/redeem",
+      isRedeem: "true",
+      clientType: "AccountMicrosoftCom",
       layout: "Inline",
-      cssOverride: "StorePurchase",
-      scenario: "purchase",
+      cssOverride: "AMC",
+      scenario: "redeem",
+      timeToInvokeIframe: "4977",
       sdkVersion: "VERSION_PLACEHOLDER",
     });
 
     const res = await proxiedFetch(
-      `https://www.microsoft.com/store/purchase/buynowui/checkout?ms-cv=${msCv}&market=US&locale=en-US&clientName=MicrosoftCom`,
+      `https://www.microsoft.com/store/purchase/buynowui/redeemnow?ms-cv=${msCv}&market=US&locale=en-GB&clientName=AccountMicrosoftCom`,
       {
         method: "POST",
         headers: {
           ...session.headers,
-          Cookie: session.cookies.toString(),
+          Cookie: session.cookieJar,
           "Content-Type": "application/x-www-form-urlencoded",
         },
         body: payload.toString(),
