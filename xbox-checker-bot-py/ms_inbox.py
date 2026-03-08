@@ -10,19 +10,22 @@ import urllib.parse
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0"
 MAX_RETRIES = 3
 RETRY_DELAY = 2
 
-LOGIN_URL = "https://login.live.com/ppsecure/post.srf?client_id=0000000048170EF2&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf&response_type=token&scope=service%3A%3Aoutlook.office.com%3A%3AMBI_SSL&display=touch&username=ashleypetty%40outlook.com&contextid=2CCDB02DC526CA71&bk=1665024852&uaid=a5b22c26bc704002ac309462e8d061bb&pid=15216"
+AUTHORIZE_URL = (
+    "https://login.live.com/oauth20_authorize.srf"
+    "?client_id=0000000048170EF2"
+    "&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf"
+    "&response_type=token"
+    "&scope=service%3A%3Aoutlook.office.com%3A%3AMBI_SSL"
+    "&display=touch"
+)
 
-LOGIN_HEADERS = {
-    "Host": "login.live.com", "Connection": "keep-alive", "Cache-Control": "max-age=0",
-    "Origin": "https://login.live.com", "Content-Type": "application/x-www-form-urlencoded",
+COMMON_HEADERS = {
     "User-Agent": USER_AGENT,
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-User": "?1", "Sec-Fetch-Dest": "document",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
     "Accept-Encoding": "gzip, deflate",
 }
