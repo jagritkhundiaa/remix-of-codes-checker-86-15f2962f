@@ -844,6 +844,8 @@ module.exports = {
   pullFetchProgressEmbed,
   pullLiveProgressEmbed,
   pullResultsEmbed,
+  promoPullerFetchProgressEmbed,
+  promoPullerResultsEmbed,
   purchaseProgressEmbed,
   purchaseResultsEmbed,
   productSearchEmbed,
