@@ -2,46 +2,11 @@
 //  Microsoft Store Purchaser
 //  Logs into Microsoft Store, searches for products, and
 //  completes purchases using account balance or payment methods.
-//  Uses the same hardened login flow as the WLID claimer.
+//  Uses the exact same ppsecure login flow as the puller.
 // ============================================================
 
 const crypto = require("crypto");
 const { proxiedFetch } = require("./proxy-manager");
-
-// ── Hardened CookieJar (deduplication, proper parsing) ───────
-
-class CookieJar {
-  constructor() { this.cookies = new Map(); }
-
-  extractFromHeaders(headers) {
-    const raw = headers.raw?.()?.["set-cookie"];
-    if (raw && Array.isArray(raw)) {
-      for (const c of raw) this._parse(c);
-      return;
-    }
-    const sc = headers.get("set-cookie");
-    if (sc) {
-      const parts = sc.split(/,(?=\s*[^;,]+=[^;,]+)/);
-      for (const c of parts) this._parse(c);
-    }
-  }
-
-  _parse(str) {
-    const parts = str.split(";")[0].trim();
-    const eq = parts.indexOf("=");
-    if (eq > 0) {
-      const name = parts.substring(0, eq).trim();
-      const value = parts.substring(eq + 1).trim();
-      if (name && value) this.cookies.set(name, value);
-    }
-  }
-
-  toString() {
-    return Array.from(this.cookies.entries()).map(([k, v]) => `${k}=${v}`).join("; ");
-  }
-
-  get(name) { return this.cookies.get(name); }
-}
 
 // ── Helpers ──────────────────────────────────────────────────
 
