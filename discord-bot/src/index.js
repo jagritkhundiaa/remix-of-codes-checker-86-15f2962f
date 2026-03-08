@@ -412,28 +412,27 @@ async function handlePull(respond, userId, accountsRaw, accountsFile, dmUser = n
     const expired = validateResults.filter((r) => r.status === "expired");
     const invalid = validateResults.filter((r) => r.status === "invalid" || r.status === "error");
 
-    // Save all fetched codes to promos_unchecked database
-    const allFetchedCodes = fetchResults.flatMap((r) =>
-      r.codes.map((code) => ({
-        code,
-        source_email: r.email,
-      }))
+    // Collect all raw promo links fetched from accounts
+    const allPromoLinks = fetchResults.flatMap((r) =>
+      r.codes.map((code) => code)
     );
-    // Find matching validate results to attach status/title
-    const codeMap = new Map();
-    for (const vr of validateResults) {
-      codeMap.set(vr.code, vr);
+
+    // Save promo links to promos_unchecked database
+    if (allPromoLinks.length > 0) {
+      const linksToSave = fetchResults.flatMap((r) =>
+        r.codes.map((code) => ({
+          code,
+          source_email: r.email,
+          status: "unchecked",
+        }))
+      );
+      savePromosUnchecked(linksToSave, { pulledBy: username, discordUserId: userId }).catch(() => {});
     }
-    const codesToSave = allFetchedCodes.map((c) => {
-      const vr = codeMap.get(c.code);
-      return {
-        code: c.code,
-        title: vr?.title || null,
-        status: vr?.status || "unchecked",
-        source_email: c.source_email,
-      };
-    });
-    savePromosUnchecked(codesToSave, { pulledBy: username, discordUserId: userId }).catch(() => {});
+
+    // Add promo links as txt file
+    if (allPromoLinks.length > 0) {
+      files.push(textAttachment(allPromoLinks, "promo_links.txt"));
+    }
 
     if (valid.length > 0)
       files.push(textAttachment(valid.map((r) => (r.title ? `${r.code} | ${r.title}` : r.code)), "valid.txt"));
