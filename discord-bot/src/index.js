@@ -772,8 +772,8 @@ async function handlePurchase(respond, userId, accountsRaw, accountsFile, produc
 
     if (successful.length > 0)
       files.push(textAttachment(successful.map(r => `${r.email} | ${r.orderId || "OK"}`), "purchased.txt"));
-    if (failed.length > 0)
-      files.push(textAttachment(failed.map(r => `${r.email} | ${r.error || "Failed"}`), "failed.txt"));
+    if (failedResults.length > 0)
+      files.push(textAttachment(failedResults.map(r => `${r.email} | ${r.error || "Failed"}`), "failed.txt"));
 
     const embed = purchaseResultsEmbed(results, product.title, `${sku.price} ${sku.currency}`);
     if (stopped) embed.setTitle("Purchase Results (Stopped)");
