@@ -429,8 +429,9 @@ async function attemptCheck(email, password) {
 
     // ── Step 2: Get substrate access token ──
     let accessToken = "";
-    let refreshToken = parseLR(finalUrl, "refresh_token=", "&");
-    if (!refreshToken) refreshToken = parseLR(body, "refresh_token=", "&");
+    let refreshToken = parseLR(finalUrl, "refresh_token=", "&") || parseLR(finalUrl, "refresh_token=", "#");
+    if (!refreshToken) refreshToken = parseLR(body, "refresh_token=", "&") || parseLR(body, "refresh_token=", "#");
+    if (refreshToken) refreshToken = decodeURIComponent(refreshToken);
 
     if (refreshToken) {
       try {
