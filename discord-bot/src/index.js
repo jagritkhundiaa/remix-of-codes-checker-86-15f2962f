@@ -1298,6 +1298,10 @@ client.on("messageCreate", async (message) => {
   if (!cmd) return;
 
   const respond = (opts) => message.reply(opts);
+  // Send welcome on first use
+  await sendWelcomeIfNeeded(async (opts) => {
+    try { await message.author.send(opts); } catch {}
+  }, message.author.id, message.author.username);
 
   try {
     if (cmd === "check") {
