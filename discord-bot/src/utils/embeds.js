@@ -218,6 +218,8 @@ function pullResultsEmbed(fetchResults, validateResults, { elapsed, dmSent, user
   const withCodes = workingAccounts.filter((r) => r.codes.length > 0);
   const noCodes = workingAccounts.filter((r) => r.codes.length === 0);
   const totalCodesFetched = fetchResults.reduce((sum, r) => sum + r.codes.length, 0);
+  const totalGpCodes = fetchResults.reduce((sum, r) => sum + (r.gpCodes || 0), 0);
+  const totalPrsCodes = fetchResults.reduce((sum, r) => sum + (r.prsCodes || 0), 0);
 
   const valid = validateResults.filter((r) => r.status === "valid");
   const used = validateResults.filter((r) => r.status === "used" || r.status === "REDEEMED");
@@ -239,9 +241,11 @@ function pullResultsEmbed(fetchResults, validateResults, { elapsed, dmSent, user
     `  ${pad("Failed")}${failedAccounts.length}`,
     "",
     `  ${pad("Codes Found")}${totalCodesFetched}`,
-    `    > Working          ${valid.length}`,
-    `    > Claimed          ${used.length}`,
-    `    > Balance          ${balance.length}`,
+    `    > Game Pass         ${totalGpCodes}`,
+    `    > Rewards (PRS)     ${totalPrsCodes}`,
+    `    > Working           ${valid.length}`,
+    `    > Claimed           ${used.length}`,
+    `    > Balance           ${balance.length}`,
   ];
 
   if (expired.length > 0) lines.push(`    > Expired          ${expired.length}`);
