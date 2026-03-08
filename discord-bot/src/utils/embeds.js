@@ -156,6 +156,8 @@ function pullLiveProgressEmbed(fetchResults, validateProgress, { username, start
   const withCodes = workingAccounts.filter((r) => r.codes.length > 0);
   const noCodes = workingAccounts.filter((r) => r.codes.length === 0);
   const totalCodesFetched = fetchResults.reduce((sum, r) => sum + r.codes.length, 0);
+  const totalGpCodes = fetchResults.reduce((sum, r) => sum + (r.gpCodes || 0), 0);
+  const totalPrsCodes = fetchResults.reduce((sum, r) => sum + (r.prsCodes || 0), 0);
 
   const pct = validateProgress.total === 0 ? 0 : Math.round((validateProgress.done / validateProgress.total) * 100);
   const barLen = 20;
@@ -185,9 +187,11 @@ function pullLiveProgressEmbed(fetchResults, validateProgress, { username, start
     `  ${pad("Failed")}${failedAccounts.length}`,
     "",
     `  ${pad("Codes Found")}${totalCodesFetched}`,
-    `    > Working          ${valid}`,
-    `    > Claimed          ${used}`,
-    `    > Balance          ${balance}`,
+    `    > Game Pass         ${totalGpCodes}`,
+    `    > Rewards (PRS)     ${totalPrsCodes}`,
+    `    > Working           ${valid}`,
+    `    > Claimed           ${used}`,
+    `    > Balance           ${balance}`,
   ];
 
   if (expired > 0) lines.push(`    > Expired          ${expired}`);
