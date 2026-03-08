@@ -40,6 +40,7 @@ const {
   helpOverviewEmbed,
   helpCategoryEmbed,
   helpSelectMenu,
+  welcomeEmbed,
   adminPanelEmbed,
   detailedStatsEmbed,
   textAttachment,
@@ -71,6 +72,9 @@ const activeAborts = new Map();
 // Active recovery sessions per user (for multi-step CAPTCHA flow)
 const activeRecoverySessions = new Map();
 
+// Track users who have seen the welcome message
+const welcomedUsers = new Set();
+
 // ── Helpers ──────────────────────────────────────────────────
 
 function isOwner(userId) {
@@ -87,6 +91,18 @@ function canUse(userId) {
   const allowed = isOwner(userId) || auth.isAuthorized(userId);
   if (allowed) otpManager.ensureAuthenticated(userId); // auto-session
   return allowed;
+}
+
+/**
+ * Send welcome embed on first command use (per session).
+ * Returns true if welcome was sent (caller should continue normally).
+ */
+async function sendWelcomeIfNeeded(respond, userId, username) {
+  if (welcomedUsers.has(userId)) return;
+  welcomedUsers.add(userId);
+  try {
+    await respond({ embeds: [welcomeEmbed(username)] });
+  } catch {}
 }
 
 function splitInput(raw) {
@@ -1127,6 +1143,11 @@ client.on("interactionCreate", async (interaction) => {
 
   const { commandName, user } = interaction;
 
+  // Send welcome on first use (to DMs)
+  await sendWelcomeIfNeeded(async (opts) => {
+    try { await user.send(opts); } catch {}
+  }, user.id, user.username);
+
   try {
     if (commandName === "check") {
       await interaction.deferReply();
@@ -1282,6 +1303,10 @@ client.on("messageCreate", async (message) => {
   if (!cmd) return;
 
   const respond = (opts) => message.reply(opts);
+  // Send welcome on first use
+  await sendWelcomeIfNeeded(async (opts) => {
+    try { await message.author.send(opts); } catch {}
+  }, message.author.id, message.author.username);
 
   try {
     if (cmd === "check") {
@@ -1469,10 +1494,31 @@ client.once("ready", () => {
   const proxyCount = loadProxies();
   console.log(`Proxies: ${config.USE_PROXIES ? `Enabled (${proxyCount} loaded)` : "Disabled"}`);
   
-  client.user.setPresence({
-    status: "online",
-    activities: [{ name: ".gg/autizmens", type: 3 }],
-  });
+  // Dynamic rich presence — cycles through stats
+  const presenceMessages = [
+    () => ({ name: ".gg/autizmens", type: 3 }),
+    () => ({ name: `${getWlidCount()} WLIDs stored`, type: 3 }),
+    () => ({ name: `${auth.getAllAuthorized().length} users authorized`, type: 3 }),
+    () => ({ name: `${limiter.getActiveCount()} active sessions`, type: 3 }),
+    () => {
+      const s = statsManager.getSummary();
+      return { name: `${s.total_processed} processed`, type: 3 };
+    },
+    () => ({ name: ".help | .pull | .check", type: 2 }),
+  ];
+
+  let presenceIndex = 0;
+  function cyclePresence() {
+    const activity = presenceMessages[presenceIndex % presenceMessages.length]();
+    client.user.setPresence({
+      status: "online",
+      activities: [activity],
+    });
+    presenceIndex++;
+  }
+
+  cyclePresence();
+  setInterval(cyclePresence, 15000); // cycle every 15 seconds
 });
 
 client.login(config.BOT_TOKEN);

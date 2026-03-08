@@ -1,18 +1,32 @@
 // ============================================================
-//  Embed builders — monochrome, clean, no emojis
+//  Embed builders — monochrome, premium, no emojis
+//  Clean visual hierarchy with Unicode separators
 // ============================================================
 
 const { EmbedBuilder, AttachmentBuilder, StringSelectMenuBuilder, ActionRowBuilder } = require("discord.js");
-const { COLORS } = require("../config");
+const { COLORS, THUMBNAIL_URL, BANNER_URL } = require("../config");
 
 const FOOTER_TEXT = "AutizMens | TalkNeon";
+const SEP = "\u2500".repeat(28);
+const SEP_THIN = "\u2508".repeat(28);
 
-function header() {
-  return new EmbedBuilder()
+function header(options = {}) {
+  const embed = new EmbedBuilder()
     .setAuthor({ name: "AutizMens" })
     .setFooter({ text: FOOTER_TEXT })
     .setTimestamp();
+
+  if (options.thumbnail !== false && THUMBNAIL_URL) {
+    embed.setThumbnail(THUMBNAIL_URL);
+  }
+  if (options.banner && BANNER_URL) {
+    embed.setImage(BANNER_URL);
+  }
+
+  return embed;
 }
+
+// ── Progress ─────────────────────────────────────────────────
 
 function progressEmbed(completed, total, label = "Processing") {
   const pct = total === 0 ? 0 : Math.round((completed / total) * 100);
@@ -20,11 +34,16 @@ function progressEmbed(completed, total, label = "Processing") {
   const filled = Math.round((pct / 100) * barLen);
   const bar = "\u2588".repeat(filled) + "\u2591".repeat(barLen - filled);
 
-  return header()
+  return header({ thumbnail: false })
     .setColor(COLORS.INFO)
     .setTitle(label)
-    .setDescription(`\`${bar}\` ${pct}%\n${completed.toLocaleString()} / ${total.toLocaleString()}`);
+    .setDescription([
+      `\`${bar}\` **${pct}%**`,
+      `\`${completed.toLocaleString()}\` / \`${total.toLocaleString()}\``,
+    ].join("\n"));
 }
+
+// ── Check Results ────────────────────────────────────────────
 
 function checkResultsEmbed(results) {
   const valid = results.filter((r) => r.status === "valid");
@@ -32,31 +51,51 @@ function checkResultsEmbed(results) {
   const expired = results.filter((r) => r.status === "expired");
   const invalid = results.filter((r) => r.status === "invalid" || r.status === "error");
 
+  const lines = [
+    `${SEP}`,
+    `**Check Results**`,
+    `${SEP_THIN}`,
+    ``,
+    `\u2502 Valid        \`${valid.length}\``,
+    `\u2502 Used         \`${used.length}\``,
+    `\u2502 Expired      \`${expired.length}\``,
+    `\u2502 Invalid      \`${invalid.length}\``,
+    ``,
+    `${SEP_THIN}`,
+    `\u2502 Total        \`${results.length}\``,
+    `${SEP}`,
+  ];
+
   return header()
     .setColor(COLORS.PRIMARY)
-    .setTitle("Check Results")
-    .addFields(
-      { name: "Valid", value: `\`${valid.length}\``, inline: true },
-      { name: "Used", value: `\`${used.length}\``, inline: true },
-      { name: "Expired", value: `\`${expired.length}\``, inline: true },
-      { name: "Invalid", value: `\`${invalid.length}\``, inline: true },
-      { name: "Total", value: `\`${results.length}\``, inline: true }
-    );
+    .setDescription(lines.join("\n"));
 }
+
+// ── Claim Results ────────────────────────────────────────────
 
 function claimResultsEmbed(results) {
   const success = results.filter((r) => r.success);
   const failed = results.filter((r) => !r.success);
 
+  const lines = [
+    `${SEP}`,
+    `**Claim Results**`,
+    `${SEP_THIN}`,
+    ``,
+    `\u2502 Success      \`${success.length}\``,
+    `\u2502 Failed       \`${failed.length}\``,
+    ``,
+    `${SEP_THIN}`,
+    `\u2502 Total        \`${results.length}\``,
+    `${SEP}`,
+  ];
+
   return header()
     .setColor(COLORS.PRIMARY)
-    .setTitle("Claim Results")
-    .addFields(
-      { name: "Success", value: `\`${success.length}\``, inline: true },
-      { name: "Failed", value: `\`${failed.length}\``, inline: true },
-      { name: "Total", value: `\`${results.length}\``, inline: true }
-    );
+    .setDescription(lines.join("\n"));
 }
+
+// ── Pull Progress (Fetch Phase) ──────────────────────────────
 
 function pullFetchProgressEmbed(details) {
   const pct = details.total === 0 ? 0 : Math.round((details.done / details.total) * 100);
@@ -64,27 +103,33 @@ function pullFetchProgressEmbed(details) {
   const filled = Math.round((pct / 100) * barLen);
   const bar = "\u2588".repeat(filled) + "\u2591".repeat(barLen - filled);
 
-  const lines = [`\`${bar}\` ${pct}%`, `${details.done} / ${details.total} accounts`];
+  const lines = [
+    `${SEP}`,
+    `**Fetching Codes**`,
+    `${SEP_THIN}`,
+    ``,
+    `\`${bar}\` **${pct}%**`,
+    `\`${details.done}\` / \`${details.total}\` accounts`,
+  ];
+
   if (details.lastAccount) {
     const status = details.lastError
-      ? `${details.lastAccount} -- Failed`
-      : `${details.lastAccount} -- ${details.lastCodes} codes`;
-    lines.push(`\nLatest: \`${status}\``);
+      ? `${details.lastAccount} \u2014 Failed`
+      : `${details.lastAccount} \u2014 ${details.lastCodes} codes`;
+    lines.push(``, `Latest: \`${status}\``);
   }
   if (details.totalCodes !== undefined) {
-    lines.push(`Total codes found: \`${details.totalCodes}\``);
+    lines.push(`Codes found: \`${details.totalCodes}\``);
   }
+  lines.push(`${SEP}`);
 
-  return header()
+  return header({ thumbnail: false })
     .setColor(COLORS.INFO)
-    .setTitle("Fetching Codes")
     .setDescription(lines.join("\n"));
 }
 
-/**
- * Live structured pull progress — replaces the boring progress bar during validation
- * Shows real-time account analysis matching the final results style
- */
+// ── Pull Live Progress (Validate Phase) ──────────────────────
+
 function pullLiveProgressEmbed(fetchResults, validateProgress, { username, startTime } = {}) {
   const totalAccounts = fetchResults.length;
   const workingAccounts = fetchResults.filter((r) => !r.error);
@@ -108,46 +153,48 @@ function pullLiveProgressEmbed(fetchResults, validateProgress, { username, start
   const elapsed = startTime ? ((Date.now() - startTime) / 1000).toFixed(1) : "...";
 
   const lines = [
-    `**Validating Codes...**`,
-    `\`${bar}\` ${pct}%`,
+    `${SEP}`,
+    `**Validating Codes**`,
+    `\`${bar}\` **${pct}%**`,
+    `${SEP_THIN}`,
     ``,
-    `  **Account Analysis:**`,
-    `- **Total Accounts:** ${totalAccounts}`,
-    `- **Working Accounts:** ${workingAccounts.length}`,
-    `  \u2514 With Codes: ${withCodes.length}`,
-    `  \u2514 No Codes: ${noCodes.length}`,
-    `- **Failed Accounts:** ${failedAccounts.length}`,
-    `- **Codes Found:** ${totalCodesFetched}`,
-    `  \u2514 Working: ${valid}`,
-    `  \u2514 Claimed: ${used}`,
-    `  \u2514 Balance: ${balance}`,
+    `\u2502 **Account Analysis**`,
+    `\u2502`,
+    `\u2502 Total Accounts     \`${totalAccounts}\``,
+    `\u2502 Working            \`${workingAccounts.length}\``,
+    `\u2502   \u2514 With Codes     \`${withCodes.length}\``,
+    `\u2502   \u2514 No Codes       \`${noCodes.length}\``,
+    `\u2502 Failed             \`${failedAccounts.length}\``,
+    `\u2502`,
+    `\u2502 **Codes Found**    \`${totalCodesFetched}\``,
+    `\u2502   \u2514 Working        \`${valid}\``,
+    `\u2502   \u2514 Claimed        \`${used}\``,
+    `\u2502   \u2514 Balance        \`${balance}\``,
   ];
 
-  if (expired > 0) lines.push(`  \u2514 Expired: ${expired}`);
-  if (regionLocked > 0) lines.push(`  \u2514 Region Locked: ${regionLocked}`);
-  if (invalid > 0) lines.push(`  \u2514 Invalid: ${invalid}`);
+  if (expired > 0) lines.push(`\u2502   \u2514 Expired        \`${expired}\``);
+  if (regionLocked > 0) lines.push(`\u2502   \u2514 Region Locked  \`${regionLocked}\``);
+  if (invalid > 0) lines.push(`\u2502   \u2514 Invalid        \`${invalid}\``);
 
-  lines.push(`\n**Time:** ${elapsed}s`);
+  lines.push(``, `${SEP_THIN}`, `**Time:** ${elapsed}s`, `${SEP}`);
 
-  const embed = header().setColor(COLORS.INFO).setDescription(lines.join("\n"));
+  const embed = header({ thumbnail: false }).setColor(COLORS.INFO).setDescription(lines.join("\n"));
 
   if (username) {
-    embed.setFooter({ text: `Pulled by ${username} | ${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` });
+    embed.setFooter({ text: `Pulled by ${username} \u2502 ${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` });
   }
 
   return embed;
 }
 
-/**
- * Pull results embed — matches reference image layout exactly.
- */
+// ── Pull Results (Final) ─────────────────────────────────────
+
 function pullResultsEmbed(fetchResults, validateResults, { elapsed, dmSent, username } = {}) {
   const totalAccounts = fetchResults.length;
   const workingAccounts = fetchResults.filter((r) => !r.error);
   const failedAccounts = fetchResults.filter((r) => r.error);
   const withCodes = workingAccounts.filter((r) => r.codes.length > 0);
   const noCodes = workingAccounts.filter((r) => r.codes.length === 0);
-
   const totalCodesFetched = fetchResults.reduce((sum, r) => sum + r.codes.length, 0);
 
   const valid = validateResults.filter((r) => r.status === "valid");
@@ -158,29 +205,34 @@ function pullResultsEmbed(fetchResults, validateResults, { elapsed, dmSent, user
   const regionLocked = validateResults.filter((r) => r.status === "REGION_LOCKED");
 
   const lines = [
+    `${SEP}`,
     `**Fetching Complete!**`,
+    `${SEP_THIN}`,
     ``,
-    `  **Account Analysis:**`,
-    `- **Total Accounts:** ${totalAccounts}`,
-    `- **Working Accounts:** ${workingAccounts.length}`,
-    `  \u2514 With Codes: ${withCodes.length}`,
-    `  \u2514 No Codes: ${noCodes.length}`,
-    `- **Failed Accounts:** ${failedAccounts.length}`,
-    `- **Codes Found:** ${totalCodesFetched}`,
-    `  \u2514 Working: ${valid.length}`,
-    `  \u2514 Claimed: ${used.length}`,
-    `  \u2514 Balance: ${balance.length}`,
+    `\u2502 **Account Analysis**`,
+    `\u2502`,
+    `\u2502 Total Accounts     \`${totalAccounts}\``,
+    `\u2502 Working            \`${workingAccounts.length}\``,
+    `\u2502   \u2514 With Codes     \`${withCodes.length}\``,
+    `\u2502   \u2514 No Codes       \`${noCodes.length}\``,
+    `\u2502 Failed             \`${failedAccounts.length}\``,
+    `\u2502`,
+    `\u2502 **Codes Found**    \`${totalCodesFetched}\``,
+    `\u2502   \u2514 Working        \`${valid.length}\``,
+    `\u2502   \u2514 Claimed        \`${used.length}\``,
+    `\u2502   \u2514 Balance        \`${balance.length}\``,
   ];
 
-  if (expired.length > 0) lines.push(`  \u2514 Expired: ${expired.length}`);
-  if (regionLocked.length > 0) lines.push(`  \u2514 Region Locked: ${regionLocked.length}`);
-  if (invalid.length > 0) lines.push(`  \u2514 Invalid: ${invalid.length}`);
+  if (expired.length > 0) lines.push(`\u2502   \u2514 Expired        \`${expired.length}\``);
+  if (regionLocked.length > 0) lines.push(`\u2502   \u2514 Region Locked  \`${regionLocked.length}\``);
+  if (invalid.length > 0) lines.push(`\u2502   \u2514 Invalid        \`${invalid.length}\``);
 
-  lines.push(`- **Links Found:** ${totalCodesFetched}`);
+  lines.push(`\u2502`, `\u2502 Links Found        \`${totalCodesFetched}\``);
 
   if (elapsed) {
-    lines.push(`\n**Time:** ${elapsed}s`);
+    lines.push(``, `${SEP_THIN}`, `**Time:** ${elapsed}s`);
   }
+  lines.push(`${SEP}`);
 
   const embed = header()
     .setColor(COLORS.PRIMARY)
@@ -191,11 +243,13 @@ function pullResultsEmbed(fetchResults, validateResults, { elapsed, dmSent, user
   }
 
   if (username) {
-    embed.setFooter({ text: `Pulled by ${username} | ${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` });
+    embed.setFooter({ text: `Pulled by ${username} \u2502 ${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` });
   }
 
   return embed;
 }
+
+// ── Purchase ─────────────────────────────────────────────────
 
 function purchaseProgressEmbed(details) {
   const pct = details.total === 0 ? 0 : Math.round((details.done / details.total) * 100);
@@ -203,16 +257,20 @@ function purchaseProgressEmbed(details) {
   const filled = Math.round((pct / 100) * barLen);
   const bar = "\u2588".repeat(filled) + "\u2591".repeat(barLen - filled);
 
-  return header()
+  return header({ thumbnail: false })
     .setColor(COLORS.INFO)
-    .setTitle("Purchasing")
     .setDescription([
+      `${SEP}`,
+      `**Purchasing**`,
+      `${SEP_THIN}`,
+      ``,
       `Product: \`${details.product}\``,
       `Price: \`${details.price}\``,
-      "",
-      `\`${bar}\` ${pct}%`,
-      `${details.done} / ${details.total} accounts`,
+      ``,
+      `\`${bar}\` **${pct}%**`,
+      `\`${details.done}\` / \`${details.total}\` accounts`,
       details.status ? `\nStatus: \`${details.status}\`` : "",
+      `${SEP}`,
     ].join("\n"));
 }
 
@@ -220,41 +278,67 @@ function purchaseResultsEmbed(results, productTitle, price) {
   const success = results.filter(r => r.success);
   const failed = results.filter(r => !r.success);
 
+  const lines = [
+    `${SEP}`,
+    `**Purchase Results**`,
+    `${SEP_THIN}`,
+    ``,
+    `\u2502 Product      \`${productTitle}\``,
+    `\u2502 Price        \`${price}\``,
+    `\u2502`,
+    `\u2502 Purchased    \`${success.length}\``,
+    `\u2502 Failed       \`${failed.length}\``,
+    ``,
+    `${SEP_THIN}`,
+    `\u2502 Total        \`${results.length}\``,
+    `${SEP}`,
+  ];
+
   return header()
     .setColor(COLORS.PRIMARY)
-    .setTitle("Purchase Results")
-    .addFields(
-      { name: "Product", value: `\`${productTitle}\``, inline: false },
-      { name: "Price", value: `\`${price}\``, inline: true },
-      { name: "Purchased", value: `\`${success.length}\``, inline: true },
-      { name: "Failed", value: `\`${failed.length}\``, inline: true },
-      { name: "Total", value: `\`${results.length}\``, inline: true }
-    );
+    .setDescription(lines.join("\n"));
 }
 
 function productSearchEmbed(results) {
-  const lines = results.map((r, i) =>
-    `\`${i + 1}.\` **${r.title}**\n    ID: \`${r.productId || "N/A"}\` | Type: ${r.type || "N/A"}`
-  );
+  const lines = [
+    `${SEP}`,
+    `**Search Results**`,
+    `${SEP_THIN}`,
+    ``,
+    ...results.map((r, i) =>
+      `\`${i + 1}.\` **${r.title}**\n    \`${r.productId || "N/A"}\` \u2502 ${r.type || "N/A"}`
+    ),
+    ``,
+    `${SEP}`,
+  ];
 
   return header()
     .setColor(COLORS.INFO)
-    .setTitle("Search Results")
-    .setDescription(lines.join("\n\n") || "No results found.");
+    .setDescription(lines.join("\n") || "No results found.");
 }
+
+// ── Changer / Checker ────────────────────────────────────────
 
 function changerResultsEmbed(results) {
   const success = results.filter(r => r.success);
   const failed = results.filter(r => !r.success);
 
+  const lines = [
+    `${SEP}`,
+    `**Changer Results**`,
+    `${SEP_THIN}`,
+    ``,
+    `\u2502 Changed      \`${success.length}\``,
+    `\u2502 Failed       \`${failed.length}\``,
+    ``,
+    `${SEP_THIN}`,
+    `\u2502 Total        \`${results.length}\``,
+    `${SEP}`,
+  ];
+
   return header()
     .setColor(COLORS.PRIMARY)
-    .setTitle("Changer Results")
-    .addFields(
-      { name: "Changed", value: `\`${success.length}\``, inline: true },
-      { name: "Failed", value: `\`${failed.length}\``, inline: true },
-      { name: "Total", value: `\`${results.length}\``, inline: true }
-    );
+    .setDescription(lines.join("\n"));
 }
 
 function accountCheckerResultsEmbed(results) {
@@ -264,18 +348,28 @@ function accountCheckerResultsEmbed(results) {
   const rateLimited = results.filter((r) => r.status === "rate_limited").length;
   const errors = results.filter((r) => r.status === "error").length;
 
+  const lines = [
+    `${SEP}`,
+    `**Account Checker**`,
+    `${SEP_THIN}`,
+    ``,
+    `\u2502 Valid        \`${valid}\``,
+    `\u2502 Locked       \`${locked}\``,
+    `\u2502 Invalid      \`${invalid}\``,
+    `\u2502 Rate Limited \`${rateLimited}\``,
+    `\u2502 Errors       \`${errors}\``,
+    ``,
+    `${SEP_THIN}`,
+    `\u2502 Total        \`${results.length}\``,
+    `${SEP}`,
+  ];
+
   return header()
     .setColor(COLORS.PRIMARY)
-    .setTitle("Account Checker Results")
-    .addFields(
-      { name: "Valid", value: `\`${valid}\``, inline: true },
-      { name: "Locked", value: `\`${locked}\``, inline: true },
-      { name: "Invalid", value: `\`${invalid}\``, inline: true },
-      { name: "Rate Limited", value: `\`${rateLimited}\``, inline: true },
-      { name: "Errors", value: `\`${errors}\``, inline: true },
-      { name: "Total", value: `\`${results.length}\``, inline: true }
-    );
+    .setDescription(lines.join("\n"));
 }
+
+// ── Rewards ──────────────────────────────────────────────────
 
 function rewardsResultsEmbed(results) {
   const success = results.filter(r => r.success);
@@ -283,70 +377,76 @@ function rewardsResultsEmbed(results) {
   const totalPoints = success.reduce((sum, r) => sum + r.balance, 0);
 
   const lines = [
-    `**Rewards Balance Check**`,
+    `${SEP}`,
+    `**Rewards Balance**`,
+    `${SEP_THIN}`,
     ``,
-    `- **Accounts Checked:** ${results.length}`,
-    `- **Successful:** ${success.length}`,
-    `- **Failed:** ${failed.length}`,
-    ``,
-    `- **Total Points:** ${totalPoints.toLocaleString()}`,
-    `- **Average:** ${success.length > 0 ? Math.round(totalPoints / success.length).toLocaleString() : 0}`,
+    `\u2502 Checked      \`${results.length}\``,
+    `\u2502 Successful   \`${success.length}\``,
+    `\u2502 Failed       \`${failed.length}\``,
+    `\u2502`,
+    `\u2502 **Points**`,
+    `\u2502 Total        \`${totalPoints.toLocaleString()}\``,
+    `\u2502 Average      \`${success.length > 0 ? Math.round(totalPoints / success.length).toLocaleString() : 0}\``,
   ];
 
   if (success.length > 0) {
     const highest = success.reduce((max, r) => r.balance > max.balance ? r : max);
-    lines.push(`- **Highest:** ${highest.balance.toLocaleString()} (${highest.email.split("@")[0]}...)`);
+    lines.push(`\u2502 Highest      \`${highest.balance.toLocaleString()}\` (${highest.email.split("@")[0]}...)`);
   }
+
+  lines.push(``, `${SEP}`);
 
   return header()
     .setColor(COLORS.PRIMARY)
     .setDescription(lines.join("\n"));
 }
 
+// ── Generic ──────────────────────────────────────────────────
+
 function errorEmbed(message) {
-  return header().setColor(COLORS.ERROR).setTitle("Error").setDescription(message);
+  return header({ thumbnail: false }).setColor(COLORS.ERROR).setDescription(`${SEP}\n**Error**\n${SEP_THIN}\n\n${message}\n\n${SEP}`);
 }
 
 function successEmbed(message) {
-  return header().setColor(COLORS.SUCCESS).setTitle("Success").setDescription(message);
+  return header({ thumbnail: false }).setColor(COLORS.SUCCESS).setDescription(`${SEP}\n**Success**\n${SEP_THIN}\n\n${message}\n\n${SEP}`);
 }
 
 function infoEmbed(title, description) {
-  return header().setColor(COLORS.INFO).setTitle(title).setDescription(description);
+  return header({ thumbnail: false }).setColor(COLORS.INFO).setDescription(`${SEP}\n**${title}**\n${SEP_THIN}\n\n${description}\n\n${SEP}`);
 }
 
-/**
- * Owner-only restriction embed for features still under development.
- */
 function ownerOnlyEmbed(featureName) {
   return header()
     .setColor(COLORS.PRIMARY)
-    .setDescription(
-      [
-        `**${featureName}** is currently in a closed development phase.`,
-        ``,
-        `This feature is exclusively available to **TalkNeon** during the testing period.`,
-        ``,
-        `Access will be rolled out once the module has been fully validated and stabilized.`,
-        `Check back later or contact TalkNeon for updates.`,
-      ].join("\n")
-    );
+    .setDescription([
+      `${SEP}`,
+      `**${featureName}**`,
+      `${SEP_THIN}`,
+      ``,
+      `Currently in a closed development phase.`,
+      `Exclusively available to **TalkNeon** during testing.`,
+      ``,
+      `Access will be rolled out once the module has been`,
+      `fully validated and stabilized.`,
+      ``,
+      `${SEP}`,
+    ].join("\n"));
 }
 
 function authListEmbed(entries) {
   if (entries.length === 0) {
-    return header().setColor(COLORS.MUTED).setTitle("Authorized Users").setDescription("No authorized users.");
+    return header().setColor(COLORS.MUTED).setDescription(`${SEP}\n**Authorized Users**\n${SEP_THIN}\n\nNo authorized users.\n\n${SEP}`);
   }
 
   const lines = entries.map((e, i) => {
     const expiry = e.expiresAt === "Infinity" ? "Permanent" : `<t:${Math.floor(e.expiresAt / 1000)}:R>`;
-    return `\`${i + 1}.\` <@${e.userId}> -- Expires: ${expiry}`;
+    return `\`${i + 1}.\` <@${e.userId}> \u2014 ${expiry}`;
   });
 
   return header()
     .setColor(COLORS.INFO)
-    .setTitle("Authorized Users")
-    .setDescription(lines.join("\n"));
+    .setDescription([`${SEP}`, `**Authorized Users**`, `${SEP_THIN}`, ``, ...lines, ``, `${SEP}`].join("\n"));
 }
 
 // ── Help System — Category Select Menu ──────────────────────
@@ -355,80 +455,96 @@ const HELP_CATEGORIES = {
   checker: {
     label: "Checker",
     description: "Check codes against WLID tokens",
-    emoji: null,
     content: (p) => [
-      `**Checker** — Validate codes against WLID tokens`,
+      `${SEP}`,
+      `**Checker**`,
+      `${SEP_THIN}`,
       ``,
       `\`${p}check [wlids]\` + attach codes.txt`,
       `Check codes against WLID tokens.`,
       `Uses stored WLIDs if none provided.`,
       ``,
-      `Results are always sent to your DMs.`,
+      `All results sent to your DMs.`,
+      ``,
+      `${SEP}`,
     ].join("\n"),
   },
   claimer: {
     label: "Claimer",
     description: "Claim WLID tokens from accounts",
-    emoji: null,
     content: (p) => [
-      `**Claimer** — Extract WLID tokens from Microsoft accounts`,
+      `${SEP}`,
+      `**Claimer**`,
+      `${SEP_THIN}`,
       ``,
       `\`${p}claim <email:pass>\` or attach .txt`,
-      `Claim WLID tokens from Microsoft accounts.`,
+      `Extract WLID tokens from Microsoft accounts.`,
       ``,
-      `Results are always sent to your DMs.`,
+      `All results sent to your DMs.`,
+      ``,
+      `${SEP}`,
     ].join("\n"),
   },
   puller: {
     label: "Puller",
     description: "Fetch & validate Game Pass codes",
-    emoji: null,
     content: (p) => [
-      `**Puller** — Fetch codes from Game Pass accounts`,
+      `${SEP}`,
+      `**Puller**`,
+      `${SEP_THIN}`,
       ``,
       `\`${p}pull <email:pass>\` or attach .txt`,
       `Fetches codes from Game Pass accounts,`,
       `then validates them automatically.`,
       ``,
-      `Results are always sent to your DMs.`,
+      `All results sent to your DMs.`,
+      ``,
+      `${SEP}`,
     ].join("\n"),
   },
   rewards: {
     label: "Rewards",
     description: "Check Microsoft Rewards balances",
-    emoji: null,
     content: (p) => [
-      `**Rewards** — Check Microsoft Rewards point balances`,
+      `${SEP}`,
+      `**Rewards**`,
+      `${SEP_THIN}`,
       ``,
       `\`${p}rewards <email:pass>\` or attach .txt`,
       `Check Rewards point balances for accounts.`,
       `Shows balance, lifetime points, and level.`,
       ``,
-      `Results are always sent to your DMs.`,
+      `All results sent to your DMs.`,
+      ``,
+      `${SEP}`,
     ].join("\n"),
   },
   purchaser: {
     label: "Purchaser",
     description: "Buy from Microsoft Store [Owner]",
-    emoji: null,
     content: (p) => [
-      `**Purchaser** — Microsoft Store purchases  \`[Owner Only]\``,
+      `${SEP}`,
+      `**Purchaser** \u2502 Owner Only`,
+      `${SEP_THIN}`,
       ``,
       `\`${p}purchase <email:pass> <product_id>\``,
       `Buy items from the Microsoft Store.`,
       ``,
       `\`${p}search <query>\``,
-      `Search for products on the Microsoft Store.`,
+      `Search for products.`,
       ``,
-      `Results are always sent to your DMs.`,
+      `All results sent to your DMs.`,
+      ``,
+      `${SEP}`,
     ].join("\n"),
   },
   changer: {
     label: "Changer",
     description: "Change passwords & check accounts [Owner]",
-    emoji: null,
     content: (p) => [
-      `**Changer** — Account management  \`[Owner Only]\``,
+      `${SEP}`,
+      `**Changer** \u2502 Owner Only`,
+      `${SEP_THIN}`,
       ``,
       `\`${p}changer <email:pass> <new_password>\``,
       `Change password on Microsoft accounts.`,
@@ -436,15 +552,18 @@ const HELP_CATEGORIES = {
       `\`${p}checker <email:pass>\` or attach .txt`,
       `Validate account credentials.`,
       ``,
-      `Results are always sent to your DMs.`,
+      `All results sent to your DMs.`,
+      ``,
+      `${SEP}`,
     ].join("\n"),
   },
   recovery: {
     label: "Recovery",
     description: "Recover accounts via ACSR",
-    emoji: null,
     content: (p) => [
-      `**Recovery** — Account recovery via ACSR`,
+      `${SEP}`,
+      `**Recovery**`,
+      `${SEP_THIN}`,
       ``,
       `\`${p}recover <email(s)> <new_password>\``,
       `Recover account(s) via ACSR.`,
@@ -452,19 +571,21 @@ const HELP_CATEGORIES = {
       `\`${p}captcha <solution>\``,
       `Submit CAPTCHA solution for active recovery.`,
       ``,
-      `Results are always sent to your DMs.`,
+      `All results sent to your DMs.`,
+      ``,
+      `${SEP}`,
     ].join("\n"),
   },
   admin: {
     label: "Admin",
     description: "Authorization, blacklist & settings [Owner]",
-    emoji: null,
     content: (p) => [
-      `**Admin** — Bot management  \`[Owner Only]\``,
+      `${SEP}`,
+      `**Admin** \u2502 Owner Only`,
+      `${SEP_THIN}`,
       ``,
       `**WLID Storage**`,
       `\`${p}wlidset <tokens>\` or attach .txt`,
-      `Replace all stored WLID tokens.`,
       ``,
       `**Authorization**`,
       `\`${p}auth <@user> <duration>\``,
@@ -476,29 +597,35 @@ const HELP_CATEGORIES = {
       `\`${p}unblacklist <@user>\``,
       `\`${p}blacklistshow\``,
       ``,
-      `**Admin Tools**`,
-      `\`${p}admin\` — Control panel`,
-      `\`${p}setwebhook <url>\` — Set webhook`,
-      `\`${p}botstats\` — Detailed statistics`,
-      `\`${p}stats\` — Bot status`,
+      `**Tools**`,
+      `\`${p}admin\` \u2502 \`${p}setwebhook <url>\` \u2502 \`${p}botstats\``,
+      `\`${p}stats\``,
+      ``,
+      `${SEP}`,
     ].join("\n"),
   },
 };
 
 function helpOverviewEmbed(prefix) {
+  const catList = Object.entries(HELP_CATEGORIES).map(([, cat]) =>
+    `\u2502 **${cat.label}** \u2014 ${cat.description}`
+  );
+
   const lines = [
+    `${SEP}`,
+    `**Command Reference**`,
+    `${SEP_THIN}`,
+    ``,
     `Select a category below to view commands.`,
     `All results are sent to your DMs automatically.`,
     ``,
-    `**Categories:**`,
-    ...Object.entries(HELP_CATEGORIES).map(([key, cat]) =>
-      `\u2022 **${cat.label}** — ${cat.description}`
-    ),
+    ...catList,
+    ``,
+    `${SEP}`,
   ];
 
-  return header()
+  return header({ banner: true })
     .setColor(COLORS.PRIMARY)
-    .setTitle("Command Reference")
     .setDescription(lines.join("\n"));
 }
 
@@ -508,7 +635,6 @@ function helpCategoryEmbed(categoryKey, prefix) {
 
   return header()
     .setColor(COLORS.PRIMARY)
-    .setTitle(`Commands — ${cat.label}`)
     .setDescription(cat.content(prefix));
 }
 
@@ -527,15 +653,64 @@ function helpSelectMenu() {
   );
 }
 
+// ── Welcome Embed ────────────────────────────────────────────
+
+function welcomeEmbed(username) {
+  const lines = [
+    `${SEP}`,
+    `**Welcome, ${username}**`,
+    `${SEP_THIN}`,
+    ``,
+    `You now have access to AutizMens.`,
+    ``,
+    `\u2502 **Quick Start**`,
+    `\u2502`,
+    `\u2502 \`.help\` \u2014 View all commands`,
+    `\u2502 \`.pull\` \u2014 Fetch & validate codes`,
+    `\u2502 \`.check\` \u2014 Check codes`,
+    `\u2502 \`.rewards\` \u2014 Check point balances`,
+    `\u2502`,
+    `\u2502 All results are sent to your DMs.`,
+    `\u2502 Attach a \`.txt\` file for bulk operations.`,
+    ``,
+    `${SEP_THIN}`,
+    `Type \`.help\` to get started.`,
+    `${SEP}`,
+  ];
+
+  return header({ banner: true })
+    .setColor(COLORS.PRIMARY)
+    .setDescription(lines.join("\n"));
+}
+
+// ── Admin Panels ─────────────────────────────────────────────
+
 function adminPanelEmbed(stats, authCount, activeOtpSessions, activeProcesses, webhookSet) {
+  const lines = [
+    `${SEP}`,
+    `**Admin Control Panel**`,
+    `${SEP_THIN}`,
+    ``,
+    `\u2502 **Users**`,
+    `\u2502 Authorized   \`${authCount}\``,
+    `\u2502 OTP Sessions \`${activeOtpSessions}\``,
+    `\u2502 Active       \`${activeProcesses}\``,
+    `\u2502`,
+    `\u2502 **Processing**`,
+    `\u2502 Total        \`${stats.total_processed}\``,
+    `\u2502 Success      \`${stats.total_success}\``,
+    `\u2502 Failed       \`${stats.total_failed}\``,
+    `\u2502`,
+    `\u2502 **Status**`,
+    `\u2502 Bot          \`Online\``,
+    `\u2502 Webhook      \`${webhookSet ? "Set" : "Not Set"}\``,
+    ``,
+    `${SEP}`,
+  ];
+
   return header()
     .setColor(COLORS.PRIMARY)
-    .setTitle("Admin Control Panel")
-    .addFields(
-      { name: "Stats", value: `Users: \`${authCount}\`\nOTP Sessions: \`${activeOtpSessions}\`\nActive: \`${activeProcesses}\``, inline: true },
-      { name: "Processing", value: `Total: \`${stats.total_processed}\`\nSuccess: \`${stats.total_success}\`\nFailed: \`${stats.total_failed}\``, inline: true },
-      { name: "Status", value: `Bot: Online\nWebhook: ${webhookSet ? "Set" : "Not Set"}`, inline: true },
-    );
+    .setDescription(lines.join("\n"));
 }
 
 function detailedStatsEmbed(stats, topUsers) {
@@ -544,45 +719,68 @@ function detailedStatsEmbed(stats, topUsers) {
     : 0;
 
   const topText = topUsers.length > 0
-    ? topUsers.map(([uid, d]) => `<@${uid}>: ${d.processed} processed (${d.success} success)`).join("\n")
-    : "No data";
+    ? topUsers.map(([uid, d]) => `\u2502 <@${uid}> \u2014 ${d.processed} (${d.success} success)`).join("\n")
+    : "\u2502 No data";
+
+  const lines = [
+    `${SEP}`,
+    `**Detailed Statistics**`,
+    `${SEP_THIN}`,
+    ``,
+    `\u2502 Processed    \`${stats.total_processed}\``,
+    `\u2502 Success      \`${stats.total_success}\``,
+    `\u2502 Failed       \`${stats.total_failed}\``,
+    `\u2502 Rate         \`${rate}%\``,
+    ``,
+    `${SEP_THIN}`,
+    `\u2502 **Top Users**`,
+    topText,
+    ``,
+    `${SEP}`,
+  ];
 
   return header()
     .setColor(COLORS.PRIMARY)
-    .setTitle("Detailed Statistics")
-    .addFields(
-      { name: "Processing", value: `Processed: \`${stats.total_processed}\`\nSuccess: \`${stats.total_success}\`\nFailed: \`${stats.total_failed}\``, inline: true },
-      { name: "Success Rate", value: `\`${rate}%\``, inline: true },
-      { name: "Top Users", value: topText, inline: false },
-    );
+    .setDescription(lines.join("\n"));
 }
 
-/**
- * Create a .txt file attachment from an array of strings.
- */
+// ── Utilities ────────────────────────────────────────────────
+
 function textAttachment(lines, filename) {
   const buffer = Buffer.from(lines.join("\n"), "utf-8");
   return new AttachmentBuilder(buffer, { name: filename });
 }
 
 function recoverProgressEmbed(email, status) {
-  return header()
+  return header({ thumbnail: false })
     .setColor(COLORS.INFO)
-    .setTitle("Account Recovery")
-    .addFields(
-      { name: "Account", value: `\`${email}\``, inline: true },
-    )
-    .setDescription(status);
+    .setDescription([
+      `${SEP}`,
+      `**Account Recovery**`,
+      `${SEP_THIN}`,
+      ``,
+      `Account: \`${email}\``,
+      ``,
+      status,
+      ``,
+      `${SEP}`,
+    ].join("\n"));
 }
 
 function recoverResultEmbed(email, success, message) {
   return header()
     .setColor(success ? COLORS.SUCCESS : COLORS.ERROR)
-    .setTitle(success ? "Recovery Successful" : "Recovery Failed")
-    .addFields(
-      { name: "Account", value: `\`${email}\``, inline: true },
-    )
-    .setDescription(message || (success ? "Password has been reset." : "Recovery failed."));
+    .setDescription([
+      `${SEP}`,
+      `**${success ? "Recovery Successful" : "Recovery Failed"}**`,
+      `${SEP_THIN}`,
+      ``,
+      `Account: \`${email}\``,
+      ``,
+      message || (success ? "Password has been reset." : "Recovery failed."),
+      ``,
+      `${SEP}`,
+    ].join("\n"));
 }
 
 module.exports = {
@@ -606,6 +804,7 @@ module.exports = {
   helpOverviewEmbed,
   helpCategoryEmbed,
   helpSelectMenu,
+  welcomeEmbed,
   adminPanelEmbed,
   detailedStatsEmbed,
   textAttachment,

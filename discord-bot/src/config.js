@@ -24,6 +24,15 @@ module.exports = {
   // Discord webhook for logging valid codes / tokens (optional, leave "" to disable)
   DISCORD_WEBHOOK: "",
 
+  // ── Branding ───────────────────────────────────────────────
+  // Bot thumbnail URL — appears on major embeds (set to your logo/avatar URL)
+  // Use a direct image URL (PNG/JPG). Leave "" to disable.
+  THUMBNAIL_URL: "",
+
+  // Bot banner URL — wide image at bottom of welcome/help embeds
+  // Recommended: 600x100 or similar wide format. Leave "" to disable.
+  BANNER_URL: "",
+
   // ── Proxy Settings ──────────────────────────────────────────
   // Set to true to route requests through proxies loaded from proxies.txt
   // Set to false for direct connections
