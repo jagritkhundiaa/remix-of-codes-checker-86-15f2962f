@@ -7,6 +7,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { Agent: UndiciAgent } = require("undici");
 const { SocksProxyAgent } = require("socks-proxy-agent");
 const { HttpsProxyAgent } = require("https-proxy-agent");
 const { HttpProxyAgent } = require("http-proxy-agent");
