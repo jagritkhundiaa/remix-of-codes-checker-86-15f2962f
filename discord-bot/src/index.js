@@ -1489,6 +1489,15 @@ client.on("messageCreate", async (message) => {
       await handlePull(respond, message.author.id, accountsRaw, attachment, message.author, message.author.username);
     }
 
+    else if (cmd === "promopuller") {
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) {
+        return respond({ embeds: [infoEmbed("Usage", "`.promopuller <accounts>`\nProvide email:password comma-separated or attach a `.txt` file.\nPulls promo links only. Results sent to your DMs.")] });
+      }
+      await handlePromoPuller(respond, message.author.id, accountsRaw, attachment, message.author, message.author.username);
+    }
+
     else if (cmd === "wlidset") {
       const wlidsRaw = args.join(" ");
       const attachment = message.attachments.first();
