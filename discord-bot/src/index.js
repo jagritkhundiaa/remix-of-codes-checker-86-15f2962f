@@ -1808,30 +1808,6 @@ client.on("messageCreate", async (message) => {
       await handleRewards(respond, message.author.id, accountsRaw, attachment, 3, message.author);
     }
 
-    else if (cmd === "prs") {
-      // Parse category from first arg if it matches a known category
-      const categories = getCategoryList().map(c => c.toLowerCase());
-      let category = "All";
-      let accountsStartIdx = 0;
-
-      // Check if first arg is a category name (could be multi-word like "sea of thieves")
-      for (let wordCount = 3; wordCount >= 1; wordCount--) {
-        const testCat = args.slice(0, wordCount).join(" ").toLowerCase();
-        if (categories.includes(testCat)) {
-          category = getCategoryList().find(c => c.toLowerCase() === testCat) || "All";
-          accountsStartIdx = wordCount;
-          break;
-        }
-      }
-
-      const accountsRaw = args.slice(accountsStartIdx).join(" ");
-      const attachment = message.attachments.first();
-      if (!accountsRaw && !attachment) {
-        const catList = getCategoryList().map(c => `  - ${c}`).join("\n");
-        return respond({ embeds: [infoEmbed("Usage", `\`.prs [category] <accounts>\` or attach a .txt file\n\nCategories:\n${catList}\n\nDefault: All\nResults sent to your DMs as a ZIP file.`)] });
-      }
-      await handlePrs(respond, message.author.id, accountsRaw, attachment, category, 10, message.author);
-    }
 
     else if (cmd === "recover") {
       const newPassword = args.pop();
