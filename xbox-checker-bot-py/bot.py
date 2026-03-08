@@ -1361,49 +1361,49 @@ async def cmd_stop(ctx):
 @bot.command(name="help")
 async def cmd_help(ctx):
     p = config.PREFIX
-    lines = [
-        "```",
-        "GENERATOR",
-        f"  {p}gen <category>        Generate (DM)",
-        f"  {p}gen                   List categories",
-        f"  {p}stock                 Stock counts",
-        f"  {p}stats [@user|id]      User stats",
-        "",
-        "ADMIN",
-        f"  {p}addcategory <name>    New category",
-        f"  {p}removecategory <name> Delete category",
-        f"  {p}restock <cat> + .txt  Add stock",
-        f"  {p}clearstock <cat>      Wipe stock",
-        f"  {p}addpremium <@user>    Grant premium",
-        f"  {p}removepremium <@user> Revoke premium",
-        f"  {p}premiumlist           Premium users",
-        f"  {p}setfree <n>           Free daily cap",
-        f"  {p}setpremium <n>        Premium daily cap",
-        "",
-        "XBOX",
-        f"  {p}xboxcheck + .txt      Check accounts",
-        f"  {p}xboxhelp              Checker help",
-        "",
-        "CHECKER",
-        f"  {p}check netflix + .txt  Service checker",
-        f"  {p}check roblox + .txt   Roblox checker",
-        f"  {p}check crunchyroll     Crunchyroll checker",
-        f"  {p}codecheck + .txt      Check codes (WLIDs)",
-        "",
-        "TOOLS",
-        f"  {p}claim + .txt          Claim WLID tokens",
-        f"  {p}pull + .txt           Pull Game Pass codes",
-        f"  {p}promopuller + .txt    Pull promo links",
-        f"  {p}inboxaio + .txt       Scan inbox (156 svcs)",
-        f"  {p}wlidset + tokens      Set WLID tokens",
-        f"  {p}stop                  Stop running task",
-        "",
-        "All commands also work as /slash commands",
-        f"Free: {gen.free_limit}/day  |  Premium: {gen.premium_limit}/day",
-        "Resets midnight UTC",
-        "```",
-    ]
-    await ctx.send(embed=e().add_field(name="Commands", value="\n".join(lines)))
+    em = e()
+    em.add_field(name="Generator", value=(
+        f"```\n"
+        f"{p}gen <category>        Generate (DM)\n"
+        f"{p}gen                   List categories\n"
+        f"{p}stock                 Stock counts\n"
+        f"{p}stats [@user|id]      User stats\n"
+        f"```"
+    ), inline=False)
+    em.add_field(name="Admin", value=(
+        f"```\n"
+        f"{p}addcategory <name>    New category\n"
+        f"{p}removecategory <name> Delete category\n"
+        f"{p}restock <cat> + .txt  Add stock\n"
+        f"{p}clearstock <cat>      Wipe stock\n"
+        f"{p}addpremium <@user>    Grant premium\n"
+        f"{p}removepremium <@user> Revoke premium\n"
+        f"{p}premiumlist           Premium users\n"
+        f"{p}setfree <n>           Free daily cap\n"
+        f"{p}setpremium <n>        Premium daily cap\n"
+        f"```"
+    ), inline=False)
+    em.add_field(name="Xbox / Checker", value=(
+        f"```\n"
+        f"{p}xboxcheck + .txt      Check accounts\n"
+        f"{p}check netflix + .txt  Service checker\n"
+        f"{p}check roblox + .txt   Roblox checker\n"
+        f"{p}check crunchyroll     Crunchyroll checker\n"
+        f"{p}codecheck + .txt      Check codes (WLIDs)\n"
+        f"```"
+    ), inline=False)
+    em.add_field(name="Tools", value=(
+        f"```\n"
+        f"{p}claim + .txt          Claim WLID tokens\n"
+        f"{p}pull + .txt           Pull Game Pass codes\n"
+        f"{p}promopuller + .txt    Pull promo links\n"
+        f"{p}inboxaio + .txt       Scan inbox (156 svcs)\n"
+        f"{p}wlidset + tokens      Set WLID tokens\n"
+        f"{p}stop                  Stop running task\n"
+        f"```"
+    ), inline=False)
+    em.set_footer(text=f"All commands also work as /slash  |  Free: {gen.free_limit}/day  |  Premium: {gen.premium_limit}/day  |  Resets midnight UTC")
+    await ctx.send(embed=em)
 
 
 # ═══════════════════════════════════════════════════════════════
