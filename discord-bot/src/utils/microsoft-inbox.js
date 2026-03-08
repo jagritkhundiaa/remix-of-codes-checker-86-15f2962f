@@ -418,7 +418,7 @@ async function attemptCheck(email, password) {
     }
 
     const cookieStr = cookieJar.toString();
-    if ((cookieStr.includes("ANON") || cookieStr.includes("WLSSC")) &&
+    if (cookieStr.includes("ANON") || cookieStr.includes("WLSSC") ||
         finalUrl.includes("https://login.live.com/oauth20_desktop.srf?")) {
       result.status = "hit";
     } else {
