@@ -13,7 +13,7 @@ const { sendToWebhook } = require("./utils/webhook");
 const { checkCodes } = require("./utils/microsoft-checker");
 const { claimWlids } = require("./utils/microsoft-claimer");
 const { pullCodes, pullLinks } = require("./utils/microsoft-puller");
-const { scrapeRewards, getCategoryList, getCategoryFileName } = require("./utils/microsoft-rewards-scraper");
+
 const { checkInboxAccounts, getServiceCount } = require("./utils/microsoft-inbox");
 const { searchProducts, getProductDetails, purchaseItems } = require("./utils/microsoft-purchaser");
 const { changePasswords, checkAccounts } = require("./utils/microsoft-changer");
