@@ -643,6 +643,24 @@ const HELP_CATEGORIES = {
       "  All results sent to your DMs.",
     ].join("\n"),
   },
+  inbox: {
+    label: "Inbox AIO",
+    description: "Scan inboxes for 50+ services",
+    content: (p) => [
+      "Inbox AIO Scanner",
+      "----------------------------",
+      "",
+      `  ${p}inboxaio <email:pass> or attach .txt`,
+      "  Scans Hotmail/Outlook inboxes for 50+",
+      "  services (Netflix, Spotify, PayPal...)",
+      "",
+      "  Results delivered as ZIP with per-",
+      "  service folders in your DMs.",
+      "",
+      "  Options",
+      `    threads  1-50 (default 5)`,
+    ].join("\n"),
+  },
   recovery: {
     label: "Recovery",
     description: "Recover accounts via ACSR",
@@ -841,6 +859,83 @@ function recoverResultEmbed(email, success, message) {
     .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\`\n${message || (success ? "Password has been reset." : "Recovery failed.")}`);
 }
 
+// ── Inbox AIO Embeds ─────────────────────────────────────────
+
+function inboxAioProgressEmbed({ completed, total, hits, fails, elapsed, latestAccount, latestStatus, servicesFound }) {
+  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+  const barW = 20;
+  const filled = Math.round((pct / 100) * barW);
+  const bar = "#".repeat(filled) + "-".repeat(barW - filled);
+  const elSec = elapsed ? `${Math.round(elapsed / 1000)}s` : "0s";
+
+  const block = [
+    "Inbox AIO Scanner",
+    "----------------------------",
+    "",
+    `  Progress    [${bar}] ${pct}%`,
+    `  ${pad("Processed")}${completed} / ${total}`,
+    `  ${pad("Elapsed")}${elSec}`,
+    "",
+    "  Results",
+    `  ${pad("Hits")}${hits}`,
+    `  ${pad("Failed")}${fails}`,
+    `  ${pad("Services Hit")}${servicesFound || 0}`,
+    "",
+  ];
+
+  if (latestAccount) {
+    const masked = latestAccount.replace(/(.{3}).*(@.*)/, "$1***$2");
+    block.push(`  Latest: ${masked} [${latestStatus || "..."}]`);
+  }
+
+  return header()
+    .setColor(COLORS.PRIMARY)
+    .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\``);
+}
+
+function inboxAioResultsEmbed({ total, hits, fails, locked, twoFA, elapsed, serviceBreakdown, dmSent, username }) {
+  const elSec = elapsed ? `${Math.round(elapsed / 1000)}s` : "0s";
+
+  const block = [
+    "Inbox AIO  --  Results",
+    "----------------------------",
+    "",
+    `  ${pad("Total")}${total}`,
+    `  ${pad("Hits")}${hits}`,
+    `  ${pad("Failed")}${fails}`,
+    `  ${pad("Locked")}${locked || 0}`,
+    `  ${pad("2FA")}${twoFA || 0}`,
+    `  ${pad("Elapsed")}${elSec}`,
+    "",
+    "  Top Services Found",
+    "  ----------------------------",
+  ];
+
+  // Show top 15 services by count
+  if (serviceBreakdown && Object.keys(serviceBreakdown).length > 0) {
+    const sorted = Object.entries(serviceBreakdown)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 15);
+    for (const [svc, count] of sorted) {
+      block.push(`  ${pad(svc)}${count} accs`);
+    }
+  } else {
+    block.push("  No services found.");
+  }
+
+  if (username) {
+    block.push("", `  Requested by ${username}`);
+  }
+
+  const embed = header()
+    .setColor(hits > 0 ? COLORS.SUCCESS : COLORS.ERROR)
+    .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\``);
+
+  if (dmSent) embed.addFields({ name: "\u200b", value: "Results sent to your DMs.", inline: false });
+
+  return embed;
+}
+
 module.exports = {
   progressEmbed,
   checkResultsEmbed,
@@ -870,4 +965,6 @@ module.exports = {
   textAttachment,
   recoverProgressEmbed,
   recoverResultEmbed,
+  inboxAioProgressEmbed,
+  inboxAioResultsEmbed,
 };

