@@ -861,19 +861,45 @@ function recoverResultEmbed(email, success, message) {
 
 // ── Inbox AIO Embeds ─────────────────────────────────────────
 
+/**
+ * Build paginated service fields (20 per page) with clean formatting
+ */
+function buildServiceFields(serviceBreakdown, labelPrefix = "Services") {
+  if (!serviceBreakdown || Object.keys(serviceBreakdown).length === 0) return [];
+
+  const sorted = Object.entries(serviceBreakdown)
+    .sort((a, b) => b[1] - a[1]);
+
+  const PAGE_SIZE = 20;
+  const pages = [];
+  for (let i = 0; i < sorted.length; i += PAGE_SIZE) {
+    pages.push(sorted.slice(i, i + PAGE_SIZE));
+  }
+
+  return pages.map((page, idx) => {
+    const lines = page.map(([svc, count]) => `◈ **${svc}**: ${count}`);
+    const title = pages.length > 1
+      ? `┃ ${labelPrefix} (${idx + 1})`
+      : `┃ ${labelPrefix}`;
+    return { name: title, value: lines.join("\n"), inline: false };
+  });
+}
+
 function inboxAioProgressEmbed({ completed, total, hits, fails, elapsed, latestAccount, latestStatus, servicesFound, serviceBreakdown }) {
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
   const barW = 20;
   const filled = Math.round((pct / 100) * barW);
   const bar = "█".repeat(filled) + "░".repeat(barW - filled);
-  const elSec = elapsed ? `${Math.round(elapsed / 1000)}s` : "0s";
+  const elSec = elapsed ? Math.round(elapsed / 1000) : 0;
+  const cpm = elSec > 0 ? Math.round((completed / elSec) * 60) : 0;
 
   const block = [
     `  Progress    [${bar}] ${pct}%`,
     `  ${pad("Processed")}${completed} / ${total}`,
     `  ${pad("Hits")}${hits}`,
     `  ${pad("Failed")}${fails}`,
-    `  ${pad("Elapsed")}${elSec}`,
+    `  ${pad("Speed")}${cpm} checks/min`,
+    `  ${pad("Elapsed")}${elSec}s`,
   ];
 
   if (latestAccount) {
@@ -885,28 +911,24 @@ function inboxAioProgressEmbed({ completed, total, hits, fails, elapsed, latestA
     .setColor(COLORS.PRIMARY)
     .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\``);
 
-  // Live top 20 services as a separate field
-  if (serviceBreakdown && Object.keys(serviceBreakdown).length > 0) {
-    const sorted = Object.entries(serviceBreakdown)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 20);
-    const svcLines = sorted.map(([svc, count]) => `\`${svc}\`: \`${count}\``).join("\n");
-    embed.addFields({ name: "📬 Services Found", value: svcLines, inline: false });
-  }
+  const svcFields = buildServiceFields(serviceBreakdown, "Services");
+  for (const f of svcFields) embed.addFields(f);
 
   return embed;
 }
 
 function inboxAioResultsEmbed({ total, hits, fails, locked, twoFA, elapsed, serviceBreakdown, dmSent, username }) {
-  const elSec = elapsed ? `${Math.round(elapsed / 1000)}s` : "0s";
+  const elSec = elapsed ? Math.round(elapsed / 1000) : 0;
+  const cpm = elSec > 0 ? Math.round((total / elSec) * 60) : 0;
 
   const block = [
-    `  ${pad("Total")}${total}`,
-    `  ${pad("Hits")}${hits}`,
-    `  ${pad("Failed")}${fails}`,
+    `  ${pad("Checked")}${total}`,
+    `  ${pad("Valid")}${hits}`,
+    `  ${pad("Invalid")}${fails}`,
     `  ${pad("Locked")}${locked || 0}`,
     `  ${pad("2FA")}${twoFA || 0}`,
-    `  ${pad("Elapsed")}${elSec}`,
+    `  ${pad("Speed")}${cpm} checks/min`,
+    `  ${pad("Elapsed")}${elSec}s`,
   ];
 
   if (username) {
@@ -918,15 +940,11 @@ function inboxAioResultsEmbed({ total, hits, fails, locked, twoFA, elapsed, serv
     .setTitle("Inbox AIO  ─  Results")
     .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\``);
 
-  // Top 20 services as a clean list
-  if (serviceBreakdown && Object.keys(serviceBreakdown).length > 0) {
-    const sorted = Object.entries(serviceBreakdown)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 20);
-    const svcLines = sorted.map(([svc, count]) => `\`${svc}\`: \`${count}\` accs`).join("\n");
-    embed.addFields({ name: "📬 Top Services", value: svcLines, inline: false });
+  const svcFields = buildServiceFields(serviceBreakdown, "Services");
+  if (svcFields.length > 0) {
+    for (const f of svcFields) embed.addFields(f);
   } else {
-    embed.addFields({ name: "📬 Services", value: "No services found.", inline: false });
+    embed.addFields({ name: "┃ Services", value: "No services detected.", inline: false });
   }
 
   if (dmSent) embed.addFields({ name: "\u200b", value: "Results sent to your DMs.", inline: false });
