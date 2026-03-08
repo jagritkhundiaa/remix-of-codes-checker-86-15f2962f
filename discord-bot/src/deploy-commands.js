@@ -47,6 +47,16 @@ const commands = [
     ),
 
   new SlashCommandBuilder()
+    .setName("promopuller")
+    .setDescription("Fetch promo links from Xbox Game Pass accounts (links only)")
+    .addAttachmentOption((o) =>
+      o.setName("accounts_file").setDescription("Text file with email:password per line").setRequired(false)
+    )
+    .addStringOption((o) =>
+      o.setName("accounts").setDescription("Accounts as email:password (comma-separated)").setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
     .setName("purchase")
     .setDescription("Buy items from the Microsoft Store using accounts")
     .addStringOption((o) =>
