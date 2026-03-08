@@ -711,7 +711,7 @@ async def do_inboxaio(ctx_or_inter, accounts_raw=None, accounts_file=None, threa
     if len(accs) > MAX_COMBO_LINES:
         return await send(embed=e().add_field(name="", value=f"Too many accounts. Max {MAX_COMBO_LINES} lines."))
 
-    msg = await send(embed=e().add_field(name="", value=f"Scanning {len(accs)} inboxes ({get_service_count()} services)...\n\n`{bar(0, len(accs))}`"))
+    msg = await send(embed=e().add_field(name="", value=f"Scanning {len(accs)} inboxes ({get_service_count()} services)...\n\n`{'█' * 0}{'░' * 20}` 0%"))
     if is_slash and msg is None:
         msg = await ctx_or_inter.original_response()
 
@@ -719,22 +719,37 @@ async def do_inboxaio(ctx_or_inter, accounts_raw=None, accounts_file=None, threa
     active_stops[str(user.id)] = stop
     t0 = time.time()
     last_edit = [0]
-    services_found = [0]
+    live_svc_breakdown = {}
 
     def on_progress(done, total, status=None, hits=0, fails=0, result=None):
         if result and result.get("services"):
-            services_found[0] += len(result["services"])
+            for svc_name in result["services"]:
+                live_svc_breakdown[svc_name] = live_svc_breakdown.get(svc_name, 0) + 1
         now = time.time()
         if now - last_edit[0] < 2.5:
             return
         last_edit[0] = now
         sec = now - t0
+        pct = int(done / total * 100) if total else 0
+        filled = int(pct / 100 * 20)
+        bar_str = "█" * filled + "░" * (20 - filled)
+
         em = e()
-        em.description = (
-            f"Inbox AIO Scanning...\n\n`{bar(done, total)}`\n\n"
-            f"Hits: `{hits}` | Failed: `{fails}` | Services Found: `{services_found[0]}`\n"
-            f"Time: `{sec:.1f}s`"
-        )
+        block = [
+            f"  Progress    [{bar_str}] {pct}%",
+            f"  Processed   {done} / {total}",
+            f"  Hits        {hits}",
+            f"  Failed      {fails}",
+            f"  Elapsed     {sec:.1f}s",
+        ]
+        em.description = f"```\n" + "\n".join(block) + "\n```"
+
+        # Live top 20 services
+        if live_svc_breakdown:
+            top = sorted(live_svc_breakdown.items(), key=lambda x: x[1], reverse=True)[:20]
+            svc_text = "\n".join(f"`{name}`: `{count}`" for name, count in top)
+            em.add_field(name="📬 Services Found", value=svc_text, inline=False)
+
         asyncio.run_coroutine_threadsafe(msg.edit(embed=em), bot.loop)
 
     results = await bot.loop.run_in_executor(
@@ -748,26 +763,29 @@ async def do_inboxaio(ctx_or_inter, accounts_raw=None, accounts_file=None, threa
 
     elapsed = f"{time.time() - t0:.1f}s"
 
-    # Build service breakdown
+    # Build service breakdown from all hits
     service_breakdown = {}
     for r in hit_results:
-        for svc_name, svc_data in r.get("services", {}).items():
-            if svc_name not in service_breakdown:
-                service_breakdown[svc_name] = 0
-            service_breakdown[svc_name] += 1
+        for svc_name in r.get("services", {}):
+            service_breakdown[svc_name] = service_breakdown.get(svc_name, 0) + 1
 
     re_em = e()
-    re_em.title = "Inbox AIO Results"
-    re_em.add_field(name="Total", value=f"`{len(results)}`", inline=True)
-    re_em.add_field(name="Hits", value=f"`{len(hit_results)}`", inline=True)
-    re_em.add_field(name="Failed", value=f"`{len(fail_results)}`", inline=True)
-    re_em.add_field(name="Locked/2FA", value=f"`{locked_count}`", inline=True)
-    re_em.add_field(name="Elapsed", value=f"`{elapsed}`", inline=True)
+    re_em.title = "Inbox AIO  ─  Results"
+    block = [
+        f"  Total       {len(results)}",
+        f"  Hits        {len(hit_results)}",
+        f"  Failed      {len(fail_results)}",
+        f"  Locked/2FA  {locked_count}",
+        f"  Elapsed     {elapsed}",
+    ]
+    re_em.description = f"```\n" + "\n".join(block) + "\n```"
 
     if service_breakdown:
-        top = sorted(service_breakdown.items(), key=lambda x: x[1], reverse=True)[:15]
-        svc_text = "\n".join(f"`{name}`: {count} accs" for name, count in top)
-        re_em.add_field(name="Top Services", value=svc_text, inline=False)
+        top = sorted(service_breakdown.items(), key=lambda x: x[1], reverse=True)[:20]
+        svc_text = "\n".join(f"`{name}`: `{count}` accs" for name, count in top)
+        re_em.add_field(name="📬 Top Services", value=svc_text, inline=False)
+    else:
+        re_em.add_field(name="📬 Services", value="No services found.", inline=False)
 
     # Build files by category
     files = []
@@ -803,7 +821,6 @@ async def do_inboxaio(ctx_or_inter, accounts_raw=None, accounts_file=None, threa
 
     try:
         dm = await user.create_dm()
-        # Discord limit: 10 files per message. Split if needed.
         for i in range(0, len(files), 9):
             batch = files[i:i+9]
             if i == 0:

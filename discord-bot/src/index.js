@@ -1284,19 +1284,24 @@ async function handleInboxAio(respond, userId, accountsRaw, accountsFile, thread
     if (accounts.length > MAX_COMBO_LINES) return respond({ embeds: [errorEmbed(`Too many accounts. Max ${MAX_COMBO_LINES} lines allowed.`)] });
 
     const startTime = Date.now();
-    let totalServicesFound = 0;
+    const liveServiceBreakdown = {};
 
     const msg = await respond({
-      embeds: [inboxAioProgressEmbed({ completed: 0, total: accounts.length, hits: 0, fails: 0, elapsed: 0, servicesFound: 0 })],
+      embeds: [inboxAioProgressEmbed({ completed: 0, total: accounts.length, hits: 0, fails: 0, elapsed: 0, serviceBreakdown: {} })],
       components: [stopButton(userId)],
       fetchReply: true,
     });
 
     let lastUpdate = Date.now();
+    let totalHits = 0;
+    let totalFails = 0;
     const results = await checkInboxAccounts(accounts, threads, (done, total, status, hits, fails, lastResult) => {
-      if (lastResult) {
-        const svcCount = Object.keys(lastResult.services || {}).length;
-        totalServicesFound += svcCount;
+      totalHits = hits || 0;
+      totalFails = fails || 0;
+      if (lastResult && lastResult.services) {
+        for (const svcName of Object.keys(lastResult.services)) {
+          liveServiceBreakdown[svcName] = (liveServiceBreakdown[svcName] || 0) + 1;
+        }
       }
       const now = Date.now();
       if (now - lastUpdate > 2500) {
@@ -1304,12 +1309,12 @@ async function handleInboxAio(respond, userId, accountsRaw, accountsFile, thread
         updateProgress(msg, inboxAioProgressEmbed({
           completed: done,
           total,
-          hits: hits || 0,
-          fails: fails || 0,
+          hits: totalHits,
+          fails: totalFails,
           elapsed: Date.now() - startTime,
           latestAccount: lastResult?.user || "",
           latestStatus: status || "",
-          servicesFound: totalServicesFound,
+          serviceBreakdown: { ...liveServiceBreakdown },
         }), userId);
       }
     }, ac.signal);

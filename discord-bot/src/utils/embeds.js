@@ -861,67 +861,53 @@ function recoverResultEmbed(email, success, message) {
 
 // ── Inbox AIO Embeds ─────────────────────────────────────────
 
-function inboxAioProgressEmbed({ completed, total, hits, fails, elapsed, latestAccount, latestStatus, servicesFound }) {
+function inboxAioProgressEmbed({ completed, total, hits, fails, elapsed, latestAccount, latestStatus, servicesFound, serviceBreakdown }) {
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
   const barW = 20;
   const filled = Math.round((pct / 100) * barW);
-  const bar = "#".repeat(filled) + "-".repeat(barW - filled);
+  const bar = "█".repeat(filled) + "░".repeat(barW - filled);
   const elSec = elapsed ? `${Math.round(elapsed / 1000)}s` : "0s";
 
   const block = [
-    "Inbox AIO Scanner",
-    "----------------------------",
-    "",
     `  Progress    [${bar}] ${pct}%`,
     `  ${pad("Processed")}${completed} / ${total}`,
-    `  ${pad("Elapsed")}${elSec}`,
-    "",
-    "  Results",
     `  ${pad("Hits")}${hits}`,
     `  ${pad("Failed")}${fails}`,
-    `  ${pad("Services Hit")}${servicesFound || 0}`,
-    "",
+    `  ${pad("Elapsed")}${elSec}`,
   ];
 
   if (latestAccount) {
     const masked = latestAccount.replace(/(.{3}).*(@.*)/, "$1***$2");
-    block.push(`  Latest: ${masked} [${latestStatus || "..."}]`);
+    block.push(`  ${pad("Latest")}${masked} [${latestStatus || "..."}]`);
   }
 
-  return header()
+  const embed = header()
     .setColor(COLORS.PRIMARY)
     .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\``);
+
+  // Live top 20 services as a separate field
+  if (serviceBreakdown && Object.keys(serviceBreakdown).length > 0) {
+    const sorted = Object.entries(serviceBreakdown)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 20);
+    const svcLines = sorted.map(([svc, count]) => `\`${svc}\`: \`${count}\``).join("\n");
+    embed.addFields({ name: "📬 Services Found", value: svcLines, inline: false });
+  }
+
+  return embed;
 }
 
 function inboxAioResultsEmbed({ total, hits, fails, locked, twoFA, elapsed, serviceBreakdown, dmSent, username }) {
   const elSec = elapsed ? `${Math.round(elapsed / 1000)}s` : "0s";
 
   const block = [
-    "Inbox AIO  --  Results",
-    "----------------------------",
-    "",
     `  ${pad("Total")}${total}`,
     `  ${pad("Hits")}${hits}`,
     `  ${pad("Failed")}${fails}`,
     `  ${pad("Locked")}${locked || 0}`,
     `  ${pad("2FA")}${twoFA || 0}`,
     `  ${pad("Elapsed")}${elSec}`,
-    "",
-    "  Top Services Found",
-    "  ----------------------------",
   ];
-
-  // Show top 15 services by count
-  if (serviceBreakdown && Object.keys(serviceBreakdown).length > 0) {
-    const sorted = Object.entries(serviceBreakdown)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 15);
-    for (const [svc, count] of sorted) {
-      block.push(`  ${pad(svc)}${count} accs`);
-    }
-  } else {
-    block.push("  No services found.");
-  }
 
   if (username) {
     block.push("", `  Requested by ${username}`);
@@ -929,7 +915,19 @@ function inboxAioResultsEmbed({ total, hits, fails, locked, twoFA, elapsed, serv
 
   const embed = header()
     .setColor(hits > 0 ? COLORS.SUCCESS : COLORS.ERROR)
+    .setTitle("Inbox AIO  ─  Results")
     .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\``);
+
+  // Top 20 services as a clean list
+  if (serviceBreakdown && Object.keys(serviceBreakdown).length > 0) {
+    const sorted = Object.entries(serviceBreakdown)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 20);
+    const svcLines = sorted.map(([svc, count]) => `\`${svc}\`: \`${count}\` accs`).join("\n");
+    embed.addFields({ name: "📬 Top Services", value: svcLines, inline: false });
+  } else {
+    embed.addFields({ name: "📬 Services", value: "No services found.", inline: false });
+  }
 
   if (dmSent) embed.addFields({ name: "\u200b", value: "Results sent to your DMs.", inline: false });
 
