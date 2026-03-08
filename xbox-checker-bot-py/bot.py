@@ -15,8 +15,6 @@ from wlid_store import set_wlids, get_wlids, get_wlid_count
 from ms_claimer import claim_wlids
 from ms_code_checker import check_codes
 from ms_puller import pull_codes, pull_links
-from ms_changer import change_passwords
-from ms_rewards import check_rewards_balances
 from ms_inbox import check_inbox_accounts, get_service_count
 
 intents = discord.Intents.default()
@@ -685,153 +683,8 @@ async def do_promopuller(ctx_or_inter, accounts_raw=None, accounts_file=None, is
         await msg.edit(embed=re_em, files=files)
 
 
-# ── Password Changer ──
-
-async def do_changer(ctx_or_inter, accounts_raw=None, accounts_file=None, new_password=None, threads=3, is_slash=False):
-    user = ctx_or_inter.user if is_slash else ctx_or_inter.author
-
-    async def send(**kw):
-        if is_slash:
-            return await ctx_or_inter.followup.send(**kw)
-        return await ctx_or_inter.send(**kw)
-
-    if not new_password:
-        return await send(embed=e().add_field(name="", value="No new password provided."))
-
-    accs = []
-    if accounts_raw:
-        parsed, _ = extract_combos(accounts_raw)
-        accs.extend(parsed)
-    if accounts_file:
-        raw_lines = await fetch_lines(accounts_file)
-        parsed, _ = extract_combos("\n".join(raw_lines))
-        accs.extend(parsed)
-    accs = list(set(accs))
-
-    if not accs:
-        return await send(embed=e().add_field(name="", value="No valid accounts provided."))
-    if len(accs) > MAX_COMBO_LINES:
-        return await send(embed=e().add_field(name="", value=f"Too many accounts. Max {MAX_COMBO_LINES} lines."))
-
-    msg = await send(embed=e().add_field(name="", value=f"Changing passwords for {len(accs)} accounts...\n\n`{bar(0, len(accs))}`"))
-    if is_slash and msg is None:
-        msg = await ctx_or_inter.original_response()
-
-    stop = threading.Event()
-    active_stops[str(user.id)] = stop
-    t0 = time.time()
-    last_edit = [0]
-
-    def on_progress(done, total):
-        now = time.time()
-        if now - last_edit[0] < 2:
-            return
-        last_edit[0] = now
-        em = e()
-        em.description = f"Changing passwords...\n\n`{bar(done, total)}`\n\nTime: `{time.time() - t0:.1f}s`"
-        asyncio.run_coroutine_threadsafe(msg.edit(embed=em), bot.loop)
-
-    results = await bot.loop.run_in_executor(
-        None, lambda: change_passwords(accs, new_password, threads, on_progress, stop)
-    )
-    active_stops.pop(str(user.id), None)
-
-    success = [r for r in results if r.get("success")]
-    failed = [r for r in results if not r.get("success")]
-
-    re_em = e()
-    re_em.title = "Changer Results"
-    re_em.add_field(name="Total", value=f"`{len(results)}`", inline=True)
-    re_em.add_field(name="Changed", value=f"`{len(success)}`", inline=True)
-    re_em.add_field(name="Failed", value=f"`{len(failed)}`", inline=True)
-
-    files = []
-    if success: files.append(txt_file([f"{r['email']}:{r.get('new_password', new_password)}" for r in success], "changed.txt"))
-    if failed: files.append(txt_file([f"{r['email']}: {r.get('error', 'Unknown')}" for r in failed], "failed.txt"))
-
-    try:
-        dm = await user.create_dm()
-        await dm.send(embed=re_em, files=files)
-        await msg.edit(embed=e().add_field(name="", value=f"Done. {len(success)} changed. Results sent to DMs."))
-    except Exception:
-        await msg.edit(embed=re_em, files=files)
 
 
-# ── Rewards Checker ──
-
-async def do_rewards(ctx_or_inter, accounts_raw=None, accounts_file=None, threads=3, is_slash=False):
-    user = ctx_or_inter.user if is_slash else ctx_or_inter.author
-
-    async def send(**kw):
-        if is_slash:
-            return await ctx_or_inter.followup.send(**kw)
-        return await ctx_or_inter.send(**kw)
-
-    accs = []
-    if accounts_raw:
-        parsed, _ = extract_combos(accounts_raw)
-        accs.extend(parsed)
-    if accounts_file:
-        raw_lines = await fetch_lines(accounts_file)
-        parsed, _ = extract_combos("\n".join(raw_lines))
-        accs.extend(parsed)
-    accs = list(set(accs))
-
-    if not accs:
-        return await send(embed=e().add_field(name="", value="No valid accounts provided."))
-    if len(accs) > MAX_COMBO_LINES:
-        return await send(embed=e().add_field(name="", value=f"Too many accounts. Max {MAX_COMBO_LINES} lines."))
-
-    msg = await send(embed=e().add_field(name="", value=f"Checking rewards for {len(accs)} accounts...\n\n`{bar(0, len(accs))}`"))
-    if is_slash and msg is None:
-        msg = await ctx_or_inter.original_response()
-
-    stop = threading.Event()
-    active_stops[str(user.id)] = stop
-    t0 = time.time()
-    last_edit = [0]
-
-    def on_progress(done, total):
-        now = time.time()
-        if now - last_edit[0] < 2:
-            return
-        last_edit[0] = now
-        em = e()
-        em.description = f"Checking rewards...\n\n`{bar(done, total)}`\n\nTime: `{time.time() - t0:.1f}s`"
-        asyncio.run_coroutine_threadsafe(msg.edit(embed=em), bot.loop)
-
-    results = await bot.loop.run_in_executor(
-        None, lambda: check_rewards_balances(accs, threads, on_progress, stop)
-    )
-    active_stops.pop(str(user.id), None)
-
-    hits = [r for r in results if r.get("success")]
-    fails = [r for r in results if not r.get("success")]
-    total_pts = sum(r.get("balance", 0) for r in hits)
-
-    re_em = e()
-    re_em.title = "Rewards Results"
-    re_em.add_field(name="Total", value=f"`{len(results)}`", inline=True)
-    re_em.add_field(name="Valid", value=f"`{len(hits)}`", inline=True)
-    re_em.add_field(name="Failed", value=f"`{len(fails)}`", inline=True)
-    re_em.add_field(name="Total Points", value=f"`{total_pts:,}`", inline=True)
-
-    files = []
-    if hits:
-        hit_lines = [f"{r['email']} | {r.get('balance', 0):,} pts | Lifetime: {r.get('lifetime_points', 0):,} | Level: {r.get('level_name', '?')} | Streak: {r.get('streak', 0)}" for r in hits]
-        files.append(txt_file(hit_lines, "rewards_hits.txt"))
-    if fails:
-        files.append(txt_file([f"{r['email']}: {r.get('error', 'Unknown')}" for r in fails], "rewards_failed.txt"))
-
-    try:
-        dm = await user.create_dm()
-        await dm.send(embed=re_em, files=files)
-        await msg.edit(embed=e().add_field(name="", value=f"Done. {len(hits)} valid, {total_pts:,} total points. Results sent to DMs."))
-    except Exception:
-        await msg.edit(embed=re_em, files=files)
-
-
-# ── Inbox AIO ──
 
 async def do_inboxaio(ctx_or_inter, accounts_raw=None, accounts_file=None, threads=5, is_slash=False):
     user = ctx_or_inter.user if is_slash else ctx_or_inter.author
@@ -1042,18 +895,6 @@ async def slash_promopuller(interaction: discord.Interaction, accounts: str = No
     await do_promopuller(interaction, accounts, accounts_file, is_slash=True)
 
 
-@bot.tree.command(name="changer", description="Change passwords for Microsoft accounts")
-@app_commands.describe(new_password="New password to set", accounts="Accounts as email:pass", accounts_file="Text file with email:pass", threads="Concurrent threads (1-3)")
-async def slash_changer(interaction: discord.Interaction, new_password: str, accounts: str = None, accounts_file: discord.Attachment = None, threads: app_commands.Range[int, 1, 3] = 3):
-    await interaction.response.defer()
-    await do_changer(interaction, accounts, accounts_file, new_password, threads, is_slash=True)
-
-
-@bot.tree.command(name="rewards", description="Check Microsoft Rewards balances")
-@app_commands.describe(accounts="Accounts as email:pass", accounts_file="Text file with email:pass", threads="Concurrent threads (1-5)")
-async def slash_rewards(interaction: discord.Interaction, accounts: str = None, accounts_file: discord.Attachment = None, threads: app_commands.Range[int, 1, 5] = 3):
-    await interaction.response.defer()
-    await do_rewards(interaction, accounts, accounts_file, threads, is_slash=True)
 
 
 @bot.tree.command(name="inboxaio", description=f"Scan Hotmail/Outlook inboxes for {get_service_count()}+ services")
@@ -1251,8 +1092,6 @@ async def slash_help(interaction: discord.Interaction):
         f"  /claim + file           Claim WLID tokens",
         f"  /pull + file            Pull Game Pass codes",
         f"  /promopuller + file     Pull promo links",
-        f"  /changer <newpass>      Change passwords",
-        f"  /rewards + file         Check Rewards pts",
         f"  /inboxaio + file        Scan inbox (156 svcs)",
         f"  /wlidset + tokens       Set WLID tokens",
         f"  /stop                   Stop running task",
@@ -1435,17 +1274,6 @@ async def cmd_promopuller(ctx, *, raw=""):
     att = ctx.message.attachments[0] if ctx.message.attachments else None
     await do_promopuller(ctx, raw or None, att)
 
-@bot.command(name="changer")
-async def cmd_changer(ctx, new_password=None, *, raw=""):
-    if not new_password:
-        return await ctx.send(embed=e().add_field(name="", value=f"Usage: `{config.PREFIX}changer <new_password>` + attach email:pass .txt"))
-    att = ctx.message.attachments[0] if ctx.message.attachments else None
-    await do_changer(ctx, raw or None, att, new_password)
-
-@bot.command(name="rewards")
-async def cmd_rewards(ctx, *, raw=""):
-    att = ctx.message.attachments[0] if ctx.message.attachments else None
-    await do_rewards(ctx, raw or None, att)
 
 @bot.command(name="inboxaio")
 async def cmd_inboxaio(ctx, *, raw=""):
@@ -1523,8 +1351,6 @@ async def cmd_help(ctx):
         f"  {p}claim + .txt          Claim WLID tokens",
         f"  {p}pull + .txt           Pull Game Pass codes",
         f"  {p}promopuller + .txt    Pull promo links",
-        f"  {p}changer <newpass>     Change passwords",
-        f"  {p}rewards + .txt        Check Rewards pts",
         f"  {p}inboxaio + .txt       Scan inbox (156 svcs)",
         f"  {p}wlidset + tokens      Set WLID tokens",
         f"  {p}stop                  Stop running task",
