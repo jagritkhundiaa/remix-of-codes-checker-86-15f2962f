@@ -8,7 +8,7 @@ const { proxiedFetch } = require("./proxy-manager");
 // ── Service definitions ─────────────────────────────────────
 // Each service: { keyword, label, category }
 const SERVICES = [
-  // Streaming
+  // ── Streaming ──
   { keyword: "netflix", label: "Netflix", category: "Streaming" },
   { keyword: "disney+", label: "Disney+", category: "Streaming" },
   { keyword: "hulu", label: "Hulu", category: "Streaming" },
@@ -21,15 +21,29 @@ const SERVICES = [
   { keyword: "funimation", label: "Funimation", category: "Streaming" },
   { keyword: "youtube premium", label: "YouTube Premium", category: "Streaming" },
   { keyword: "dazn", label: "DAZN", category: "Streaming" },
+  { keyword: "curiositystream", label: "CuriosityStream", category: "Streaming" },
+  { keyword: "mubi", label: "MUBI", category: "Streaming" },
+  { keyword: "shudder", label: "Shudder", category: "Streaming" },
+  { keyword: "britbox", label: "BritBox", category: "Streaming" },
+  { keyword: "starz", label: "Starz", category: "Streaming" },
+  { keyword: "showtime", label: "Showtime", category: "Streaming" },
+  { keyword: "pluto tv", label: "Pluto TV", category: "Streaming" },
+  { keyword: "tubi", label: "Tubi", category: "Streaming" },
+  { keyword: "vudu", label: "Vudu", category: "Streaming" },
+  { keyword: "plex", label: "Plex", category: "Streaming" },
 
-  // Music
+  // ── Music ──
   { keyword: "spotify", label: "Spotify", category: "Music" },
   { keyword: "apple music", label: "Apple Music", category: "Music" },
   { keyword: "tidal", label: "Tidal", category: "Music" },
   { keyword: "deezer", label: "Deezer", category: "Music" },
   { keyword: "soundcloud", label: "SoundCloud", category: "Music" },
+  { keyword: "pandora", label: "Pandora", category: "Music" },
+  { keyword: "audiomack", label: "Audiomack", category: "Music" },
+  { keyword: "amazon music", label: "Amazon Music", category: "Music" },
+  { keyword: "bandcamp", label: "Bandcamp", category: "Music" },
 
-  // Gaming
+  // ── Gaming ──
   { keyword: "roblox", label: "Roblox", category: "Gaming" },
   { keyword: "steam", label: "Steam", category: "Gaming" },
   { keyword: "epic games", label: "Epic Games", category: "Gaming" },
@@ -40,8 +54,21 @@ const SERVICES = [
   { keyword: "ubisoft", label: "Ubisoft", category: "Gaming" },
   { keyword: "activision", label: "Activision", category: "Gaming" },
   { keyword: "minecraft", label: "Minecraft", category: "Gaming" },
+  { keyword: "blizzard", label: "Blizzard", category: "Gaming" },
+  { keyword: "rockstar games", label: "Rockstar Games", category: "Gaming" },
+  { keyword: "bethesda", label: "Bethesda", category: "Gaming" },
+  { keyword: "nintendo", label: "Nintendo", category: "Gaming" },
+  { keyword: "gog.com", label: "GOG", category: "Gaming" },
+  { keyword: "humble bundle", label: "Humble Bundle", category: "Gaming" },
+  { keyword: "twitch", label: "Twitch", category: "Gaming" },
+  { keyword: "origin", label: "Origin/EA", category: "Gaming" },
+  { keyword: "valorant", label: "Valorant", category: "Gaming" },
+  { keyword: "fortnite", label: "Fortnite", category: "Gaming" },
+  { keyword: "apex legends", label: "Apex Legends", category: "Gaming" },
+  { keyword: "genshin", label: "Genshin Impact", category: "Gaming" },
+  { keyword: "mihoyo", label: "miHoYo/HoYoverse", category: "Gaming" },
 
-  // Shopping
+  // ── Shopping / Finance ──
   { keyword: "paypal", label: "PayPal", category: "Shopping" },
   { keyword: "amazon.com", label: "Amazon", category: "Shopping" },
   { keyword: "ebay", label: "eBay", category: "Shopping" },
@@ -51,8 +78,21 @@ const SERVICES = [
   { keyword: "stripe", label: "Stripe", category: "Shopping" },
   { keyword: "cash app", label: "Cash App", category: "Shopping" },
   { keyword: "venmo", label: "Venmo", category: "Shopping" },
+  { keyword: "zelle", label: "Zelle", category: "Shopping" },
+  { keyword: "etsy", label: "Etsy", category: "Shopping" },
+  { keyword: "wish", label: "Wish", category: "Shopping" },
+  { keyword: "best buy", label: "Best Buy", category: "Shopping" },
+  { keyword: "target", label: "Target", category: "Shopping" },
+  { keyword: "nike", label: "Nike", category: "Shopping" },
+  { keyword: "adidas", label: "Adidas", category: "Shopping" },
+  { keyword: "shein", label: "SHEIN", category: "Shopping" },
+  { keyword: "stockx", label: "StockX", category: "Shopping" },
+  { keyword: "grubhub", label: "Grubhub", category: "Shopping" },
+  { keyword: "doordash", label: "DoorDash", category: "Shopping" },
+  { keyword: "uber eats", label: "Uber Eats", category: "Shopping" },
+  { keyword: "instacart", label: "Instacart", category: "Shopping" },
 
-  // Social
+  // ── Social ──
   { keyword: "facebook", label: "Facebook", category: "Social" },
   { keyword: "instagram", label: "Instagram", category: "Social" },
   { keyword: "twitter", label: "Twitter/X", category: "Social" },
@@ -62,8 +102,19 @@ const SERVICES = [
   { keyword: "telegram", label: "Telegram", category: "Social" },
   { keyword: "reddit", label: "Reddit", category: "Social" },
   { keyword: "linkedin", label: "LinkedIn", category: "Social" },
+  { keyword: "pinterest", label: "Pinterest", category: "Social" },
+  { keyword: "tumblr", label: "Tumblr", category: "Social" },
+  { keyword: "whatsapp", label: "WhatsApp", category: "Social" },
+  { keyword: "signal", label: "Signal", category: "Social" },
+  { keyword: "wechat", label: "WeChat", category: "Social" },
+  { keyword: "line", label: "LINE", category: "Social" },
+  { keyword: "viber", label: "Viber", category: "Social" },
+  { keyword: "clubhouse", label: "Clubhouse", category: "Social" },
+  { keyword: "mastodon", label: "Mastodon", category: "Social" },
+  { keyword: "threads", label: "Threads", category: "Social" },
+  { keyword: "bluesky", label: "Bluesky", category: "Social" },
 
-  // Cloud / Tools
+  // ── Cloud / Productivity ──
   { keyword: "dropbox", label: "Dropbox", category: "Cloud" },
   { keyword: "google drive", label: "Google Drive", category: "Cloud" },
   { keyword: "icloud", label: "iCloud", category: "Cloud" },
@@ -72,12 +123,89 @@ const SERVICES = [
   { keyword: "canva", label: "Canva", category: "Cloud" },
   { keyword: "adobe", label: "Adobe", category: "Cloud" },
   { keyword: "github", label: "GitHub", category: "Cloud" },
+  { keyword: "gitlab", label: "GitLab", category: "Cloud" },
+  { keyword: "slack", label: "Slack", category: "Cloud" },
+  { keyword: "trello", label: "Trello", category: "Cloud" },
+  { keyword: "asana", label: "Asana", category: "Cloud" },
+  { keyword: "figma", label: "Figma", category: "Cloud" },
+  { keyword: "grammarly", label: "Grammarly", category: "Cloud" },
+  { keyword: "evernote", label: "Evernote", category: "Cloud" },
+  { keyword: "microsoft 365", label: "Microsoft 365", category: "Cloud" },
+  { keyword: "google workspace", label: "Google Workspace", category: "Cloud" },
+  { keyword: "heroku", label: "Heroku", category: "Cloud" },
+  { keyword: "vercel", label: "Vercel", category: "Cloud" },
+  { keyword: "cloudflare", label: "Cloudflare", category: "Cloud" },
+  { keyword: "digitalocean", label: "DigitalOcean", category: "Cloud" },
+  { keyword: "aws", label: "AWS", category: "Cloud" },
+  { keyword: "chatgpt", label: "ChatGPT", category: "Cloud" },
+  { keyword: "openai", label: "OpenAI", category: "Cloud" },
+  { keyword: "midjourney", label: "Midjourney", category: "Cloud" },
 
-  // Crypto
+  // ── Crypto ──
   { keyword: "coinbase", label: "Coinbase", category: "Crypto" },
   { keyword: "binance", label: "Binance", category: "Crypto" },
   { keyword: "crypto.com", label: "Crypto.com", category: "Crypto" },
   { keyword: "kraken", label: "Kraken", category: "Crypto" },
+  { keyword: "gemini", label: "Gemini", category: "Crypto" },
+  { keyword: "robinhood", label: "Robinhood", category: "Crypto" },
+  { keyword: "metamask", label: "MetaMask", category: "Crypto" },
+  { keyword: "trust wallet", label: "Trust Wallet", category: "Crypto" },
+  { keyword: "phantom wallet", label: "Phantom", category: "Crypto" },
+  { keyword: "opensea", label: "OpenSea", category: "Crypto" },
+  { keyword: "bybit", label: "Bybit", category: "Crypto" },
+  { keyword: "kucoin", label: "KuCoin", category: "Crypto" },
+  { keyword: "uniswap", label: "Uniswap", category: "Crypto" },
+  { keyword: "ledger", label: "Ledger", category: "Crypto" },
+
+  // ── Travel / Transport ──
+  { keyword: "uber", label: "Uber", category: "Travel" },
+  { keyword: "lyft", label: "Lyft", category: "Travel" },
+  { keyword: "airbnb", label: "Airbnb", category: "Travel" },
+  { keyword: "booking.com", label: "Booking.com", category: "Travel" },
+  { keyword: "expedia", label: "Expedia", category: "Travel" },
+  { keyword: "tripadvisor", label: "TripAdvisor", category: "Travel" },
+  { keyword: "southwest airlines", label: "Southwest", category: "Travel" },
+  { keyword: "united airlines", label: "United Airlines", category: "Travel" },
+  { keyword: "delta airlines", label: "Delta Airlines", category: "Travel" },
+
+  // ── Education ──
+  { keyword: "coursera", label: "Coursera", category: "Education" },
+  { keyword: "udemy", label: "Udemy", category: "Education" },
+  { keyword: "skillshare", label: "Skillshare", category: "Education" },
+  { keyword: "duolingo", label: "Duolingo", category: "Education" },
+  { keyword: "khan academy", label: "Khan Academy", category: "Education" },
+  { keyword: "codecademy", label: "Codecademy", category: "Education" },
+  { keyword: "linkedin learning", label: "LinkedIn Learning", category: "Education" },
+  { keyword: "masterclass", label: "MasterClass", category: "Education" },
+
+  // ── VPN / Security ──
+  { keyword: "nordvpn", label: "NordVPN", category: "VPN" },
+  { keyword: "expressvpn", label: "ExpressVPN", category: "VPN" },
+  { keyword: "surfshark", label: "Surfshark", category: "VPN" },
+  { keyword: "protonvpn", label: "ProtonVPN", category: "VPN" },
+  { keyword: "protonmail", label: "ProtonMail", category: "VPN" },
+  { keyword: "1password", label: "1Password", category: "VPN" },
+  { keyword: "lastpass", label: "LastPass", category: "VPN" },
+  { keyword: "bitwarden", label: "Bitwarden", category: "VPN" },
+  { keyword: "dashlane", label: "Dashlane", category: "VPN" },
+  { keyword: "malwarebytes", label: "Malwarebytes", category: "VPN" },
+  { keyword: "norton", label: "Norton", category: "VPN" },
+  { keyword: "mcafee", label: "McAfee", category: "VPN" },
+
+  // ── Dating ──
+  { keyword: "tinder", label: "Tinder", category: "Dating" },
+  { keyword: "bumble", label: "Bumble", category: "Dating" },
+  { keyword: "hinge", label: "Hinge", category: "Dating" },
+  { keyword: "match.com", label: "Match.com", category: "Dating" },
+  { keyword: "okcupid", label: "OkCupid", category: "Dating" },
+
+  // ── Health / Fitness ──
+  { keyword: "myfitnesspal", label: "MyFitnessPal", category: "Health" },
+  { keyword: "fitbit", label: "Fitbit", category: "Health" },
+  { keyword: "peloton", label: "Peloton", category: "Health" },
+  { keyword: "headspace", label: "Headspace", category: "Health" },
+  { keyword: "calm", label: "Calm", category: "Health" },
+  { keyword: "strava", label: "Strava", category: "Health" },
 ];
 
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
