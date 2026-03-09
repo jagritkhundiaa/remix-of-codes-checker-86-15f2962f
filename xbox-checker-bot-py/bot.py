@@ -1122,50 +1122,149 @@ async def slash_stop(interaction: discord.Interaction):
         await interaction.followup.send(embed=e().add_field(name="", value="Nothing running."))
 
 
+# ── Auth / Admin slash commands ──
+
+@bot.tree.command(name="auth", description="[ADMIN] Authorize a user for a duration")
+@app_commands.describe(user="User to authorize", duration="Duration (e.g. 7d, 1mo, perm)")
+async def slash_auth(interaction: discord.Interaction, user: discord.User, duration: str = "perm"):
+    await interaction.response.defer()
+    if not is_admin_or_owner(interaction.user.id):
+        return await interaction.followup.send(embed=e().add_field(name="", value="Admin/Owner only."))
+    dur = parse_duration(duration)
+    if dur is None:
+        return await interaction.followup.send(embed=e().add_field(name="", value=f"Invalid duration `{duration}`.\nExamples: `30m`, `7d`, `1mo`, `perm`"))
+    auth_mgr.authorize(user.id, dur, interaction.user.id)
+    em = e(thumb=True)
+    em.title = "User Authorized"
+    em.add_field(name="User", value=f"<@{user.id}>", inline=True)
+    em.add_field(name="Duration", value=f"`{format_duration(dur)}`", inline=True)
+    em.add_field(name="Expires", value=f"`{format_expiry(float('inf') if dur == float('inf') else time.time() + dur)}`", inline=True)
+    em.add_field(name="By", value=f"<@{interaction.user.id}>", inline=True)
+    await interaction.followup.send(embed=em)
+
+
+@bot.tree.command(name="deauth", description="[ADMIN] Remove authorization from a user")
+@app_commands.describe(user="User to deauthorize")
+async def slash_deauth(interaction: discord.Interaction, user: discord.User):
+    await interaction.response.defer()
+    if not is_admin_or_owner(interaction.user.id):
+        return await interaction.followup.send(embed=e().add_field(name="", value="Admin/Owner only."))
+    if auth_mgr.deauthorize(user.id):
+        await interaction.followup.send(embed=e().add_field(name="", value=f"<@{user.id}> deauthorized."))
+    else:
+        await interaction.followup.send(embed=e().add_field(name="", value=f"<@{user.id}> was not authorized."))
+
+
+@bot.tree.command(name="authlist", description="[ADMIN] List all authorized users")
+async def slash_authlist(interaction: discord.Interaction):
+    await interaction.response.defer()
+    if not is_admin_or_owner(interaction.user.id):
+        return await interaction.followup.send(embed=e().add_field(name="", value="Admin/Owner only."))
+    entries = auth_mgr.get_all_authorized()
+    if not entries:
+        return await interaction.followup.send(embed=e().add_field(name="", value="No authorized users."))
+    lines = []
+    for i, ent in enumerate(entries, 1):
+        exp = format_expiry(ent["expires_at"])
+        lines.append(f"`{i}.` <@{ent['user_id']}> — expires `{exp}`")
+    em = e(thumb=True)
+    em.title = "Authorized Users"
+    em.description = "\n".join(lines)
+    await interaction.followup.send(embed=em)
+
+
+@bot.tree.command(name="makeadmin", description="[OWNER] Grant admin role to a user")
+@app_commands.describe(user="User to make admin")
+async def slash_makeadmin(interaction: discord.Interaction, user: discord.User):
+    await interaction.response.defer()
+    if not is_owner(interaction.user.id):
+        return await interaction.followup.send(embed=e().add_field(name="", value="Owner only."))
+    auth_mgr.make_admin(user.id, interaction.user.id)
+    em = e(thumb=True)
+    em.title = "Admin Granted"
+    em.description = f"<@{user.id}> is now an **admin**.\nThey can use `.auth` to authorize other users."
+    await interaction.followup.send(embed=em)
+
+
+@bot.tree.command(name="removeadmin", description="[OWNER] Remove admin role from a user")
+@app_commands.describe(user="User to remove admin from")
+async def slash_removeadmin(interaction: discord.Interaction, user: discord.User):
+    await interaction.response.defer()
+    if not is_owner(interaction.user.id):
+        return await interaction.followup.send(embed=e().add_field(name="", value="Owner only."))
+    if auth_mgr.remove_admin(user.id):
+        await interaction.followup.send(embed=e().add_field(name="", value=f"<@{user.id}> removed from admin."))
+    else:
+        await interaction.followup.send(embed=e().add_field(name="", value=f"<@{user.id}> is not an admin."))
+
+
+@bot.tree.command(name="adminlist", description="[OWNER] List all admin users")
+async def slash_adminlist(interaction: discord.Interaction):
+    await interaction.response.defer()
+    if not is_owner(interaction.user.id):
+        return await interaction.followup.send(embed=e().add_field(name="", value="Owner only."))
+    admins = auth_mgr.get_all_admins()
+    if not admins:
+        return await interaction.followup.send(embed=e().add_field(name="", value="No admins."))
+    lines = "\n".join(f"`{i+1}.` <@{uid}>" for i, uid in enumerate(admins))
+    em = e(thumb=True)
+    em.title = "Admin Users"
+    em.description = lines
+    await interaction.followup.send(embed=em)
+
+
 @bot.tree.command(name="help", description="Show all available commands")
 async def slash_help(interaction: discord.Interaction):
     await interaction.response.defer()
     p = config.PREFIX
-    lines = [
-        "```",
-        "GENERATOR",
-        f"  /gen <category>         Generate (DM)",
-        f"  /gen                    List categories",
-        f"  /stock                  Stock counts",
-        f"  /stats [@user]          User stats",
-        "",
-        "ADMIN",
-        f"  /addcategory <name>     New category",
-        f"  /removecategory <name>  Delete category",
-        f"  /restock <cat> + file   Add stock",
-        f"  /clearstock <cat>       Wipe stock",
-        f"  /addpremium <@user>     Grant premium",
-        f"  /removepremium <@user>  Revoke premium",
-        f"  /premiumlist            Premium users",
-        f"  /setfree <n>            Free daily cap",
-        f"  /setpremium_limit <n>   Premium daily cap",
-        "",
-        "XBOX",
-        f"  /xboxcheck + file       Check accounts",
-        "",
-        "CHECKER",
-        f"  /check netflix + file   Service checker",
-        f"  /codecheck + file       Check codes (WLIDs)",
-        "",
-        "TOOLS",
-        f"  /claim + file           Claim WLID tokens",
-        f"  /pull + file            Pull Game Pass codes",
-        f"  /promopuller + file     Pull promo links",
-        f"  /inboxaio + file        Scan inbox (156 svcs)",
-        f"  /wlidset + tokens       Set WLID tokens",
-        f"  /stop                   Stop running task",
-        "",
-        f"Prefix commands also work with '{p}'",
-        f"Free: {gen.free_limit}/day  |  Premium: {gen.premium_limit}/day",
-        "Resets midnight UTC",
-        "```",
-    ]
-    await interaction.followup.send(embed=e().add_field(name="Commands", value="\n".join(lines)))
+    em = e(thumb=True, banner=True)
+    em.title = "Command Reference"
+    em.add_field(name="Generator", value=(
+        f"```\n"
+        f"  /gen <category>         Generate (DM)\n"
+        f"  /gen                    List categories\n"
+        f"  /stock                  Stock counts\n"
+        f"  /stats [@user]          User stats\n"
+        f"```"
+    ), inline=False)
+    em.add_field(name="Xbox / Checker", value=(
+        f"```\n"
+        f"  /xboxcheck + file       Check accounts\n"
+        f"  /check netflix + file   Service checker\n"
+        f"  /codecheck + file       Check codes (WLIDs)\n"
+        f"```"
+    ), inline=False)
+    em.add_field(name="Tools", value=(
+        f"```\n"
+        f"  /claim + file           Claim WLID tokens\n"
+        f"  /pull + file            Pull Game Pass codes\n"
+        f"  /promopuller + file     Pull promo links\n"
+        f"  /inboxaio + file        Scan inbox ({get_service_count()} svcs)\n"
+        f"  /wlidset + tokens       Set WLID tokens\n"
+        f"  /stop                   Stop running task\n"
+        f"```"
+    ), inline=False)
+    em.add_field(name="Auth & Admin", value=(
+        f"```\n"
+        f"  /auth <@user> <dur>     Authorize user\n"
+        f"  /deauth <@user>         Remove auth\n"
+        f"  /authlist               Authorized users\n"
+        f"  /makeadmin <@user>      Grant admin (owner)\n"
+        f"  /removeadmin <@user>    Revoke admin (owner)\n"
+        f"  /adminlist              List admins (owner)\n"
+        f"```"
+    ), inline=False)
+    em.add_field(name="Gen Admin", value=(
+        f"```\n"
+        f"  /addcategory <name>     New category\n"
+        f"  /restock <cat> + file   Add stock\n"
+        f"  /clearstock <cat>       Wipe stock\n"
+        f"  /addpremium <@user>     Grant premium\n"
+        f"  /removepremium <@user>  Revoke premium\n"
+        f"```"
+    ), inline=False)
+    em.set_footer(text=f"Prefix: {p}  |  Free: {gen.free_limit}/day  |  Premium: {gen.premium_limit}/day")
+    await interaction.followup.send(embed=em)
 
 
 # ═══════════════════════════════════════════════════════════════
