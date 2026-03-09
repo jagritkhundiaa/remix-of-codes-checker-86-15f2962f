@@ -1478,51 +1478,150 @@ async def cmd_stop(ctx):
     else:
         await ctx.send(embed=e().add_field(name="", value="Nothing running."))
 
+
+# ── Auth / Admin prefix commands ──
+
+@bot.command(name="auth")
+async def cmd_auth(ctx, target=None, duration="perm"):
+    if not is_admin_or_owner(ctx.author.id):
+        return await ctx.send(embed=e().add_field(name="", value="Admin/Owner only."))
+    uid = parse_uid(target)
+    if not uid:
+        return await ctx.send(embed=e().add_field(name="", value=f"Usage: `{config.PREFIX}auth <@user|id> <duration>`\nExamples: `7d`, `1mo`, `perm`"))
+    dur = parse_duration(duration)
+    if dur is None:
+        return await ctx.send(embed=e().add_field(name="", value=f"Invalid duration `{duration}`.\nExamples: `30m`, `7d`, `1mo`, `perm`"))
+    auth_mgr.authorize(uid, dur, ctx.author.id)
+    em = e(thumb=True)
+    em.title = "User Authorized"
+    em.add_field(name="User", value=f"<@{uid}>", inline=True)
+    em.add_field(name="Duration", value=f"`{format_duration(dur)}`", inline=True)
+    em.add_field(name="Expires", value=f"`{format_expiry(float('inf') if dur == float('inf') else time.time() + dur)}`", inline=True)
+    em.add_field(name="By", value=f"<@{ctx.author.id}>", inline=True)
+    await ctx.send(embed=em)
+
+
+@bot.command(name="deauth")
+async def cmd_deauth(ctx, target=None):
+    if not is_admin_or_owner(ctx.author.id):
+        return await ctx.send(embed=e().add_field(name="", value="Admin/Owner only."))
+    uid = parse_uid(target)
+    if not uid:
+        return await ctx.send(embed=e().add_field(name="", value="Mention a user or provide their ID."))
+    if auth_mgr.deauthorize(uid):
+        await ctx.send(embed=e().add_field(name="", value=f"<@{uid}> deauthorized."))
+    else:
+        await ctx.send(embed=e().add_field(name="", value=f"<@{uid}> was not authorized."))
+
+
+@bot.command(name="authlist")
+async def cmd_authlist(ctx):
+    if not is_admin_or_owner(ctx.author.id):
+        return await ctx.send(embed=e().add_field(name="", value="Admin/Owner only."))
+    entries = auth_mgr.get_all_authorized()
+    if not entries:
+        return await ctx.send(embed=e().add_field(name="", value="No authorized users."))
+    lines = []
+    for i, ent in enumerate(entries, 1):
+        exp = format_expiry(ent["expires_at"])
+        lines.append(f"`{i}.` <@{ent['user_id']}> — expires `{exp}`")
+    em = e(thumb=True)
+    em.title = "Authorized Users"
+    em.description = "\n".join(lines)
+    await ctx.send(embed=em)
+
+
+@bot.command(name="makeadmin")
+async def cmd_makeadmin(ctx, target=None):
+    if not is_owner(ctx.author.id):
+        return await ctx.send(embed=e().add_field(name="", value="Owner only."))
+    uid = parse_uid(target)
+    if not uid:
+        return await ctx.send(embed=e().add_field(name="", value="Mention a user or provide their ID."))
+    auth_mgr.make_admin(uid, ctx.author.id)
+    em = e(thumb=True)
+    em.title = "Admin Granted"
+    em.description = f"<@{uid}> is now an **admin**.\nThey can use `.auth` to authorize other users."
+    await ctx.send(embed=em)
+
+
+@bot.command(name="removeadmin")
+async def cmd_removeadmin(ctx, target=None):
+    if not is_owner(ctx.author.id):
+        return await ctx.send(embed=e().add_field(name="", value="Owner only."))
+    uid = parse_uid(target)
+    if not uid:
+        return await ctx.send(embed=e().add_field(name="", value="Mention a user or provide their ID."))
+    if auth_mgr.remove_admin(uid):
+        await ctx.send(embed=e().add_field(name="", value=f"<@{uid}> removed from admin."))
+    else:
+        await ctx.send(embed=e().add_field(name="", value=f"<@{uid}> is not an admin."))
+
+
+@bot.command(name="adminlist")
+async def cmd_adminlist(ctx):
+    if not is_owner(ctx.author.id):
+        return await ctx.send(embed=e().add_field(name="", value="Owner only."))
+    admins = auth_mgr.get_all_admins()
+    if not admins:
+        return await ctx.send(embed=e().add_field(name="", value="No admins."))
+    lines = "\n".join(f"`{i+1}.` <@{uid}>" for i, uid in enumerate(admins))
+    em = e(thumb=True)
+    em.title = "Admin Users"
+    em.description = lines
+    await ctx.send(embed=em)
+
+
 @bot.command(name="help")
 async def cmd_help(ctx):
     p = config.PREFIX
-    em = e()
+    em = e(thumb=True, banner=True)
+    em.title = "Command Reference"
     em.add_field(name="Generator", value=(
         f"```\n"
-        f"{p}gen <category>        Generate (DM)\n"
-        f"{p}gen                   List categories\n"
-        f"{p}stock                 Stock counts\n"
-        f"{p}stats [@user|id]      User stats\n"
-        f"```"
-    ), inline=False)
-    em.add_field(name="Admin", value=(
-        f"```\n"
-        f"{p}addcategory <name>    New category\n"
-        f"{p}removecategory <name> Delete category\n"
-        f"{p}restock <cat> + .txt  Add stock\n"
-        f"{p}clearstock <cat>      Wipe stock\n"
-        f"{p}addpremium <@user>    Grant premium\n"
-        f"{p}removepremium <@user> Revoke premium\n"
-        f"{p}premiumlist           Premium users\n"
-        f"{p}setfree <n>           Free daily cap\n"
-        f"{p}setpremium <n>        Premium daily cap\n"
+        f"  {p}gen <category>        Generate (DM)\n"
+        f"  {p}gen                   List categories\n"
+        f"  {p}stock                 Stock counts\n"
+        f"  {p}stats [@user|id]      User stats\n"
         f"```"
     ), inline=False)
     em.add_field(name="Xbox / Checker", value=(
         f"```\n"
-        f"{p}xboxcheck + .txt      Check accounts\n"
-        f"{p}check netflix + .txt  Service checker\n"
-        f"{p}check roblox + .txt   Roblox checker\n"
-        f"{p}check crunchyroll     Crunchyroll checker\n"
-        f"{p}codecheck + .txt      Check codes (WLIDs)\n"
+        f"  {p}xboxcheck + .txt      Check accounts\n"
+        f"  {p}check <service> + .txt Service checker\n"
+        f"  {p}codecheck + .txt      Check codes (WLIDs)\n"
         f"```"
     ), inline=False)
     em.add_field(name="Tools", value=(
         f"```\n"
-        f"{p}claim + .txt          Claim WLID tokens\n"
-        f"{p}pull + .txt           Pull Game Pass codes\n"
-        f"{p}promopuller + .txt    Pull promo links\n"
-        f"{p}inboxaio + .txt       Scan inbox (156 svcs)\n"
-        f"{p}wlidset + tokens      Set WLID tokens\n"
-        f"{p}stop                  Stop running task\n"
+        f"  {p}claim + .txt          Claim WLID tokens\n"
+        f"  {p}pull + .txt           Pull Game Pass codes\n"
+        f"  {p}promopuller + .txt    Pull promo links\n"
+        f"  {p}inboxaio + .txt       Scan inbox ({get_service_count()} svcs)\n"
+        f"  {p}wlidset + tokens      Set WLID tokens\n"
+        f"  {p}stop                  Stop running task\n"
         f"```"
     ), inline=False)
-    em.set_footer(text=f"All commands also work as /slash  |  Free: {gen.free_limit}/day  |  Premium: {gen.premium_limit}/day  |  Resets midnight UTC")
+    em.add_field(name="Auth & Admin", value=(
+        f"```\n"
+        f"  {p}auth <@user> <dur>    Authorize user\n"
+        f"  {p}deauth <@user>        Remove auth\n"
+        f"  {p}authlist              Authorized users\n"
+        f"  {p}makeadmin <@user>     Grant admin (owner)\n"
+        f"  {p}removeadmin <@user>   Revoke admin (owner)\n"
+        f"  {p}adminlist             List admins (owner)\n"
+        f"```"
+    ), inline=False)
+    em.add_field(name="Gen Admin", value=(
+        f"```\n"
+        f"  {p}addcategory <name>    New category\n"
+        f"  {p}restock <cat> + .txt  Add stock\n"
+        f"  {p}clearstock <cat>      Wipe stock\n"
+        f"  {p}addpremium <@user>    Grant premium\n"
+        f"  {p}removepremium <@user> Revoke premium\n"
+        f"```"
+    ), inline=False)
+    em.set_footer(text=f"All commands also work as /slash  |  Free: {gen.free_limit}/day  |  Premium: {gen.premium_limit}/day")
     await ctx.send(embed=em)
 
 
