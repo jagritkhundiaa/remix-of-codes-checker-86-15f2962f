@@ -50,9 +50,9 @@ async function loginToStore(email, password) {
     }
   }
 
-  async function storeGet(url) {
+  async function storeGet(url, extraHeaders = {}) {
     const res = await proxiedFetch(url, {
-      headers: { ...DEFAULT_HEADERS, Cookie: cookieJar },
+      headers: { ...DEFAULT_HEADERS, Cookie: cookieJar, ...extraHeaders },
       redirect: "follow",
     });
     extractCookies(res);
@@ -72,48 +72,109 @@ async function loginToStore(email, password) {
 
   try {
     console.log(`[PURCHASER] WLID login for ${email}`);
-    const bk = Math.floor(Date.now() / 1000);
-    const loginUrl = `https://login.live.com/ppsecure/post.srf?username=${encodeURIComponent(email)}&client_id=81feaced-5ddd-41e7-8bef-3e20a2689bb7&contextid=833A37B454306173&opid=81A1AC2B0BEB4ABA&bk=${bk}&uaid=f8aac2614ca54994b0bb9621af361fe6&pid=15216&prompt=none`;
 
-    const { text: loginText } = await storePost(
-      loginUrl,
+    // Step 1: Load the login page to get PPFT + urlPost dynamically
+    const initUrl = `https://login.live.com/login.srf?wa=wsignin1.0&rpsnv=19&ct=${Math.floor(Date.now() / 1000)}&rver=7.0.6738.0&wp=MBI_SSL&wreply=https://account.microsoft.com/auth/complete-signin&lc=1033&id=292666&username=${encodeURIComponent(email)}`;
+    const { text: loginPage } = await storeGet(initUrl);
+
+    // Extract PPFT dynamically (multiple patterns like mody.py)
+    let ppft = "";
+    let urlPost = "";
+
+    // Try ServerData JSON first
+    const serverDataMatch = loginPage.match(/var ServerData = ({.*?});/s);
+    if (serverDataMatch) {
+      try {
+        const serverData = JSON.parse(serverDataMatch[1]);
+        if (serverData.sFTTag) {
+          const ppftMatch = serverData.sFTTag.match(/value="([^"]+)"/);
+          if (ppftMatch) ppft = ppftMatch[1];
+        }
+        if (serverData.urlPost) urlPost = serverData.urlPost;
+      } catch {}
+    }
+
+    // Fallback patterns
+    if (!ppft) {
+      const m = loginPage.match(/"sFTTag":"[^"]*value=\\"([^"\\]+)\\"/);
+      if (m) ppft = m[1];
+    }
+    if (!ppft) {
+      const m = loginPage.match(/name="PPFT"[^>]*value="([^"]+)"/);
+      if (m) ppft = m[1];
+    }
+    if (!ppft) {
+      try { ppft = loginPage.split('name="PPFT" id="i0327" value="')[1].split('"')[0]; } catch {}
+    }
+
+    if (!urlPost) {
+      const m = loginPage.match(/"urlPost":"([^"]+)"/);
+      if (m) urlPost = m[1];
+    }
+    if (!urlPost) {
+      try { urlPost = loginPage.split("urlPost:'")[1].split("'")[0]; } catch {}
+    }
+
+    if (!ppft || !urlPost) {
+      console.log(`[PURCHASER] Failed to extract PPFT/urlPost for ${email}`);
+      return null;
+    }
+
+    // Step 2: Submit credentials
+    const { text: loginText, res: loginRes } = await storePost(
+      urlPost,
       new URLSearchParams({
+        i13: "1",
         login: email,
         loginfmt: email,
+        type: "11",
+        LoginOptions: "1",
         passwd: password,
-        PPFT: "-DmNqKIwViyNLVW!ndu48B52hWo3*dmmh3IYETDXnVvQdWK!9sxjI48z4IX*vHf5Gl*FYol2kesrvhsuunUYDLekZOg8UW8V4cugeNYzI1wLpI7wHWnu9CLiqRiISqQ2jS1kLHkeekbWTFtKb2l0J7k3nmQ3u811SxsV1e4l8WfyX8Pt8!pgnQ1bNLoptSPmVE45tyzHdttjDZeiMvu6aV0NrFLHYroFsVS581ZI*C8z27!K5I8nESfTU!YxntGN1RQ$$",
+        ps: "2",
+        PPFT: ppft,
+        PPSX: "PassportR",
+        NewUser: "1",
+        FoundMSAs: "",
+        fspost: "0",
+        i21: "0",
+        CookieDisclosure: "0",
+        IsFidoSupported: "0",
+        isSignupPost: "0",
+        isRecoveryAttemptPost: "0",
+        i19: "9960",
       }).toString(),
       { "Content-Type": "application/x-www-form-urlencoded" }
     );
 
+    // Check for login errors
     const cleaned = loginText.replace(/\\/g, "");
+    if (cleaned.includes("sErrTxt") || cleaned.includes("account or password is incorrect") || cleaned.includes("doesn't exist")) {
+      console.log(`[PURCHASER] Bad credentials for ${email}`);
+      return null;
+    }
+    if (cleaned.includes("identity/confirm") || cleaned.includes("Abuse")) {
+      console.log(`[PURCHASER] Account locked/MFA for ${email}`);
+      return null;
+    }
+
+    // Step 3: Follow redirect chain
     const reurlMatch = cleaned.match(/replace\("([^"]+)"/);
-    if (!reurlMatch) {
-      if (cleaned.includes("sErrTxt") || cleaned.includes("account or password is incorrect")) {
-        console.log(`[PURCHASER] Bad credentials for ${email}`);
-      } else {
-        console.log(`[PURCHASER] No redirect URL found for ${email}`);
+    if (reurlMatch) {
+      const { text: reresp } = await storeGet(reurlMatch[1]);
+
+      // Process hidden form redirect (e.g., jsDisabled.srf)
+      const actionMatch = reresp.match(/<form.*?action="(.*?)".*?>/);
+      if (actionMatch) {
+        const inputMatches = [...reresp.matchAll(/<input.*?name="(.*?)".*?value="(.*?)".*?>/g)];
+        const formData = new URLSearchParams();
+        for (const m of inputMatches) formData.append(m[1], m[2]);
+        await storePost(actionMatch[1], formData.toString(), {
+          "Content-Type": "application/x-www-form-urlencoded",
+        });
       }
-      return null;
     }
 
-    const { text: reresp } = await storeGet(reurlMatch[1]);
-
-    const actionMatch = reresp.match(/<form.*?action="(.*?)".*?>/);
-    if (!actionMatch) {
-      console.log(`[PURCHASER] No form action found for ${email}`);
-      return null;
-    }
-
-    const inputMatches = [...reresp.matchAll(/<input.*?name="(.*?)".*?value="(.*?)".*?>/g)];
-    const formData = new URLSearchParams();
-    for (const m of inputMatches) formData.append(m[1], m[2]);
-
-    await storePost(actionMatch[1], formData.toString(), {
-      "Content-Type": "application/x-www-form-urlencoded",
-    });
-
-    // Acquire store auth token
+    // Step 4: Acquire store auth token
     await proxiedFetch("https://buynowui.production.store-web.dynamics.com/akam/13/79883e11", {
       headers: { ...DEFAULT_HEADERS, Cookie: cookieJar },
     }).catch(() => {});
