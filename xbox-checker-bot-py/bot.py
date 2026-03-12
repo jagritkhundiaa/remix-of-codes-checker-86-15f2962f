@@ -1602,6 +1602,18 @@ async def cmd_check(ctx, service=None):
     await do_hotmail_check(ctx, SERVICES[service], accs)
 
 
+
+@bot.command(name="refund")
+async def cmd_refund(ctx):
+    accs = []
+    raw = ctx.message.content.split(None, 1)
+    raw_text = raw[1] if len(raw) > 1 else ""
+    accs.extend([l.strip() for l in raw_text.replace(",", "\n").splitlines() if ":" in l.strip()])
+    for att in ctx.message.attachments:
+        accs.extend([l for l in await fetch_lines(att) if ":" in l])
+    await do_refund_check(ctx, accs)
+
+
 @bot.command(name="stop")
 async def cmd_stop(ctx):
     ev = active_stops.get(str(ctx.author.id))
