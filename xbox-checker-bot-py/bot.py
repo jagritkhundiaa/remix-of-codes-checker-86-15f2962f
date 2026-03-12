@@ -884,6 +884,7 @@ SERVICES = {
     "netflix": {"keyword": "netflix", "label": "Netflix"},
     "roblox": {"keyword": "roblox", "label": "Roblox"},
     "crunchyroll": {"keyword": "crunchyroll", "label": "Crunchyroll"},
+    "refund": {"keyword": "refund", "label": "Refund"},
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -909,6 +910,7 @@ async def slash_xboxcheck(interaction: discord.Interaction, accounts: str = None
     app_commands.Choice(name="Netflix", value="netflix"),
     app_commands.Choice(name="Roblox", value="roblox"),
     app_commands.Choice(name="Crunchyroll", value="crunchyroll"),
+    app_commands.Choice(name="Refund", value="refund"),
 ])
 async def slash_check(interaction: discord.Interaction, service: app_commands.Choice[str], accounts: str = None, accounts_file: discord.Attachment = None):
     await interaction.response.defer()
