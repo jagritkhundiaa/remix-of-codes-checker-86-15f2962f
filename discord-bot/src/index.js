@@ -1666,12 +1666,18 @@ client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
   if (!message.content.startsWith(config.PREFIX)) return;
 
-  // Channel lock enforcement
-  // Channel lock enforcement removed — handled per-command below
 
   const args = message.content.slice(config.PREFIX.length).trim().split(/\s+/);
   const cmd = args.shift()?.toLowerCase();
   if (!cmd) return;
+
+  // Per-command channel enforcement
+  const channelCheck = checkChannelAccess(message.channelId, cmd);
+  if (!channelCheck.allowed) {
+    return message.reply({
+      embeds: [errorEmbed(`This command can only be used in <#${channelCheck.requiredChannel}>.`)],
+    });
+  }
 
   const respond = (opts) => message.reply(opts);
   // Send welcome on first use
