@@ -577,154 +577,216 @@ function authListEmbed(entries) {
 
 // ── Help System -- Category Select Menu ─────────────────────
 
+// Section groupings for the help dropdown
+const HELP_SECTIONS = {
+  core: { label: "-- Core Tools --", categories: ["checker", "claimer", "puller"] },
+  account: { label: "-- Account Tools --", categories: ["inbox", "rewards", "recovery"] },
+  owner: { label: "-- Owner Only --", categories: ["purchaser", "changer", "admin"] },
+};
+
 const HELP_CATEGORIES = {
   checker: {
     label: "Checker",
+    emoji: "🔍",
     description: "Check codes against WLID tokens",
+    section: "core",
     content: (p) => [
       "Checker",
-      "----------------------------",
+      "========================================",
       "",
+      "  Commands",
+      "  ----------------------------------------",
       `  ${p}check [wlids] + attach codes.txt`,
-      "  Check codes against WLID tokens.",
-      "  Uses stored WLIDs if none provided.",
+      "    Check codes against WLID tokens.",
+      "    Uses stored WLIDs if none provided.",
       "",
+      "  Output",
+      "  ----------------------------------------",
       "  All results sent to your DMs.",
     ].join("\n"),
   },
   claimer: {
     label: "Claimer",
+    emoji: "🔑",
     description: "Claim WLID tokens from accounts",
+    section: "core",
     content: (p) => [
       "Claimer",
-      "----------------------------",
+      "========================================",
       "",
+      "  Commands",
+      "  ----------------------------------------",
       `  ${p}claim <email:pass> or attach .txt`,
-      "  Extract WLID tokens from MS accounts.",
+      "    Extract WLID tokens from MS accounts.",
       "",
+      "  Output",
+      "  ----------------------------------------",
       "  All results sent to your DMs.",
     ].join("\n"),
   },
   puller: {
     label: "Puller",
+    emoji: "📥",
     description: "Fetch & validate Game Pass codes",
+    section: "core",
     content: (p) => [
       "Puller",
-      "----------------------------",
+      "========================================",
       "",
+      "  Commands",
+      "  ----------------------------------------",
       `  ${p}pull <email:pass> or attach .txt`,
-      "  Fetches codes from Game Pass accounts,",
-      "  then validates them automatically.",
+      "    Fetches codes from Game Pass accounts,",
+      "    then validates them automatically.",
       "",
       `  ${p}promopuller <email:pass> or attach .txt`,
-      "  Fetches promo links from Game Pass perks.",
-      "  Speed-optimized, no validation phase.",
+      "    Fetches promo links from Game Pass perks.",
+      "    Speed-optimized, no validation phase.",
       "",
+      "  Output",
+      "  ----------------------------------------",
       "  All results sent to your DMs.",
     ].join("\n"),
   },
   rewards: {
     label: "Rewards",
+    emoji: "⭐",
     description: "Check Microsoft Rewards balances",
+    section: "account",
     content: (p) => [
       "Rewards",
-      "----------------------------",
+      "========================================",
       "",
+      "  Commands",
+      "  ----------------------------------------",
       `  ${p}rewards <email:pass> or attach .txt`,
-      "  Check Rewards point balances.",
-      "  Shows balance, lifetime points, level.",
+      "    Check Rewards point balances.",
+      "    Shows balance, lifetime points, level.",
       "",
+      "  Output",
+      "  ----------------------------------------",
       "  All results sent to your DMs.",
     ].join("\n"),
   },
   // PRS removed from dropdown but kept functional internally
   purchaser: {
     label: "Purchaser",
+    emoji: "🛒",
     description: "Buy from Microsoft Store [Owner]",
+    section: "owner",
     content: (p) => [
       "Purchaser  [Owner Only]",
-      "----------------------------",
+      "========================================",
       "",
+      "  Commands",
+      "  ----------------------------------------",
       `  ${p}purchase <email:pass> <product_id>`,
-      "  Buy items from the Microsoft Store.",
+      "    Buy items from the Microsoft Store.",
       "",
       `  ${p}search <query>`,
-      "  Search for products.",
+      "    Search for products.",
       "",
+      "  Output",
+      "  ----------------------------------------",
       "  All results sent to your DMs.",
     ].join("\n"),
   },
   changer: {
     label: "Changer",
+    emoji: "🔄",
     description: "Change passwords & check accounts [Owner]",
+    section: "owner",
     content: (p) => [
       "Changer  [Owner Only]",
-      "----------------------------",
+      "========================================",
       "",
+      "  Commands",
+      "  ----------------------------------------",
       `  ${p}changer <email:pass> <new_password>`,
-      "  Change password on MS accounts.",
+      "    Change password on MS accounts.",
       "",
       `  ${p}checker <email:pass> or attach .txt`,
-      "  Validate account credentials.",
+      "    Validate account credentials.",
       "",
+      "  Output",
+      "  ----------------------------------------",
       "  All results sent to your DMs.",
     ].join("\n"),
   },
   inbox: {
     label: "Inbox AIO",
+    emoji: "📬",
     description: "Scan inboxes for 50+ services",
+    section: "account",
     content: (p) => [
       "Inbox AIO Scanner",
-      "----------------------------",
+      "========================================",
       "",
+      "  Commands",
+      "  ----------------------------------------",
       `  ${p}inboxaio <email:pass> or attach .txt`,
-      "  Scans Hotmail/Outlook inboxes for 50+",
-      "  services (Netflix, Spotify, PayPal...)",
+      "    Scans Hotmail/Outlook inboxes for 50+",
+      "    services (Netflix, Spotify, PayPal...)",
       "",
+      "  Output",
+      "  ----------------------------------------",
       "  Results delivered as ZIP with per-",
       "  service folders in your DMs.",
       "",
       "  Options",
+      "  ----------------------------------------",
       `    threads  1-50 (default 5)`,
     ].join("\n"),
   },
   recovery: {
     label: "Recovery",
+    emoji: "🔧",
     description: "Recover accounts via ACSR",
+    section: "account",
     content: (p) => [
       "Recovery",
-      "----------------------------",
+      "========================================",
       "",
+      "  Commands",
+      "  ----------------------------------------",
       `  ${p}recover <email(s)> <new_password>`,
-      "  Recover account(s) via ACSR.",
+      "    Recover account(s) via ACSR.",
       "",
       `  ${p}captcha <solution>`,
-      "  Submit CAPTCHA for active recovery.",
+      "    Submit CAPTCHA for active recovery.",
       "",
+      "  Output",
+      "  ----------------------------------------",
       "  All results sent to your DMs.",
     ].join("\n"),
   },
   admin: {
     label: "Admin",
+    emoji: "⚙️",
     description: "Authorization, blacklist & settings [Owner]",
+    section: "owner",
     content: (p) => [
       "Admin  [Owner Only]",
-      "----------------------------",
+      "========================================",
       "",
       "  WLID Storage",
+      "  ----------------------------------------",
       `    ${p}wlidset <tokens> or attach .txt`,
       "",
       "  Authorization",
+      "  ----------------------------------------",
       `    ${p}auth <@user> <duration>`,
       `    ${p}deauth <@user>`,
       `    ${p}authlist`,
       "",
       "  Blacklist",
+      "  ----------------------------------------",
       `    ${p}blacklist <@user> [reason]`,
       `    ${p}unblacklist <@user>`,
       `    ${p}blacklistshow`,
       "",
       "  Tools",
+      "  ----------------------------------------",
       `    ${p}admin | ${p}setwebhook <url>`,
       `    ${p}botstats | ${p}stats`,
     ].join("\n"),
@@ -732,9 +794,17 @@ const HELP_CATEGORIES = {
 };
 
 function helpOverviewEmbed(prefix) {
-  const catList = Object.entries(HELP_CATEGORIES).map(([, cat]) =>
-    `  - **${cat.label}** -- ${cat.description}`
-  );
+  const sectionLines = [];
+
+  for (const [, section] of Object.entries(HELP_SECTIONS)) {
+    sectionLines.push(`\n**${section.label}**`);
+    for (const catKey of section.categories) {
+      const cat = HELP_CATEGORIES[catKey];
+      if (cat) {
+        sectionLines.push(`  ${cat.emoji}  **${cat.label}** — ${cat.description}`);
+      }
+    }
+  }
 
   return header({ banner: true })
     .setColor(COLORS.PRIMARY)
@@ -742,8 +812,7 @@ function helpOverviewEmbed(prefix) {
     .setDescription([
       `Select a category below to view commands.`,
       `All results are sent to your DMs automatically.`,
-      ``,
-      ...catList,
+      ...sectionLines,
     ].join("\n"));
 }
 
@@ -757,17 +826,27 @@ function helpCategoryEmbed(categoryKey, prefix) {
 }
 
 function helpSelectMenu() {
+  const options = [];
+
+  for (const [, section] of Object.entries(HELP_SECTIONS)) {
+    for (const catKey of section.categories) {
+      const cat = HELP_CATEGORIES[catKey];
+      if (cat) {
+        options.push({
+          label: `${cat.label}`,
+          description: `${section.label.replace(/^-- | --$/g, '')} › ${cat.description}`,
+          value: catKey,
+          emoji: cat.emoji,
+        });
+      }
+    }
+  }
+
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId("help_category")
       .setPlaceholder("Select a category...")
-      .addOptions(
-        Object.entries(HELP_CATEGORIES).map(([key, cat]) => ({
-          label: cat.label,
-          description: cat.description,
-          value: key,
-        }))
-      )
+      .addOptions(options)
   );
 }
 
