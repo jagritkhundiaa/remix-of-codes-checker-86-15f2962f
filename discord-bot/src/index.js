@@ -87,9 +87,22 @@ function isOwner(userId) {
   return userId === config.OWNER_ID;
 }
 
-function isAllowedChannel(channelId) {
-  if (!config.ALLOWED_CHANNEL_ID) return true;
-  return channelId === config.ALLOWED_CHANNEL_ID;
+// ── Channel enforcement ──────────────────────────────────────
+
+const PULLER_CHECKER_CMDS = new Set(["pull", "promopuller", "check", "checker", "claim"]);
+const INBOX_NORMAL_CMDS = new Set(["inboxaio", "rewards", "recover", "captcha", "help", "stats", "search", "purchase", "changer", "wlidset"]);
+
+function getRequiredChannel(cmd) {
+  if (PULLER_CHECKER_CMDS.has(cmd)) return config.ALLOWED_CHANNEL_PULLER;
+  if (INBOX_NORMAL_CMDS.has(cmd)) return config.ALLOWED_CHANNEL_INBOX;
+  return null; // admin commands (auth, deauth, admin, etc.) work in either channel
+}
+
+function checkChannelAccess(channelId, cmd) {
+  const required = getRequiredChannel(cmd);
+  if (!required) return { allowed: true };
+  if (channelId === required) return { allowed: true };
+  return { allowed: false, requiredChannel: required };
 }
 
 function canUse(userId) {
