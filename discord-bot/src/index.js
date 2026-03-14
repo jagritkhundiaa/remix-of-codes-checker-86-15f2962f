@@ -1482,9 +1482,15 @@ client.on("interactionCreate", async (interaction) => {
 
   if (!interaction.isChatInputCommand()) return;
 
-  // Channel lock enforcement
-  if (!isAllowedChannel(interaction.channelId)) {
-    return interaction.reply({ embeds: [errorEmbed(`Commands are restricted to <#${config.ALLOWED_CHANNEL_ID}>.`)], ephemeral: true });
+  const { commandName, user } = interaction;
+
+  // Per-command channel enforcement
+  const channelCheck = checkChannelAccess(interaction.channelId, commandName);
+  if (!channelCheck.allowed) {
+    return interaction.reply({
+      embeds: [errorEmbed(`This command can only be used in <#${channelCheck.requiredChannel}>.`)],
+      ephemeral: true,
+    });
   }
 
   const respond = (opts) => {
