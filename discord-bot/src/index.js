@@ -1498,8 +1498,6 @@ client.on("interactionCreate", async (interaction) => {
     return interaction.reply(opts);
   };
 
-  const { commandName, user } = interaction;
-
   // Send welcome on first use (to DMs)
   await sendWelcomeIfNeeded(async (opts) => {
     try { await user.send(opts); } catch {}
