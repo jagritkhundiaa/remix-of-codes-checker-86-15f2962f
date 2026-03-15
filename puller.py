@@ -38,37 +38,6 @@ MICROSOFT_OAUTH_URL = (
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0"
 
-CATEGORY_CONFIG = {
-    "Minecraft": {
-        "keywords": ["minecraft", "minecoins", "minecraft minecoins", "minecoin", "minecraft coins"],
-        "displayName": "Minecraft",
-    },
-    "Roblox": {
-        "keywords": ["roblox", "robux", "roblox robux", "roblox digital", "roblox card"],
-        "displayName": "Roblox",
-    },
-    "League of Legends": {
-        "keywords": ["league of legends", "lol", "riot points", "rp", "league rp"],
-        "displayName": "League of Legends",
-    },
-    "Overwatch": {
-        "keywords": ["overwatch", "overwatch coins", "overwatch league tokens", "owl tokens"],
-        "displayName": "Overwatch",
-    },
-    "Sea of Thieves": {
-        "keywords": ["sea of thieves", "sea thieves", "ancient coins", "sof coins"],
-        "displayName": "Sea of Thieves",
-    },
-    "Game Pass": {
-        "keywords": ["game pass", "xbox game pass", "gamepass", "xbox gamepass"],
-        "displayName": "Game Pass",
-    },
-    "GIFTCARDS": {
-        "keywords": ["gift card", "giftcard", "gift cards", "amazon", "steam", "playstation", "xbox", "nintendo", "target", "starbucks", "subway", "doordash", "uber eats", "uber", "walmart"],
-        "displayName": "Gift Cards",
-    },
-}
-
 CODE_PATTERNS = [
     re.compile(r'\b[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}\b'),
     re.compile(r'\b[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}\b'),
