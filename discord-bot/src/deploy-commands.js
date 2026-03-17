@@ -220,6 +220,19 @@ const commands = [
       o.setName("threads").setDescription("Number of concurrent threads (1-50, default 5)").setMinValue(1).setMaxValue(50)
     ),
 
+  new SlashCommandBuilder()
+    .setName("refund")
+    .setDescription("Check Microsoft accounts for refund-eligible purchases (14-day window)")
+    .addAttachmentOption((o) =>
+      o.setName("accounts_file").setDescription("Text file with email:password per line").setRequired(false)
+    )
+    .addStringOption((o) =>
+      o.setName("accounts").setDescription("Accounts as email:password (comma-separated)").setRequired(false)
+    )
+    .addIntegerOption((o) =>
+      o.setName("threads").setDescription("Number of concurrent threads (1-20, default 5)").setMinValue(1).setMaxValue(20)
+    ),
+
 ].map((c) => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(BOT_TOKEN);
