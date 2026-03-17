@@ -39,6 +39,8 @@ const {
   changerResultsEmbed,
   accountCheckerResultsEmbed,
   rewardsResultsEmbed,
+  refundProgressEmbed,
+  refundResultsEmbed,
   errorEmbed,
   successEmbed,
   infoEmbed,
