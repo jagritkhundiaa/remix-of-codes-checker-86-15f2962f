@@ -626,7 +626,10 @@ async function validateCodesWithStore(email, password, codes, onProgress) {
 }
 
 /**
- * Full pull pipeline: fetch Game Pass codes + PRS rewards codes in parallel, then validate all together.
+ * Full pull pipeline:
+ *   Phase 1 — Fetch codes from Game Pass perks (normal puller)
+ *   Phase 2 — PRS recheck (runs AFTER Phase 1 completes, sequential)
+ *   Phase 3 — Validate all codes using WLID checker
  */
 async function pullCodes(accounts, onProgress, signal) {
   const parsed = accounts.map((a) => {
@@ -636,7 +639,7 @@ async function pullCodes(accounts, onProgress, signal) {
 
   const threads = Math.min(parsed.length, 10);
 
-  // Phase 1: Fetch codes from Game Pass perks + PRS rewards in parallel per account
+  // ── Phase 1: Normal Puller — fetch codes from Game Pass perks ──
   const allCodes = [];
   const fetchResults = [];
   let fetchDone = 0;
@@ -647,32 +650,16 @@ async function pullCodes(accounts, onProgress, signal) {
       const idx = fetchDone++;
       if (idx >= parsed.length) break;
       const { email, password } = parsed[idx];
-
-      // Run Game Pass fetch + PRS scrape in parallel for the same account
-      const [gpResult, prsResult] = await Promise.all([
-        fetchFromAccount(email, password),
-        scrapeRewards([`${email}:${password}`], "All", 1, null, signal)
-          .then(r => r)
-          .catch(() => ({ results: [], allCodes: [] })),
-      ]);
-
-      // Collect PRS codes — keep all codes ending with Z, deduplicate against GP codes
+      const gpResult = await fetchFromAccount(email, password);
       const gpCodes = gpResult.codes || [];
-      const gpCodeSet = new Set(gpCodes);
-      const prsCodes = (prsResult.allCodes || [])
-        .map(c => c.code)
-        .filter(c => c && /Z$/i.test(c) && !gpCodeSet.has(c));
 
-      // Merge all unique codes silently
-      const mergedCodes = [...gpCodes, ...prsCodes];
-
-      fetchResults.push({ email: gpResult.email, codes: mergedCodes, error: gpResult.error });
-      allCodes.push(...mergedCodes);
+      fetchResults.push({ email: gpResult.email, codes: [...gpCodes], links: gpResult.links || [], error: gpResult.error });
+      allCodes.push(...gpCodes);
 
       if (onProgress)
         onProgress("fetch", {
           email,
-          codes: mergedCodes.length,
+          codes: gpCodes.length,
           error: gpResult.error,
           done: fetchResults.length,
           total: parsed.length,
@@ -685,9 +672,51 @@ async function pullCodes(accounts, onProgress, signal) {
   await Promise.all(fetchWorkers);
 
   if (signal && signal.aborted) return { fetchResults, validateResults: [] };
+
+  // ── Phase 2: PRS recheck — runs AFTER Phase 1 completes ──
+  // UI shows "Checking again to make sure nothing was missed..."
+  if (onProgress) onProgress("recheck_start", { total: parsed.length });
+
+  const gpCodeSet = new Set(allCodes);
+  let recheckDone = 0;
+
+  async function recheckWorker() {
+    while (true) {
+      if (signal && signal.aborted) break;
+      const idx = recheckDone++;
+      if (idx >= parsed.length) break;
+      const { email, password } = parsed[idx];
+
+      try {
+        const prsResult = await scrapeRewards([`${email}:${password}`], "All", 1, null, signal);
+        const prsCodes = (prsResult.allCodes || [])
+          .map(c => c.code)
+          .filter(c => c && /Z$/i.test(c) && !gpCodeSet.has(c));
+
+        if (prsCodes.length > 0) {
+          // Merge PRS codes into fetchResults + allCodes
+          const existing = fetchResults.find(r => r.email === email);
+          if (existing) {
+            existing.codes.push(...prsCodes);
+          }
+          allCodes.push(...prsCodes);
+          for (const c of prsCodes) gpCodeSet.add(c);
+        }
+      } catch {}
+
+      if (onProgress)
+        onProgress("recheck", { done: idx + 1, total: parsed.length });
+    }
+  }
+
+  recheckDone = 0;
+  const recheckWorkers = Array(Math.min(threads, parsed.length)).fill(null).map(() => recheckWorker());
+  await Promise.all(recheckWorkers);
+
+  if (signal && signal.aborted) return { fetchResults, validateResults: [] };
   if (allCodes.length === 0) return { fetchResults, validateResults: [] };
 
-  // Phase 2: Validate using WLID checker
+  // ── Phase 3: Validate using WLID checker ──
   const wlids = getWlids();
   if (wlids.length === 0) {
     const validateResults = allCodes.map((c) => ({ code: c, status: "error", message: `${c} | No WLIDs stored — use .wlidset first` }));

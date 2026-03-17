@@ -1140,6 +1140,83 @@ function prsResultsEmbed({ total, hits, valid, failed, twoFA, codesFound, catego
   return embed;
 }
 
+// ── Refund Checker Embeds ─────────────────────────────────────
+
+function refundProgressEmbed(details) {
+  const pct = details.total === 0 ? 0 : Math.round((details.done / details.total) * 100);
+  const barLen = 20;
+  const filled = Math.round((pct / 100) * barLen);
+  const bar = "#".repeat(filled) + "-".repeat(barLen - filled);
+  const elapsed = details.startTime ? ((Date.now() - details.startTime) / 1000).toFixed(1) : "...";
+
+  const lines = [
+    "Refund Eligibility Check",
+    `  [${bar}] ${pct}%`,
+    "----------------------------",
+    "",
+    `  ${pad("Processed")}${details.done} / ${details.total}`,
+    `  ${pad("Eligible")}${details.hits || 0}`,
+    `  ${pad("Not Eligible")}${details.noRefund || 0}`,
+    `  ${pad("Locked/2FA")}${details.locked || 0}`,
+    `  ${pad("Failed")}${details.failed || 0}`,
+  ];
+
+  if (details.lastAccount) {
+    const masked = details.lastAccount.replace(/(.{3}).*(@.*)/, "$1***$2");
+    lines.push("", `  ${pad("Latest")}${masked}`);
+  }
+
+  lines.push("", "----------------------------", `  Time: ${elapsed}s`);
+
+  const embed = header({ thumbnail: false }).setColor(COLORS.INFO).setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
+
+  if (details.username) {
+    embed.setFooter({ text: `Checked by ${details.username} | ${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` });
+  }
+
+  return embed;
+}
+
+function refundResultsEmbed(results, { elapsed, dmSent, username } = {}) {
+  const hits = results.filter(r => r.status === "hit");
+  const noRefund = results.filter(r => r.status === "free");
+  const locked = results.filter(r => r.status === "locked");
+  const failed = results.filter(r => r.status === "fail");
+
+  const totalRefundable = hits.reduce((sum, r) => sum + (r.refundable?.length || 0), 0);
+
+  const lines = [
+    "Refund Eligibility Results",
+    "----------------------------",
+    "",
+    `  ${pad("Total Accounts")}${results.length}`,
+    `  ${pad("With Refundable")}${hits.length}`,
+    `  ${pad("No Refundable")}${noRefund.length}`,
+    `  ${pad("Locked/2FA")}${locked.length}`,
+    `  ${pad("Failed")}${failed.length}`,
+    "",
+    `  ${pad("Total Items")}${totalRefundable}`,
+  ];
+
+  if (elapsed) {
+    lines.push("", "----------------------------", `  Time: ${elapsed}s`);
+  }
+
+  const embed = header()
+    .setColor(COLORS.PRIMARY)
+    .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
+
+  if (dmSent) {
+    embed.addFields({ name: "\u200b", value: "```\n>> Results sent to your DMs\n```", inline: false });
+  }
+
+  if (username) {
+    embed.setFooter({ text: `Checked by ${username} | ${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` });
+  }
+
+  return embed;
+}
+
 module.exports = {
   progressEmbed,
   checkResultsEmbed,
@@ -1157,6 +1234,8 @@ module.exports = {
   rewardsResultsEmbed,
   prsProgressEmbed,
   prsResultsEmbed,
+  refundProgressEmbed,
+  refundResultsEmbed,
   errorEmbed,
   successEmbed,
   infoEmbed,
