@@ -1950,6 +1950,15 @@ client.on("messageCreate", async (message) => {
       return respond({ embeds: [helpOverviewEmbed(config.PREFIX)], components: [helpSelectMenu()] });
     }
 
+    else if (cmd === "refund") {
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) {
+        return respond({ embeds: [infoEmbed("Usage", "`.refund <accounts>`\nProvide email:password or attach a `.txt` file.\nChecks refund eligibility (14-day window).\nResults are always sent to your DMs.")] });
+      }
+      await handleRefund(respond, message.author.id, accountsRaw, attachment, 5, message.author, message.author.username);
+    }
+
     else if (cmd === "rewards") {
       const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
