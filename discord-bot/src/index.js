@@ -1728,6 +1728,14 @@ client.on("interactionCreate", async (interaction) => {
       await handleAccountChecker(respond, user.id, accounts, accountsFile, threads, user);
     }
 
+    else if (commandName === "refund") {
+      await interaction.deferReply();
+      const accounts = interaction.options.getString("accounts");
+      const accountsFile = interaction.options.getAttachment("accounts_file");
+      const threads = interaction.options.getInteger("threads") || 5;
+      await handleRefund(respond, user.id, accounts, accountsFile, threads, user, user.username);
+    }
+
     else if (commandName === "help") {
       await respond({ embeds: [helpOverviewEmbed("/")], components: [helpSelectMenu()] });
     }
