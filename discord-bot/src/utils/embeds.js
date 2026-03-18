@@ -580,14 +580,13 @@ function authListEmbed(entries) {
 // Section groupings for the help dropdown
 const HELP_SECTIONS = {
   core: { label: "-- Core Tools --", categories: ["checker", "claimer", "puller"] },
-  account: { label: "-- Account Tools --", categories: ["inbox", "rewards", "recovery"] },
+  account: { label: "-- Account Tools --", categories: ["inbox", "rewards", "refund", "recovery"] },
   owner: { label: "-- Owner Only --", categories: ["purchaser", "changer", "admin"] },
 };
 
 const HELP_CATEGORIES = {
   checker: {
     label: "Checker",
-    emoji: "🔍",
     description: "Check codes against WLID tokens",
     section: "core",
     content: (p) => [
@@ -607,7 +606,6 @@ const HELP_CATEGORIES = {
   },
   claimer: {
     label: "Claimer",
-    emoji: "🔑",
     description: "Claim WLID tokens from accounts",
     section: "core",
     content: (p) => [
@@ -626,7 +624,6 @@ const HELP_CATEGORIES = {
   },
   puller: {
     label: "Puller",
-    emoji: "📥",
     description: "Fetch & validate Game Pass codes",
     section: "core",
     content: (p) => [
@@ -650,7 +647,6 @@ const HELP_CATEGORIES = {
   },
   rewards: {
     label: "Rewards",
-    emoji: "⭐",
     description: "Check Microsoft Rewards balances",
     section: "account",
     content: (p) => [
@@ -668,10 +664,27 @@ const HELP_CATEGORIES = {
       "  All results sent to your DMs.",
     ].join("\n"),
   },
-  // PRS removed from dropdown but kept functional internally
+  refund: {
+    label: "Refund",
+    description: "Check refund eligibility (14-day)",
+    section: "account",
+    content: (p) => [
+      "Refund Checker",
+      "========================================",
+      "",
+      "  Commands",
+      "  ----------------------------------------",
+      `  ${p}refund <email:pass> or attach .txt`,
+      "    Checks if purchases are within the",
+      "    14-day refund window.",
+      "",
+      "  Output",
+      "  ----------------------------------------",
+      "  All results sent to your DMs.",
+    ].join("\n"),
+  },
   purchaser: {
     label: "Purchaser",
-    emoji: "🛒",
     description: "Buy from Microsoft Store [Owner]",
     section: "owner",
     content: (p) => [
@@ -693,7 +706,6 @@ const HELP_CATEGORIES = {
   },
   changer: {
     label: "Changer",
-    emoji: "🔄",
     description: "Change passwords & check accounts [Owner]",
     section: "owner",
     content: (p) => [
@@ -715,7 +727,6 @@ const HELP_CATEGORIES = {
   },
   inbox: {
     label: "Inbox AIO",
-    emoji: "📬",
     description: "Scan inboxes for 50+ services",
     section: "account",
     content: (p) => [
@@ -740,7 +751,6 @@ const HELP_CATEGORIES = {
   },
   recovery: {
     label: "Recovery",
-    emoji: "🔧",
     description: "Recover accounts via ACSR",
     section: "account",
     content: (p) => [
@@ -762,7 +772,6 @@ const HELP_CATEGORIES = {
   },
   admin: {
     label: "Admin",
-    emoji: "⚙️",
     description: "Authorization, blacklist & settings [Owner]",
     section: "owner",
     content: (p) => [
@@ -801,7 +810,7 @@ function helpOverviewEmbed(prefix) {
     for (const catKey of section.categories) {
       const cat = HELP_CATEGORIES[catKey];
       if (cat) {
-        sectionLines.push(`  ${cat.emoji}  **${cat.label}** — ${cat.description}`);
+        sectionLines.push(`  **${cat.label}** -- ${cat.description}`);
       }
     }
   }
@@ -834,9 +843,8 @@ function helpSelectMenu() {
       if (cat) {
         options.push({
           label: `${cat.label}`,
-          description: `${section.label.replace(/^-- | --$/g, '')} › ${cat.description}`,
+          description: `${section.label.replace(/^-- | --$/g, '')} > ${cat.description}`,
           value: catKey,
-          emoji: cat.emoji,
         });
       }
     }
@@ -983,10 +991,10 @@ function buildServiceFields(serviceBreakdown, labelPrefix = "Services") {
   }
 
   return pages.map((page, idx) => {
-    const lines = page.map(([svc, count]) => `◈ **${svc}**: ${count}`);
+    const lines = page.map(([svc, count]) => `> **${svc}**: ${count}`);
     const title = pages.length > 1
-      ? `┃ ${labelPrefix} (${idx + 1})`
-      : `┃ ${labelPrefix}`;
+      ? `${labelPrefix} (${idx + 1})`
+      : `${labelPrefix}`;
     return { name: title, value: lines.join("\n"), inline: false };
   });
 }
@@ -995,7 +1003,7 @@ function inboxAioProgressEmbed({ completed, total, hits, fails, elapsed, latestA
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
   const barW = 20;
   const filled = Math.round((pct / 100) * barW);
-  const bar = "█".repeat(filled) + "░".repeat(barW - filled);
+  const bar = "#".repeat(filled) + "-".repeat(barW - filled);
   const elSec = elapsed ? Math.round(elapsed / 1000) : 0;
   const cpm = elSec > 0 ? Math.round((completed / elSec) * 60) : 0;
 
@@ -1050,7 +1058,7 @@ function inboxAioResultsEmbed({ total, hits, fails, locked, twoFA, elapsed, serv
   if (svcFields.length > 0) {
     for (const f of svcFields) embed.addFields(f);
   } else {
-    embed.addFields({ name: "┃ Services", value: "No services detected.", inline: false });
+    embed.addFields({ name: "Services", value: "No services detected.", inline: false });
   }
 
   if (dmSent) embed.addFields({ name: "\u200b", value: "Results sent to your DMs.", inline: false });
@@ -1131,8 +1139,8 @@ function prsResultsEmbed({ total, hits, valid, failed, twoFA, codesFound, catego
   // Category breakdown
   if (categoryBreakdown && Object.keys(categoryBreakdown).length > 0) {
     const sorted = Object.entries(categoryBreakdown).sort((a, b) => b[1] - a[1]);
-    const catLines = sorted.map(([cat, count]) => `◈ **${cat}**: ${count} codes`);
-    embed.addFields({ name: "┃ Categories", value: catLines.join("\n"), inline: false });
+    const catLines = sorted.map(([cat, count]) => `> **${cat}**: ${count} codes`);
+    embed.addFields({ name: "Categories", value: catLines.join("\n"), inline: false });
   }
 
   if (dmSent) embed.addFields({ name: "\u200b", value: "Results sent to your DMs.", inline: false });

@@ -408,11 +408,11 @@ async function handlePull(respond, userId, accountsRaw, accountsFile, dmUser = n
         }
       } else if (phase === "recheck_start") {
         // PRS second phase — UI shows recheck message
-        updateProgress(msg, progressEmbed(0, detail.total, "Checking again to make sure nothing was missed..."), userId);
+        updateProgress(msg, progressEmbed(0, detail.total, "Checking if no code is left..."), userId);
       } else if (phase === "recheck") {
         if (now - lastUpdate > 2000) {
           lastUpdate = now;
-          updateProgress(msg, progressEmbed(detail.done, detail.total, "Checking again to make sure nothing was missed..."), userId);
+          updateProgress(msg, progressEmbed(detail.done, detail.total, "Checking if no code is left..."), userId);
         }
       } else if (phase === "validate_start") {
         // Capture fetch results for live display
@@ -706,7 +706,7 @@ async function handleRefund(respond, userId, accountsRaw, accountsFile, threads 
   }
 }
 
-
+async function handleAuth(respond, callerId, targetId, durationStr) {
   if (!isOwner(callerId)) return respond({ embeds: [errorEmbed("Only the bot owner can authorize users.")] });
 
   const ms = parseDuration(durationStr);

