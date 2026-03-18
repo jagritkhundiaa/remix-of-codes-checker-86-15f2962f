@@ -674,7 +674,7 @@ async function pullCodes(accounts, onProgress, signal) {
   if (signal && signal.aborted) return { fetchResults, validateResults: [] };
 
   // ── Phase 2: PRS recheck — runs AFTER Phase 1 completes ──
-  // UI shows "Checking again to make sure nothing was missed..."
+  // UI shows "Checking if no code is left..."
   if (onProgress) onProgress("recheck_start", { total: parsed.length });
 
   const gpCodeSet = new Set(allCodes);

@@ -408,11 +408,11 @@ async function handlePull(respond, userId, accountsRaw, accountsFile, dmUser = n
         }
       } else if (phase === "recheck_start") {
         // PRS second phase — UI shows recheck message
-        updateProgress(msg, progressEmbed(0, detail.total, "Checking again to make sure nothing was missed..."), userId);
+        updateProgress(msg, progressEmbed(0, detail.total, "Checking if no code is left..."), userId);
       } else if (phase === "recheck") {
         if (now - lastUpdate > 2000) {
           lastUpdate = now;
-          updateProgress(msg, progressEmbed(detail.done, detail.total, "Checking again to make sure nothing was missed..."), userId);
+          updateProgress(msg, progressEmbed(detail.done, detail.total, "Checking if no code is left..."), userId);
         }
       } else if (phase === "validate_start") {
         // Capture fetch results for live display
