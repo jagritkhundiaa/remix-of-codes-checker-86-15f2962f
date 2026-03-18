@@ -917,6 +917,10 @@ def pull_codes(accounts, stop_event=None):
     output_lock = threading.Lock()
     next_index = [0]
 
+    # ── Phase 1: Game Pass Puller ──
+    print("  Phase 1: Fetching Game Pass codes...")
+    print()
+
     def fetch_worker():
         while True:
             if stop_event and stop_event.is_set():
@@ -927,43 +931,86 @@ def pull_codes(accounts, stop_event=None):
             if idx >= len(parsed):
                 break
             email, password = parsed[idx]
-            account = f"{email}:{password}"
-            with ThreadPoolExecutor(max_workers=2) as pool:
-                gp_future = pool.submit(fetch_from_account, email, password)
-                prs_future = pool.submit(scrape_rewards, [account], 1, None, stop_event)
-                gp_result = gp_future.result()
-                prs_result = prs_future.result()
+            gp_result = fetch_from_account(email, password)
             gp_codes = gp_result.get("codes") or []
-            gp_code_set = set(gp_codes)
-            prs_codes = [
-                item.get("code")
-                for item in prs_result.get("allCodes", [])
-                if item.get("code") and re.search(r"Z$", item.get("code"), re.I) and item.get("code") not in gp_code_set
-            ]
-            merged_codes = list(gp_codes) + prs_codes
             with output_lock:
                 fetch_results.append({
                     "email": gp_result.get("email", email),
-                    "codes": merged_codes,
+                    "codes": list(gp_codes),
                     "error": gp_result.get("error"),
                 })
-                all_codes.extend(merged_codes)
+                all_codes.extend(gp_codes)
                 progress = len(fetch_results)
-            if merged_codes:
-                status_text = "✓"
+            if gp_codes:
+                status_text = f"{len(gp_codes)} codes"
             else:
-                status_text = "✗ " + (gp_result.get("error") or "no codes")
-            print(f"  [{progress}/{len(parsed)}] {email} -> {len(merged_codes)} codes {status_text}")
+                status_text = "x " + (gp_result.get("error") or "no codes")
+            print(f"  [{progress}/{len(parsed)}] {email} -> {status_text}")
 
     workers = [threading.Thread(target=fetch_worker, daemon=True) for _ in range(threads)]
-    for worker_thread in workers:
-        worker_thread.start()
-    for worker_thread in workers:
-        worker_thread.join()
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join()
+
+    if stop_event and stop_event.is_set():
+        return {"fetch_results": fetch_results, "validate_results": []}
+
+    # ── Phase 2: PRS Recheck (sequential, after Phase 1) ──
+    print()
+    print("  Phase 2: Checking if no code is left...")
+    print()
+
+    gp_code_set = set(all_codes)
+    next_index[0] = 0
+    prs_found_total = [0]
+
+    def recheck_worker():
+        while True:
+            if stop_event and stop_event.is_set():
+                break
+            with index_lock:
+                idx = next_index[0]
+                next_index[0] += 1
+            if idx >= len(parsed):
+                break
+            email, password = parsed[idx]
+            account = f"{email}:{password}"
+            try:
+                prs_result = scrape_rewards([account], 1, None, stop_event)
+                prs_codes = [
+                    item.get("code")
+                    for item in prs_result.get("allCodes", [])
+                    if item.get("code") and re.search(r"Z$", item.get("code"), re.I) and item.get("code") not in gp_code_set
+                ]
+                if prs_codes:
+                    with output_lock:
+                        existing = next((r for r in fetch_results if r["email"] == email), None)
+                        if existing:
+                            existing["codes"].extend(prs_codes)
+                        all_codes.extend(prs_codes)
+                        for c in prs_codes:
+                            gp_code_set.add(c)
+                        prs_found_total[0] += len(prs_codes)
+                    print(f"  [{idx+1}/{len(parsed)}] {email} -> +{len(prs_codes)} new codes")
+                else:
+                    print(f"  [{idx+1}/{len(parsed)}] {email} -> no additional codes")
+            except Exception:
+                print(f"  [{idx+1}/{len(parsed)}] {email} -> recheck failed")
+
+    workers = [threading.Thread(target=recheck_worker, daemon=True) for _ in range(threads)]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join()
+
+    print()
+    print(f"  Phase 2 complete: {prs_found_total[0]} additional codes found")
 
     if (stop_event and stop_event.is_set()) or not all_codes:
         return {"fetch_results": fetch_results, "validate_results": []}
 
+    # ── Phase 3: Validate using WLIDs ──
     wlids = load_wlids()
     if not wlids:
         print("\n  No WLIDs found. Save WLIDs to wlids.json first.")
