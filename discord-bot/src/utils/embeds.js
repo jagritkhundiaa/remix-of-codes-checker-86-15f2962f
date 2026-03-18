@@ -1058,7 +1058,7 @@ function inboxAioResultsEmbed({ total, hits, fails, locked, twoFA, elapsed, serv
   if (svcFields.length > 0) {
     for (const f of svcFields) embed.addFields(f);
   } else {
-    embed.addFields({ name: "┃ Services", value: "No services detected.", inline: false });
+    embed.addFields({ name: "Services", value: "No services detected.", inline: false });
   }
 
   if (dmSent) embed.addFields({ name: "\u200b", value: "Results sent to your DMs.", inline: false });
