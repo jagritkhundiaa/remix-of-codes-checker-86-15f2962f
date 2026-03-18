@@ -1139,8 +1139,8 @@ function prsResultsEmbed({ total, hits, valid, failed, twoFA, codesFound, catego
   // Category breakdown
   if (categoryBreakdown && Object.keys(categoryBreakdown).length > 0) {
     const sorted = Object.entries(categoryBreakdown).sort((a, b) => b[1] - a[1]);
-    const catLines = sorted.map(([cat, count]) => `◈ **${cat}**: ${count} codes`);
-    embed.addFields({ name: "┃ Categories", value: catLines.join("\n"), inline: false });
+    const catLines = sorted.map(([cat, count]) => `> **${cat}**: ${count} codes`);
+    embed.addFields({ name: "Categories", value: catLines.join("\n"), inline: false });
   }
 
   if (dmSent) embed.addFields({ name: "\u200b", value: "Results sent to your DMs.", inline: false });
