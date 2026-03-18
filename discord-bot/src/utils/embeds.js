@@ -580,14 +580,13 @@ function authListEmbed(entries) {
 // Section groupings for the help dropdown
 const HELP_SECTIONS = {
   core: { label: "-- Core Tools --", categories: ["checker", "claimer", "puller"] },
-  account: { label: "-- Account Tools --", categories: ["inbox", "rewards", "recovery"] },
+  account: { label: "-- Account Tools --", categories: ["inbox", "rewards", "refund", "recovery"] },
   owner: { label: "-- Owner Only --", categories: ["purchaser", "changer", "admin"] },
 };
 
 const HELP_CATEGORIES = {
   checker: {
     label: "Checker",
-    emoji: "🔍",
     description: "Check codes against WLID tokens",
     section: "core",
     content: (p) => [
@@ -607,7 +606,6 @@ const HELP_CATEGORIES = {
   },
   claimer: {
     label: "Claimer",
-    emoji: "🔑",
     description: "Claim WLID tokens from accounts",
     section: "core",
     content: (p) => [
@@ -626,7 +624,6 @@ const HELP_CATEGORIES = {
   },
   puller: {
     label: "Puller",
-    emoji: "📥",
     description: "Fetch & validate Game Pass codes",
     section: "core",
     content: (p) => [
@@ -650,7 +647,6 @@ const HELP_CATEGORIES = {
   },
   rewards: {
     label: "Rewards",
-    emoji: "⭐",
     description: "Check Microsoft Rewards balances",
     section: "account",
     content: (p) => [
@@ -668,10 +664,27 @@ const HELP_CATEGORIES = {
       "  All results sent to your DMs.",
     ].join("\n"),
   },
-  // PRS removed from dropdown but kept functional internally
+  refund: {
+    label: "Refund",
+    description: "Check refund eligibility (14-day)",
+    section: "account",
+    content: (p) => [
+      "Refund Checker",
+      "========================================",
+      "",
+      "  Commands",
+      "  ----------------------------------------",
+      `  ${p}refund <email:pass> or attach .txt`,
+      "    Checks if purchases are within the",
+      "    14-day refund window.",
+      "",
+      "  Output",
+      "  ----------------------------------------",
+      "  All results sent to your DMs.",
+    ].join("\n"),
+  },
   purchaser: {
     label: "Purchaser",
-    emoji: "🛒",
     description: "Buy from Microsoft Store [Owner]",
     section: "owner",
     content: (p) => [
@@ -693,7 +706,6 @@ const HELP_CATEGORIES = {
   },
   changer: {
     label: "Changer",
-    emoji: "🔄",
     description: "Change passwords & check accounts [Owner]",
     section: "owner",
     content: (p) => [
@@ -715,7 +727,6 @@ const HELP_CATEGORIES = {
   },
   inbox: {
     label: "Inbox AIO",
-    emoji: "📬",
     description: "Scan inboxes for 50+ services",
     section: "account",
     content: (p) => [
@@ -740,7 +751,6 @@ const HELP_CATEGORIES = {
   },
   recovery: {
     label: "Recovery",
-    emoji: "🔧",
     description: "Recover accounts via ACSR",
     section: "account",
     content: (p) => [
@@ -762,7 +772,6 @@ const HELP_CATEGORIES = {
   },
   admin: {
     label: "Admin",
-    emoji: "⚙️",
     description: "Authorization, blacklist & settings [Owner]",
     section: "owner",
     content: (p) => [
