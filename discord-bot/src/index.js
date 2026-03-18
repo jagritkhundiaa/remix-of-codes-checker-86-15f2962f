@@ -706,7 +706,7 @@ async function handleRefund(respond, userId, accountsRaw, accountsFile, threads 
   }
 }
 
-
+async function handleAuth(respond, callerId, targetId, durationStr) {
   if (!isOwner(callerId)) return respond({ embeds: [errorEmbed("Only the bot owner can authorize users.")] });
 
   const ms = parseDuration(durationStr);
