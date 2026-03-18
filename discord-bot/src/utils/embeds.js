@@ -991,10 +991,10 @@ function buildServiceFields(serviceBreakdown, labelPrefix = "Services") {
   }
 
   return pages.map((page, idx) => {
-    const lines = page.map(([svc, count]) => `◈ **${svc}**: ${count}`);
+    const lines = page.map(([svc, count]) => `> **${svc}**: ${count}`);
     const title = pages.length > 1
-      ? `┃ ${labelPrefix} (${idx + 1})`
-      : `┃ ${labelPrefix}`;
+      ? `${labelPrefix} (${idx + 1})`
+      : `${labelPrefix}`;
     return { name: title, value: lines.join("\n"), inline: false };
   });
 }
