@@ -4,6 +4,7 @@
 //    1. Primary: WLID store checkout (buynow.production.store-web.dynamics.com)
 //    2. Fallback: Xbox Live OAuth -> XBL3.0 -> purchase.xboxlive.com
 //  Login reuses the exact same patterns as the Puller.
+//  Supports accepting an external session to avoid duplicate logins.
 // ============================================================
 
 const crypto = require("crypto");
@@ -44,7 +45,6 @@ function extractCookiesFromResponse(res, cookieJar) {
     const parts = c.split(";")[0].trim();
     if (parts.includes("=")) {
       const name = parts.split("=")[0];
-      // Deduplicate by cookie name
       const idx = cookieJar.findIndex(ck => ck.startsWith(name + "="));
       if (idx >= 0) cookieJar[idx] = parts;
       else cookieJar.push(parts);
@@ -128,6 +128,24 @@ async function sessionFetch(url, options, cookieJar) {
   throw new Error("Too many redirects");
 }
 
+// ── Helper: retry wrapper ───────────────────────────────────
+
+async function withRetry(fn, maxAttempts = 3) {
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const result = await fn(attempt);
+      return result;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < maxAttempts) {
+        await new Promise(r => setTimeout(r, 1500 * attempt));
+      }
+    }
+  }
+  throw lastErr;
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  FLOW 1: WLID Store Login (same dynamic extraction as Puller)
 // ═══════════════════════════════════════════════════════════════
@@ -149,7 +167,6 @@ async function loginToStore(email, password) {
     let ppft = "";
     let urlPost = "";
 
-    // Try sFTTag in page JS
     const sFTTagMatch = loginPage.match(/"sFTTag":"[^"]*value=\\"([^"\\]+)\\"/);
     if (sFTTagMatch) ppft = sFTTagMatch[1];
 
@@ -161,7 +178,6 @@ async function loginToStore(email, password) {
       try { ppft = loginPage.split('name="PPFT" id="i0327" value="')[1].split('"')[0]; } catch {}
     }
 
-    // Try urlPost
     const urlPostMatch = loginPage.match(/"urlPost":"([^"]+)"/);
     if (urlPostMatch) urlPost = urlPostMatch[1];
     if (!urlPost) {
@@ -223,13 +239,21 @@ async function loginToStore(email, password) {
       } catch {}
     }
 
-    // Step 4: Acquire store auth token
+    // Step 4: Warmup -- visit store pages to stabilize session
+    try {
+      await proxiedFetch("https://account.microsoft.com/billing/redeem", {
+        headers: { ...DEFAULT_HEADERS, Cookie: getCookieString(cookieJar) },
+        redirect: "manual",
+      });
+    } catch {}
+
     try {
       await proxiedFetch("https://buynowui.production.store-web.dynamics.com/akam/13/79883e11", {
         headers: { ...DEFAULT_HEADERS, Cookie: getCookieString(cookieJar) },
       });
     } catch {}
 
+    // Step 5: Acquire store auth token
     const tokenResponse = await proxiedFetch(
       "https://account.microsoft.com/auth/acquire-onbehalf-of-token?scopes=MSComServiceMBISSL",
       {
@@ -286,12 +310,10 @@ async function loginXboxLive(email, password) {
   try {
     console.log(`[PURCHASER] XBL3.0 fallback login for ${email}`);
 
-    // Step 1: Get login form
     const { text: formText } = await sessionFetch(SFTTAG_URL, {
       headers: { "User-Agent": UA },
     }, cookieJar);
 
-    // Extract PPFT and urlPost dynamically
     let sFTTag = "";
     let urlPost = "";
 
@@ -316,7 +338,6 @@ async function loginXboxLive(email, password) {
       return null;
     }
 
-    // Step 2: Submit credentials
     const { text: loginText, finalUrl } = await sessionFetch(urlPost, {
       method: "POST",
       headers: {
@@ -349,7 +370,7 @@ async function loginXboxLive(email, password) {
       return null;
     }
 
-    // Step 3: XBL User Token
+    // XBL User Token
     const xblRes = await proxiedFetch("https://user.auth.xboxlive.com/user/authenticate", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-xbl-contract-version": "1" },
@@ -378,7 +399,7 @@ async function loginXboxLive(email, password) {
       return null;
     }
 
-    // Step 4: XSTS Token
+    // XSTS Token
     const xstsRes = await proxiedFetch("https://xsts.auth.xboxlive.com/xsts/authorize", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-xbl-contract-version": "1" },
@@ -423,6 +444,46 @@ async function loginXboxLive(email, password) {
   }
 }
 
+// ── Session validation ──────────────────────────────────────
+
+async function validateSession(session) {
+  if (!session) return false;
+  if (session.method === "wlid") {
+    if (!session.token || !session.cookieJar) return false;
+    // Quick check: try token endpoint
+    try {
+      const cookieStr = getCookieString(session.cookieJar);
+      const res = await proxiedFetch(
+        "https://account.microsoft.com/auth/acquire-onbehalf-of-token?scopes=MSComServiceMBISSL",
+        {
+          headers: {
+            ...TOKEN_HEADERS,
+            "User-Agent": UA,
+            Referer: "https://account.microsoft.com/billing/redeem",
+            Cookie: cookieStr,
+          },
+        }
+      );
+      if (res.status === 200) {
+        const data = await res.json();
+        if (data && Array.isArray(data) && data[0]?.token) {
+          // Refresh token
+          session.token = data[0].token;
+          return true;
+        }
+      }
+      try { await res.text(); } catch {}
+      return false;
+    } catch {
+      return false;
+    }
+  }
+  if (session.method === "xbl") {
+    return !!session.xblAuth;
+  }
+  return false;
+}
+
 // ── Product Search & Details ─────────────────────────────────
 
 async function searchProducts(query, market = "US", language = "en-US") {
@@ -438,12 +499,15 @@ async function searchProducts(query, market = "US", language = "en-US") {
       const results = [];
       for (const family of data.ResultSets || []) {
         for (const suggest of family.Suggests || []) {
-          results.push({
-            title: suggest.Title,
-            productId: suggest.ProductId || suggest.Metas?.find(m => m.Key === "BigCatId")?.Value,
-            type: suggest.Type || family.Type,
-            imageUrl: suggest.ImageUrl,
-          });
+          const pid = suggest.ProductId || suggest.Metas?.find(m => m.Key === "BigCatId")?.Value || "";
+          if (pid) {
+            results.push({
+              title: suggest.Title || "Unknown",
+              productId: pid,
+              type: suggest.Type || family.Type || "",
+              imageUrl: suggest.ImageUrl || "",
+            });
+          }
         }
       }
       if (results.length > 0) return results;
@@ -461,8 +525,9 @@ async function searchProducts(query, market = "US", language = "en-US") {
       for (const product of searchData.Products || []) {
         const title = product.LocalizedProperties?.[0]?.ProductTitle || "Unknown";
         const productId = product.ProductId;
-        const type = product.ProductType || "Unknown";
-        results.push({ title, productId, type });
+        if (productId) {
+          results.push({ title, productId, type: product.ProductType || "Unknown" });
+        }
       }
       return results;
     }
@@ -519,7 +584,7 @@ async function getProductDetails(productId, market = "US", language = "en-US") {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  WLID Purchase Flow (Store Checkout)
+//  WLID Purchase Flow (Store Checkout) -- with retry
 // ═══════════════════════════════════════════════════════════════
 
 function generateReferenceId() {
@@ -595,131 +660,186 @@ async function getStoreCartState(session) {
   }
 }
 
+// Select best payment instrument: balance > storedValue > valid card
+function selectPaymentInstrument(paymentInstruments) {
+  if (!paymentInstruments || paymentInstruments.length === 0) return null;
+
+  // Priority 1: account balance
+  const balance = paymentInstruments.find(pi =>
+    pi.type === "balance" || pi.paymentMethodFamily === "balance"
+  );
+  if (balance) return balance;
+
+  // Priority 2: stored value
+  const storedValue = paymentInstruments.find(pi =>
+    pi.type === "storedValue" || pi.paymentMethodFamily === "storedValue"
+  );
+  if (storedValue) return storedValue;
+
+  // Priority 3: first valid payment method (skip expired/invalid)
+  const validMethods = paymentInstruments.filter(pi => {
+    if (pi.isExpired === true) return false;
+    if (pi.isInvalid === true) return false;
+    if (pi.isDisabled === true) return false;
+    return true;
+  });
+
+  return validMethods.length > 0 ? validMethods[0] : paymentInstruments[0];
+}
+
 async function purchaseViaWlid(session, productId, skuId, availabilityId, storeState) {
+  const cookieStr = Array.isArray(session.cookieJar)
+    ? getCookieString(session.cookieJar)
+    : session.cookieJar || "";
+
+  const basePurchaseHeaders = {
+    host: "buynow.production.store-web.dynamics.com",
+    connection: "keep-alive",
+    "x-ms-tracking-id": storeState.tracking_id,
+    authorization: `WLID1.0=t=${session.token}`,
+    "x-ms-client-type": "MicrosoftCom",
+    "x-ms-market": "US",
+    "ms-cv": storeState.ms_cv,
+    "x-ms-vector-id": storeState.vector_id,
+    "user-agent": UA,
+    "x-ms-correlation-id": storeState.correlation_id,
+    "content-type": "application/json",
+    "x-authorization-muid": storeState.muid,
+    accept: "*/*",
+    Cookie: cookieStr,
+  };
+
+  // Step 1: Add to cart (with retry)
+  console.log(`[PURCHASER] Adding to cart: ${productId} / ${skuId}`);
+  let addData;
   try {
-    const cookieStr = Array.isArray(session.cookieJar)
-      ? getCookieString(session.cookieJar)
-      : session.cookieJar || "";
+    addData = await withRetry(async (attempt) => {
+      const headers = { ...basePurchaseHeaders, "x-ms-reference-id": generateReferenceId() };
+      const res = await proxiedFetch(
+        "https://buynow.production.store-web.dynamics.com/v1.0/Cart/AddToCart",
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ productId, skuId, availabilityId, quantity: 1 }),
+        }
+      );
 
-    const referenceId = generateReferenceId();
-
-    const purchaseHeaders = {
-      host: "buynow.production.store-web.dynamics.com",
-      connection: "keep-alive",
-      "x-ms-tracking-id": storeState.tracking_id,
-      authorization: `WLID1.0=t=${session.token}`,
-      "x-ms-client-type": "MicrosoftCom",
-      "x-ms-market": "US",
-      "ms-cv": storeState.ms_cv,
-      "x-ms-reference-id": referenceId,
-      "x-ms-vector-id": storeState.vector_id,
-      "user-agent": UA,
-      "x-ms-correlation-id": storeState.correlation_id,
-      "content-type": "application/json",
-      "x-authorization-muid": storeState.muid,
-      accept: "*/*",
-      Cookie: cookieStr,
-    };
-
-    // Step 1: Add to cart
-    console.log(`[PURCHASER] Adding to cart: ${productId} / ${skuId}`);
-    const addToCartRes = await proxiedFetch(
-      "https://buynow.production.store-web.dynamics.com/v1.0/Cart/AddToCart",
-      {
-        method: "POST",
-        headers: purchaseHeaders,
-        body: JSON.stringify({ productId, skuId, availabilityId, quantity: 1 }),
+      if (res.status === 429) throw new Error("RATE_LIMITED");
+      let data;
+      try { data = await res.json(); } catch {
+        throw new Error(`AddToCart HTTP ${res.status}`);
       }
-    );
 
-    if (addToCartRes.status === 429) return { success: false, error: "Rate limited" };
-
-    let addData;
-    try { addData = await addToCartRes.json(); } catch {
-      return { success: false, error: `AddToCart HTTP ${addToCartRes.status}` };
-    }
-
-    if (addData.events?.cart?.[0]?.type === "error") {
-      const reason = addData.events.cart[0].data?.reason || "Cart error";
-      if (reason === "AlreadyOwned") return { success: false, error: "Already owned" };
-      if (reason === "NotAvailableInMarket") return { success: false, error: "Region restricted" };
-      return { success: false, error: reason };
-    }
-
-    // Step 2: Prepare purchase
-    console.log(`[PURCHASER] Preparing purchase for ${session.email}`);
-    const prepareRes = await proxiedFetch(
-      "https://buynow.production.store-web.dynamics.com/v1.0/Purchase/PreparePurchase",
-      {
-        method: "POST",
-        headers: { ...purchaseHeaders, "x-ms-reference-id": generateReferenceId() },
-        body: JSON.stringify({}),
+      const cartErr = data.events?.cart?.[0];
+      if (cartErr?.type === "error") {
+        const reason = cartErr.data?.reason || "Cart error";
+        if (reason === "AlreadyOwned") return { __terminal: true, success: false, error: "ALREADY_OWNED" };
+        if (reason === "NotAvailableInMarket") return { __terminal: true, success: false, error: "REGION_RESTRICTED" };
+        if (attempt >= 3) return { __terminal: true, success: false, error: reason };
+        throw new Error(reason);
       }
-    );
-
-    if (prepareRes.status === 429) return { success: false, error: "Rate limited during prepare" };
-
-    let prepareData;
-    try { prepareData = await prepareRes.json(); } catch {
-      return { success: false, error: `PreparePurchase HTTP ${prepareRes.status}` };
-    }
-
-    const paymentInstruments = prepareData.paymentInstruments || [];
-    if (prepareData.events?.cart?.[0]?.type === "error") {
-      const reason = prepareData.events.cart[0].data?.reason || "Prepare error";
-      return { success: false, error: reason };
-    }
-
-    const total = prepareData.legalTextInfo?.orderTotal || prepareData.orderTotal || "N/A";
-
-    // Step 3: Complete purchase - prefer balance, then first payment method
-    const purchasePayload = {};
-    const balanceInstrument = paymentInstruments.find(pi =>
-      pi.type === "storedValue" || pi.type === "balance" || pi.paymentMethodFamily === "storedValue"
-    );
-
-    if (balanceInstrument) {
-      purchasePayload.paymentInstrumentId = balanceInstrument.id;
-      console.log(`[PURCHASER] Using balance for ${session.email}`);
-    } else if (paymentInstruments.length > 0) {
-      purchasePayload.paymentInstrumentId = paymentInstruments[0].id;
-      console.log(`[PURCHASER] Using payment method ${paymentInstruments[0].type || "unknown"} for ${session.email}`);
-    } else {
-      return { success: false, error: "No payment method available" };
-    }
-
-    console.log(`[PURCHASER] Completing purchase for ${session.email}`);
-    const completeRes = await proxiedFetch(
-      "https://buynow.production.store-web.dynamics.com/v1.0/Purchase/CompletePurchase",
-      {
-        method: "POST",
-        headers: { ...purchaseHeaders, "x-ms-reference-id": generateReferenceId() },
-        body: JSON.stringify(purchasePayload),
-      }
-    );
-
-    if (completeRes.status === 429) return { success: false, error: "Rate limited during purchase" };
-
-    let completeData;
-    try { completeData = await completeRes.json(); } catch {
-      return { success: false, error: `CompletePurchase HTTP ${completeRes.status}` };
-    }
-
-    if (completeData.events?.cart?.[0]?.type === "error") {
-      const reason = completeData.events.cart[0].data?.reason || "Purchase failed";
-      if (reason === "InsufficientFunds") return { success: false, error: "Insufficient balance" };
-      if (reason === "PaymentDeclined") return { success: false, error: "Payment declined" };
-      return { success: false, error: reason };
-    }
-
-    if (completeData.orderId || completeData.events?.purchase) {
-      return { success: true, orderId: completeData.orderId || "N/A", total: total, method: "WLID Store" };
-    }
-
-    return { success: true, orderId: "Completed", total: total, method: "WLID Store" };
+      return data;
+    }, 3);
   } catch (err) {
-    return { success: false, error: err.message };
+    return { success: false, error: err.message === "RATE_LIMITED" ? "RATE_LIMITED" : `AddToCart: ${err.message}` };
   }
+  if (addData?.__terminal) return addData;
+
+  // Step 2: Prepare purchase (with retry)
+  console.log(`[PURCHASER] Preparing purchase for ${session.email}`);
+  let prepareData;
+  try {
+    prepareData = await withRetry(async (attempt) => {
+      const headers = { ...basePurchaseHeaders, "x-ms-reference-id": generateReferenceId() };
+      const res = await proxiedFetch(
+        "https://buynow.production.store-web.dynamics.com/v1.0/Purchase/PreparePurchase",
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({}),
+        }
+      );
+
+      if (res.status === 429) throw new Error("RATE_LIMITED");
+      let data;
+      try { data = await res.json(); } catch {
+        throw new Error(`PreparePurchase HTTP ${res.status}`);
+      }
+
+      const prepErr = data.events?.cart?.[0];
+      if (prepErr?.type === "error") {
+        const reason = prepErr.data?.reason || "Prepare error";
+        if (attempt >= 3) return { __terminal: true, success: false, error: reason };
+        throw new Error(reason);
+      }
+      return data;
+    }, 3);
+  } catch (err) {
+    return { success: false, error: err.message === "RATE_LIMITED" ? "RATE_LIMITED" : `Prepare: ${err.message}` };
+  }
+  if (prepareData?.__terminal) return prepareData;
+
+  const paymentInstruments = prepareData.paymentInstruments || [];
+  const total = prepareData.legalTextInfo?.orderTotal || prepareData.orderTotal || "N/A";
+
+  // Step 3: Select best payment method
+  const selectedPI = selectPaymentInstrument(paymentInstruments);
+  if (!selectedPI) {
+    return { success: false, error: "INSUFFICIENT_BALANCE" };
+  }
+
+  console.log(`[PURCHASER] Using payment: ${selectedPI.type || selectedPI.paymentMethodFamily || "unknown"} for ${session.email}`);
+
+  // Step 4: Complete purchase (with retry, careful not to double-buy)
+  console.log(`[PURCHASER] Completing purchase for ${session.email}`);
+  let completeData;
+  try {
+    completeData = await withRetry(async (attempt) => {
+      const headers = { ...basePurchaseHeaders, "x-ms-reference-id": generateReferenceId() };
+      const res = await proxiedFetch(
+        "https://buynow.production.store-web.dynamics.com/v1.0/Purchase/CompletePurchase",
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ paymentInstrumentId: selectedPI.id }),
+        }
+      );
+
+      if (res.status === 429) throw new Error("RATE_LIMITED");
+      let data;
+      try { data = await res.json(); } catch {
+        throw new Error(`CompletePurchase HTTP ${res.status}`);
+      }
+
+      const compErr = data.events?.cart?.[0];
+      if (compErr?.type === "error") {
+        const reason = compErr.data?.reason || "Purchase failed";
+        if (reason === "InsufficientFunds") return { __terminal: true, success: false, error: "INSUFFICIENT_BALANCE" };
+        if (reason === "PaymentDeclined") return { __terminal: true, success: false, error: "PAYMENT_FAILED" };
+        if (reason === "AlreadyOwned") return { __terminal: true, success: false, error: "ALREADY_OWNED" };
+        // Don't retry purchase errors that could cause double-charge
+        return { __terminal: true, success: false, error: reason };
+      }
+
+      // Strict success validation: require orderId or explicit purchase event
+      if (data.orderId) {
+        return { success: true, orderId: data.orderId, total, method: "WLID Store" };
+      }
+      if (data.events?.purchase) {
+        return { success: true, orderId: "Completed", total, method: "WLID Store" };
+      }
+
+      // No clear success indicator -- treat as failure
+      if (attempt >= 2) {
+        return { __terminal: true, success: false, error: "No order confirmation received" };
+      }
+      throw new Error("Ambiguous response, retrying");
+    }, 2); // Only 2 attempts for complete to avoid double purchase
+  } catch (err) {
+    return { success: false, error: err.message === "RATE_LIMITED" ? "RATE_LIMITED" : `Complete: ${err.message}` };
+  }
+
+  return completeData;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -730,64 +850,80 @@ async function purchaseViaXbl(session, productId, skuId) {
   try {
     console.log(`[PURCHASER] XBL3.0 purchase attempt for ${session.email}`);
 
-    const purchaseRes = await proxiedFetch(
-      "https://purchase.xboxlive.com/v7.0/purchases",
-      {
-        method: "POST",
-        headers: {
-          Authorization: session.xblAuth,
-          "Content-Type": "application/json",
-          "x-xbl-contract-version": "1",
-          "User-Agent": UA,
-        },
-        body: JSON.stringify({
-          purchaseRequest: {
-            productId,
-            skuId,
-            quantity: 1,
+    const result = await withRetry(async (attempt) => {
+      const purchaseRes = await proxiedFetch(
+        "https://purchase.xboxlive.com/v7.0/purchases",
+        {
+          method: "POST",
+          headers: {
+            Authorization: session.xblAuth,
+            "Content-Type": "application/json",
+            "x-xbl-contract-version": "1",
+            "User-Agent": UA,
           },
-        }),
+          body: JSON.stringify({
+            purchaseRequest: {
+              productId,
+              skuId,
+              quantity: 1,
+            },
+          }),
+        }
+      );
+
+      const status = purchaseRes.status;
+
+      if (status >= 200 && status < 300) {
+        let resData = {};
+        try { resData = await purchaseRes.json(); } catch {}
+        if (resData.orderId) {
+          return { success: true, orderId: resData.orderId, total: "N/A", method: "XBL3.0" };
+        }
+        return { success: true, orderId: "XBL-Completed", total: "N/A", method: "XBL3.0" };
       }
-    );
 
-    const status = purchaseRes.status;
+      let errData = {};
+      try { errData = await purchaseRes.json(); } catch {}
 
-    if (status >= 200 && status < 300) {
-      let resData = {};
-      try { resData = await purchaseRes.json(); } catch {}
+      const code = errData.code || "";
+      const desc = errData.description || errData.message || "";
+
+      if (code === "AlreadyOwned" || desc.includes("already own")) {
+        return { __terminal: true, success: false, error: "ALREADY_OWNED", method: "XBL3.0" };
+      }
+      if (code === "InsufficientFunds") {
+        return { __terminal: true, success: false, error: "INSUFFICIENT_BALANCE", method: "XBL3.0" };
+      }
+
+      if (status === 429 || code === "TooManyRequests") {
+        throw new Error("RATE_LIMITED");
+      }
+
+      if (attempt >= 2) {
+        return { __terminal: true, success: false, error: `${code || status} - ${desc}`.trim(), method: "XBL3.0" };
+      }
+      throw new Error(`HTTP ${status}`);
+    }, 2);
+
+    if (result.__terminal) {
+      delete result.__terminal;
+      console.log(`[PURCHASER] XBL3.0 purchase FAILED for ${session.email}: ${result.error}`);
+    } else if (result.success) {
       console.log(`[PURCHASER] XBL3.0 purchase SUCCESS for ${session.email}`);
-      return {
-        success: true,
-        orderId: resData.orderId || "XBL-Completed",
-        total: "N/A",
-        method: "XBL3.0",
-      };
     }
-
-    let errMsg = `HTTP ${status}`;
-    try {
-      const errData = await purchaseRes.json();
-      if (errData.code === "AlreadyOwned" || errData.description?.includes("already own")) {
-        errMsg = "Already owned";
-      } else if (errData.code === "InsufficientFunds") {
-        errMsg = "Insufficient balance";
-      } else {
-        errMsg = `${errData.code || status} - ${errData.description || errData.message || ""}`.trim();
-      }
-    } catch {}
-
-    console.log(`[PURCHASER] XBL3.0 purchase FAILED for ${session.email}: ${errMsg}`);
-    return { success: false, error: errMsg, method: "XBL3.0" };
+    return result;
   } catch (err) {
     return { success: false, error: err.message, method: "XBL3.0" };
   }
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  Main Purchase Pipeline -- tries WLID first, then XBL3.0
+//  Main Purchase Pipeline
+//  Accepts optional externalSession to reuse an existing login.
+//  Falls back to its own login if session is invalid/expired.
 // ═══════════════════════════════════════════════════════════════
 
-async function purchaseItems(accounts, productId, skuId, availabilityId, onProgress, signal) {
+async function purchaseItems(accounts, productId, skuId, availabilityId, onProgress, signal, externalSession) {
   const parsed = accounts.map((a) => {
     const i = a.indexOf(":");
     return i === -1 ? { email: a, password: "" } : { email: a.substring(0, i), password: a.substring(i + 1) };
@@ -802,14 +938,27 @@ async function purchaseItems(accounts, productId, skuId, availabilityId, onProgr
 
     if (onProgress) onProgress("login", { email, done: i, total: parsed.length });
 
-    // Try WLID store login first
+    // Try to reuse external session if provided and matches this email
     let session = null;
     let purchaseResult = null;
 
-    try {
-      session = await loginToStore(email, password);
-    } catch (err) {
-      console.error(`[PURCHASER] Login error for ${email}: ${err.message}`);
+    if (externalSession && externalSession.email === email) {
+      const valid = await validateSession(externalSession);
+      if (valid) {
+        session = externalSession;
+        console.log(`[PURCHASER] Reusing external session for ${email}`);
+      } else {
+        console.log(`[PURCHASER] External session expired for ${email}, re-logging in`);
+      }
+    }
+
+    // Login if no valid session
+    if (!session) {
+      try {
+        session = await loginToStore(email, password);
+      } catch (err) {
+        console.error(`[PURCHASER] Login error for ${email}: ${err.message}`);
+      }
     }
 
     if (session) {
@@ -826,9 +975,10 @@ async function purchaseItems(accounts, productId, skuId, availabilityId, onProgr
       console.log(`[PURCHASER] WLID login failed for ${email}, trying XBL3.0 fallback...`);
     }
 
-    // Fallback to XBL3.0 if WLID failed
+    // Fallback to XBL3.0 only if WLID did not succeed
     if (!purchaseResult || !purchaseResult.success) {
-      const wlidError = purchaseResult?.error || "WLID flow failed";
+      // Don't override terminal errors like ALREADY_OWNED
+      const wlidError = purchaseResult?.error || "SESSION_INVALID";
 
       let xblSession = null;
       try {
@@ -845,7 +995,7 @@ async function purchaseItems(accounts, productId, skuId, availabilityId, onProgr
           purchaseResult.error = `WLID: ${wlidError} | XBL: ${purchaseResult.error}`;
         }
       } else {
-        purchaseResult = { success: false, error: `WLID: ${wlidError} | XBL: Login failed` };
+        purchaseResult = { success: false, error: `WLID: ${wlidError} | XBL: LOGIN_FAILED` };
       }
     }
 
@@ -865,10 +1015,12 @@ async function purchaseItems(accounts, productId, skuId, availabilityId, onProgr
 module.exports = {
   loginToStore,
   loginXboxLive,
+  validateSession,
   searchProducts,
   getProductDetails,
   purchaseItems,
   getStoreCartState,
   purchaseViaWlid,
   purchaseViaXbl,
+  selectPaymentInstrument,
 };

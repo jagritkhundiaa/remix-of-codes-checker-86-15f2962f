@@ -4,6 +4,7 @@ Uses the SAME login flow as ms_puller.py.
 Two purchase flows:
   1. WLID Store Checkout (primary)
   2. XBL3.0 Xbox Live API (fallback)
+Supports accepting an external session to avoid duplicate logins.
 """
 import re
 import uuid
@@ -68,6 +69,21 @@ def _extract_ppft_urlpost(page_text):
     return ppft, url_post
 
 
+# ── Retry helper ──────────────────────────────────────────────
+
+def _with_retry(fn, max_attempts=3):
+    last_err = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            result = fn(attempt)
+            return result
+        except Exception as ex:
+            last_err = ex
+            if attempt < max_attempts:
+                time.sleep(1.5 * attempt)
+    raise last_err
+
+
 # ═══════════════════════════════════════════════════════════════
 #  WLID Store Login (same flow as Puller)
 # ═══════════════════════════════════════════════════════════════
@@ -102,9 +118,9 @@ def login_to_store(email, password):
 
         cleaned = r.text.replace("\\", "")
         if "sErrTxt" in cleaned or "account or password is incorrect" in cleaned:
-            return None, "Bad credentials"
+            return None, "LOGIN_FAILED"
         if "identity/confirm" in cleaned or "Abuse" in cleaned:
-            return None, "Account locked/MFA"
+            return None, "LOGIN_FAILED"
 
         # Follow redirect chain
         reurl_m = re.search(r'replace\("([^"]+)"', cleaned)
@@ -117,12 +133,18 @@ def login_to_store(email, password):
                 cs.post(action_m.group(1), data=form_data,
                         headers={"Content-Type": "application/x-www-form-urlencoded"})
 
-        # Acquire store auth token
+        # Warmup: visit store pages to stabilize session
+        try:
+            cs.get("https://account.microsoft.com/billing/redeem")
+        except Exception:
+            pass
+
         try:
             cs.get("https://buynowui.production.store-web.dynamics.com/akam/13/79883e11")
         except Exception:
             pass
 
+        # Acquire store auth token
         token_r = cs.session.get(
             "https://account.microsoft.com/auth/acquire-onbehalf-of-token?scopes=MSComServiceMBISSL",
             headers={
@@ -136,11 +158,11 @@ def login_to_store(email, password):
             timeout=20,
         )
         if token_r.status_code != 200:
-            return None, f"Token request HTTP {token_r.status_code}"
+            return None, f"SESSION_INVALID"
 
         token_data = token_r.json()
         if not token_data or not token_data[0].get("token"):
-            return None, "No token in response"
+            return None, "SESSION_INVALID"
 
         return {
             "method": "wlid",
@@ -151,6 +173,42 @@ def login_to_store(email, password):
 
     except Exception as ex:
         return None, str(ex)
+
+
+# ── Session validation ────────────────────────────────────────
+
+def validate_session(session):
+    """Check if an existing session is still valid. Returns (valid, refreshed_session)."""
+    if not session:
+        return False
+    if session.get("method") == "wlid":
+        cs = session.get("session")
+        if not cs or not session.get("token"):
+            return False
+        try:
+            r = cs.session.get(
+                "https://account.microsoft.com/auth/acquire-onbehalf-of-token?scopes=MSComServiceMBISSL",
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Cache-Control": "no-cache",
+                    "Pragma": "no-cache",
+                    "Referer": "https://account.microsoft.com/billing/redeem",
+                },
+                timeout=15,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                if data and data[0].get("token"):
+                    session["token"] = data[0]["token"]
+                    return True
+        except Exception:
+            pass
+        return False
+    if session.get("method") == "xbl":
+        return bool(session.get("xbl_auth"))
+    return False
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -174,7 +232,7 @@ def login_xbox_live(email, password):
         r = s.get(XBOX_OAUTH_URL, allow_redirects=True, timeout=15)
         ppft, url_post = _extract_ppft_urlpost(r.text)
         if not ppft or not url_post:
-            return None, "Failed to extract PPFT/urlPost"
+            return None, "LOGIN_FAILED"
 
         r = s.post(url_post, data={
             "login": email, "loginfmt": email,
@@ -192,7 +250,7 @@ def login_xbox_live(email, password):
             access_token = params.get("access_token", [""])[0]
 
         if not access_token:
-            return None, "Login failed (bad creds or MFA)"
+            return None, "LOGIN_FAILED"
 
         # XBL User Token
         xbl_r = requests.post("https://user.auth.xboxlive.com/user/authenticate",
@@ -206,7 +264,7 @@ def login_xbox_live(email, password):
                                   },
                               }, timeout=15)
         if xbl_r.status_code != 200:
-            return None, f"XBL user token failed ({xbl_r.status_code})"
+            return None, f"LOGIN_FAILED"
 
         user_token = xbl_r.json()["Token"]
 
@@ -221,7 +279,7 @@ def login_xbox_live(email, password):
                                    },
                                }, timeout=15)
         if xsts_r.status_code != 200:
-            return None, f"XSTS failed ({xsts_r.status_code})"
+            return None, f"LOGIN_FAILED"
 
         xsts_data = xsts_r.json()
         uhs = xsts_data.get("DisplayClaims", {}).get("xui", [{}])[0].get("uhs", "")
@@ -259,11 +317,12 @@ def search_products(query, market="US"):
                             if meta.get("Key") == "BigCatId":
                                 pid = meta.get("Value", "")
                                 break
-                    results.append({
-                        "title": suggest.get("Title", "Unknown"),
-                        "productId": pid,
-                        "type": suggest.get("Type") or family.get("Type", ""),
-                    })
+                    if pid:
+                        results.append({
+                            "title": suggest.get("Title", "Unknown"),
+                            "productId": pid,
+                            "type": suggest.get("Type") or family.get("Type", ""),
+                        })
             if results:
                 return results
 
@@ -283,6 +342,7 @@ def search_products(query, market="US"):
                     "type": p.get("ProductType", ""),
                 }
                 for p in data2.get("Products", [])
+                if p.get("ProductId")
             ]
         return []
     except Exception:
@@ -343,7 +403,32 @@ def _generate_reference_id():
     return "".join(result)
 
 
-# ── WLID Purchase ────────────────────────────────────────────
+# ── Payment instrument selection ─────────────────────────────
+
+def _select_payment_instrument(instruments):
+    if not instruments:
+        return None
+
+    # Priority 1: balance
+    for pi in instruments:
+        if pi.get("type") in ("balance",) or pi.get("paymentMethodFamily") == "balance":
+            return pi
+
+    # Priority 2: stored value
+    for pi in instruments:
+        if pi.get("type") in ("storedValue",) or pi.get("paymentMethodFamily") == "storedValue":
+            return pi
+
+    # Priority 3: first valid (skip expired/invalid)
+    for pi in instruments:
+        if pi.get("isExpired") or pi.get("isInvalid") or pi.get("isDisabled"):
+            continue
+        return pi
+
+    return instruments[0] if instruments else None
+
+
+# ── WLID Purchase (with retry) ───────────────────────────────
 
 def _get_store_cart_state(wlid_session):
     try:
@@ -382,122 +467,184 @@ def _get_store_cart_state(wlid_session):
 
 
 def _purchase_via_wlid(wlid_session, product_id, sku_id, availability_id, store_state):
+    cs = wlid_session["session"]
+    token = wlid_session["token"]
+
+    hdrs = {
+        "x-ms-tracking-id": store_state["tracking_id"],
+        "authorization": f"WLID1.0=t={token}",
+        "x-ms-client-type": "MicrosoftCom",
+        "x-ms-market": "US",
+        "ms-cv": store_state["ms_cv"],
+        "x-ms-vector-id": store_state["vector_id"],
+        "x-ms-correlation-id": store_state["correlation_id"],
+        "content-type": "application/json",
+        "x-authorization-muid": store_state["muid"],
+        "accept": "*/*",
+    }
+
+    # Step 1: Add to cart (with retry)
     try:
-        cs = wlid_session["session"]
-        token = wlid_session["token"]
+        def add_to_cart(attempt):
+            hdrs["x-ms-reference-id"] = _generate_reference_id()
+            r = cs.session.post(
+                "https://buynow.production.store-web.dynamics.com/v1.0/Cart/AddToCart",
+                headers=hdrs,
+                json={"productId": product_id, "skuId": sku_id,
+                      "availabilityId": availability_id, "quantity": 1},
+                timeout=20,
+            )
+            if r.status_code == 429:
+                raise Exception("RATE_LIMITED")
+            data = r.json()
+            cart_err = (data.get("events", {}).get("cart") or [{}])[0]
+            if cart_err.get("type") == "error":
+                reason = (cart_err.get("data") or {}).get("reason", "Cart error")
+                if reason == "AlreadyOwned":
+                    return {"__terminal": True, "success": False, "error": "ALREADY_OWNED"}
+                if reason == "NotAvailableInMarket":
+                    return {"__terminal": True, "success": False, "error": "REGION_RESTRICTED"}
+                if attempt >= 3:
+                    return {"__terminal": True, "success": False, "error": reason}
+                raise Exception(reason)
+            return data
 
-        hdrs = {
-            "x-ms-tracking-id": store_state["tracking_id"],
-            "authorization": f"WLID1.0=t={token}",
-            "x-ms-client-type": "MicrosoftCom",
-            "x-ms-market": "US",
-            "ms-cv": store_state["ms_cv"],
-            "x-ms-reference-id": _generate_reference_id(),
-            "x-ms-vector-id": store_state["vector_id"],
-            "x-ms-correlation-id": store_state["correlation_id"],
-            "content-type": "application/json",
-            "x-authorization-muid": store_state["muid"],
-            "accept": "*/*",
-        }
-
-        # Add to cart
-        r = cs.session.post(
-            "https://buynow.production.store-web.dynamics.com/v1.0/Cart/AddToCart",
-            headers=hdrs,
-            json={"productId": product_id, "skuId": sku_id,
-                  "availabilityId": availability_id, "quantity": 1},
-            timeout=20,
-        )
-        if r.status_code == 429:
-            return {"success": False, "error": "Rate limited"}
-        data = r.json()
-        cart_err = (data.get("events", {}).get("cart") or [{}])[0]
-        if cart_err.get("type") == "error":
-            reason = (cart_err.get("data") or {}).get("reason", "Cart error")
-            return {"success": False, "error": reason}
-
-        # Prepare purchase
-        hdrs["x-ms-reference-id"] = _generate_reference_id()
-        r = cs.session.post(
-            "https://buynow.production.store-web.dynamics.com/v1.0/Purchase/PreparePurchase",
-            headers=hdrs, json={}, timeout=20,
-        )
-        if r.status_code == 429:
-            return {"success": False, "error": "Rate limited during prepare"}
-        prep = r.json()
-        prep_err = (prep.get("events", {}).get("cart") or [{}])[0]
-        if prep_err.get("type") == "error":
-            return {"success": False, "error": (prep_err.get("data") or {}).get("reason", "Prepare error")}
-
-        pis = prep.get("paymentInstruments", [])
-        total = prep.get("legalTextInfo", {}).get("orderTotal") or prep.get("orderTotal", "N/A")
-
-        # Select payment method
-        purchase_payload = {}
-        balance = next((pi for pi in pis if pi.get("type") in ("storedValue", "balance")), None)
-        if balance:
-            purchase_payload["paymentInstrumentId"] = balance["id"]
-        elif pis:
-            purchase_payload["paymentInstrumentId"] = pis[0]["id"]
-        else:
-            return {"success": False, "error": "No payment method available"}
-
-        # Complete purchase
-        hdrs["x-ms-reference-id"] = _generate_reference_id()
-        r = cs.session.post(
-            "https://buynow.production.store-web.dynamics.com/v1.0/Purchase/CompletePurchase",
-            headers=hdrs, json=purchase_payload, timeout=20,
-        )
-        if r.status_code == 429:
-            return {"success": False, "error": "Rate limited during purchase"}
-        comp = r.json()
-        comp_err = (comp.get("events", {}).get("cart") or [{}])[0]
-        if comp_err.get("type") == "error":
-            return {"success": False, "error": (comp_err.get("data") or {}).get("reason", "Purchase failed")}
-
-        order_id = comp.get("orderId", "Completed")
-        return {"success": True, "orderId": order_id, "total": total, "method": "WLID Store"}
-
+        add_data = _with_retry(add_to_cart, 3)
     except Exception as ex:
-        return {"success": False, "error": str(ex)}
+        return {"success": False, "error": f"AddToCart: {ex}"}
+
+    if add_data.get("__terminal"):
+        return add_data
+
+    # Step 2: Prepare purchase (with retry)
+    try:
+        def prepare(attempt):
+            hdrs["x-ms-reference-id"] = _generate_reference_id()
+            r = cs.session.post(
+                "https://buynow.production.store-web.dynamics.com/v1.0/Purchase/PreparePurchase",
+                headers=hdrs, json={}, timeout=20,
+            )
+            if r.status_code == 429:
+                raise Exception("RATE_LIMITED")
+            data = r.json()
+            prep_err = (data.get("events", {}).get("cart") or [{}])[0]
+            if prep_err.get("type") == "error":
+                reason = (prep_err.get("data") or {}).get("reason", "Prepare error")
+                if attempt >= 3:
+                    return {"__terminal": True, "success": False, "error": reason}
+                raise Exception(reason)
+            return data
+
+        prep_data = _with_retry(prepare, 3)
+    except Exception as ex:
+        return {"success": False, "error": f"Prepare: {ex}"}
+
+    if prep_data.get("__terminal"):
+        return prep_data
+
+    pis = prep_data.get("paymentInstruments", [])
+    total = prep_data.get("legalTextInfo", {}).get("orderTotal") or prep_data.get("orderTotal", "N/A")
+
+    # Step 3: Select best payment method
+    selected_pi = _select_payment_instrument(pis)
+    if not selected_pi:
+        return {"success": False, "error": "INSUFFICIENT_BALANCE"}
+
+    # Step 4: Complete purchase (max 2 retries to avoid double-charge)
+    try:
+        def complete(attempt):
+            hdrs["x-ms-reference-id"] = _generate_reference_id()
+            r = cs.session.post(
+                "https://buynow.production.store-web.dynamics.com/v1.0/Purchase/CompletePurchase",
+                headers=hdrs, json={"paymentInstrumentId": selected_pi["id"]}, timeout=20,
+            )
+            if r.status_code == 429:
+                raise Exception("RATE_LIMITED")
+            data = r.json()
+            comp_err = (data.get("events", {}).get("cart") or [{}])[0]
+            if comp_err.get("type") == "error":
+                reason = (comp_err.get("data") or {}).get("reason", "Purchase failed")
+                if reason == "InsufficientFunds":
+                    return {"__terminal": True, "success": False, "error": "INSUFFICIENT_BALANCE"}
+                if reason == "PaymentDeclined":
+                    return {"__terminal": True, "success": False, "error": "PAYMENT_FAILED"}
+                if reason == "AlreadyOwned":
+                    return {"__terminal": True, "success": False, "error": "ALREADY_OWNED"}
+                return {"__terminal": True, "success": False, "error": reason}
+
+            # Strict success: require orderId or purchase event
+            order_id = data.get("orderId")
+            if order_id:
+                return {"success": True, "orderId": order_id, "total": total, "method": "WLID Store"}
+            if data.get("events", {}).get("purchase"):
+                return {"success": True, "orderId": "Completed", "total": total, "method": "WLID Store"}
+
+            if attempt >= 2:
+                return {"__terminal": True, "success": False, "error": "No order confirmation received"}
+            raise Exception("Ambiguous response")
+
+        comp_data = _with_retry(complete, 2)
+    except Exception as ex:
+        return {"success": False, "error": f"Complete: {ex}"}
+
+    return comp_data
 
 
-# ── XBL3.0 Purchase ──────────────────────────────────────────
+# ── XBL3.0 Purchase (with retry) ─────────────────────────────
 
 def _purchase_via_xbl(xbl_session, product_id, sku_id):
     try:
-        r = requests.post(
-            "https://purchase.xboxlive.com/v7.0/purchases",
-            headers={
-                "Authorization": xbl_session["xbl_auth"],
-                "Content-Type": "application/json",
-                "x-xbl-contract-version": "1",
-                "User-Agent": UA,
-            },
-            json={"purchaseRequest": {"productId": product_id, "skuId": sku_id, "quantity": 1}},
-            timeout=15,
-        )
-        if 200 <= r.status_code < 300:
-            data = r.json() if r.text else {}
-            return {"success": True, "orderId": data.get("orderId", "XBL-Completed"),
-                    "total": "N/A", "method": "XBL3.0"}
+        def attempt_purchase(attempt):
+            r = requests.post(
+                "https://purchase.xboxlive.com/v7.0/purchases",
+                headers={
+                    "Authorization": xbl_session["xbl_auth"],
+                    "Content-Type": "application/json",
+                    "x-xbl-contract-version": "1",
+                    "User-Agent": UA,
+                },
+                json={"purchaseRequest": {"productId": product_id, "skuId": sku_id, "quantity": 1}},
+                timeout=15,
+            )
+            if 200 <= r.status_code < 300:
+                data = r.json() if r.text else {}
+                order_id = data.get("orderId", "XBL-Completed")
+                return {"success": True, "orderId": order_id, "total": "N/A", "method": "XBL3.0"}
 
-        err_msg = f"HTTP {r.status_code}"
-        try:
-            err_data = r.json()
-            err_msg = f"{err_data.get('code', r.status_code)} - {err_data.get('description', '')}".strip()
-        except Exception:
-            pass
-        return {"success": False, "error": err_msg, "method": "XBL3.0"}
+            err_data = {}
+            try:
+                err_data = r.json()
+            except Exception:
+                pass
+
+            code = err_data.get("code", "")
+            desc = err_data.get("description", err_data.get("message", ""))
+
+            if code == "AlreadyOwned" or "already own" in desc:
+                return {"__terminal": True, "success": False, "error": "ALREADY_OWNED", "method": "XBL3.0"}
+            if code == "InsufficientFunds":
+                return {"__terminal": True, "success": False, "error": "INSUFFICIENT_BALANCE", "method": "XBL3.0"}
+            if r.status_code == 429:
+                raise Exception("RATE_LIMITED")
+
+            if attempt >= 2:
+                return {"__terminal": True, "success": False,
+                        "error": f"{code or r.status_code} - {desc}".strip(), "method": "XBL3.0"}
+            raise Exception(f"HTTP {r.status_code}")
+
+        result = _with_retry(attempt_purchase, 2)
+        return result
     except Exception as ex:
         return {"success": False, "error": str(ex), "method": "XBL3.0"}
 
 
 # ═══════════════════════════════════════════════════════════════
 #  Main Pipeline
+#  Accepts optional external_session to reuse an existing login.
 # ═══════════════════════════════════════════════════════════════
 
-def purchase_items(accounts, product_id, sku_id, availability_id, on_progress=None, stop_event=None):
+def purchase_items(accounts, product_id, sku_id, availability_id,
+                   on_progress=None, stop_event=None, external_session=None):
     """Purchase a product using multiple accounts. WLID first, XBL3.0 fallback."""
     parsed = []
     for a in accounts:
@@ -516,9 +663,19 @@ def purchase_items(accounts, product_id, sku_id, availability_id, on_progress=No
         if on_progress:
             on_progress("login", {"email": email, "done": idx, "total": len(parsed)})
 
-        # Try WLID first
-        session, err = login_to_store(email, password)
+        # Try to reuse external session if provided and matches this email
+        session = None
         purchase_result = None
+
+        if external_session and external_session.get("email") == email:
+            if validate_session(external_session):
+                session = external_session
+            else:
+                session = None  # Will fall through to login
+
+        # Login if no valid session
+        if not session:
+            session, err = login_to_store(email, password)
 
         if session:
             if on_progress:
@@ -532,7 +689,7 @@ def purchase_items(accounts, product_id, sku_id, availability_id, on_progress=No
 
         # Fallback to XBL3.0
         if not purchase_result or not purchase_result.get("success"):
-            wlid_error = (purchase_result or {}).get("error", err or "WLID flow failed")
+            wlid_error = (purchase_result or {}).get("error", "SESSION_INVALID")
 
             xbl_session, xbl_err = login_xbox_live(email, password)
             if xbl_session:
@@ -542,7 +699,11 @@ def purchase_items(accounts, product_id, sku_id, availability_id, on_progress=No
                 if not purchase_result.get("success"):
                     purchase_result["error"] = f"WLID: {wlid_error} | XBL: {purchase_result['error']}"
             else:
-                purchase_result = {"success": False, "error": f"WLID: {wlid_error} | XBL: {xbl_err or 'Login failed'}"}
+                purchase_result = {"success": False, "error": f"WLID: {wlid_error} | XBL: LOGIN_FAILED"}
+
+        # Clean up terminal marker
+        if purchase_result and "__terminal" in purchase_result:
+            del purchase_result["__terminal"]
 
         results.append({"email": email, **purchase_result})
 
@@ -617,10 +778,10 @@ if __name__ == "__main__":
     print(f"\n[INFO] Fetching product details for: {product_id}")
     product = get_product_details(product_id)
     if not product:
-        print("[ERROR] Product not found")
+        print("[ERROR] Product not found -- PRODUCT_INVALID")
         sys.exit(1)
     if not product.get("skus"):
-        print("[ERROR] No purchasable SKUs found")
+        print("[ERROR] No purchasable SKUs found -- PRODUCT_INVALID")
         sys.exit(1)
 
     sku = product["skus"][0]
