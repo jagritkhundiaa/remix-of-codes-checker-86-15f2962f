@@ -149,6 +149,7 @@ GATE_PROBE_MAP = {
     "auth": {"name": "Stripe Auth (Dilaboards)", "cmd": "/chkapiauth"},
     "st1": {"name": "HiAPI Check3", "cmd": "/chkapist1"},
     "st5": {"name": "HiAPI Check", "cmd": "/chkapist5"},
+    "autosho": {"name": "Shopify Auto", "cmd": "/chkapiautosho"},
 }
 
 
