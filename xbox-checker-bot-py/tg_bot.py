@@ -118,6 +118,89 @@ def update_gate_stats(gate, results):
 
 
 # ============================================================
+#  Gate status — enable/disable gates persistently
+# ============================================================
+def load_gate_status():
+    return _load_json(GATE_STATUS_FILE, {})
+
+def save_gate_status(data):
+    _save_json(GATE_STATUS_FILE, data)
+
+def is_gate_enabled(gate_key):
+    status = load_gate_status()
+    entry = status.get(gate_key, {})
+    return entry.get("enabled", True)
+
+def set_gate_enabled(gate_key, enabled, by_user=None):
+    status = load_gate_status()
+    status[gate_key] = {
+        "enabled": enabled,
+        "updated_at": time.time(),
+        "updated_by": by_user,
+    }
+    save_gate_status(status)
+
+
+# ============================================================
+#  Gate health probes — lightweight ping to check if API alive
+# ============================================================
+GATE_PROBE_MAP = {
+    "auth": {"name": "Stripe Auth (Dilaboards)", "cmd": "/chkapiauth"},
+    "auth2": {"name": "Stripe Auth (Stormx)", "cmd": "/chkapiauth2"},
+    "stc": {"name": "PayStation Auth (NZ)", "cmd": "/chkapistc"},
+    "st1": {"name": "HiAPI Check3", "cmd": "/chkapist1"},
+    "st5": {"name": "HiAPI Check", "cmd": "/chkapist5"},
+    "charge": {"name": "Stripe Charge $1-3", "cmd": "/chkapicharge"},
+}
+
+
+def probe_gate(gate_key):
+    """Probe a gate's underlying API. Returns (alive: bool, latency_ms: int, detail: str)."""
+    start = time.time()
+    try:
+        if gate_key == "auth":
+            resp = requests.get('https://dilaboards.com/en/moj-racun/add-payment-method/',
+                                headers={'User-Agent': _rand_ua()}, timeout=10, allow_redirects=True)
+            alive = resp.status_code == 200 and 'stripe' in resp.text.lower()
+            detail = f"HTTP {resp.status_code}" + (" | Stripe key found" if alive else " | No Stripe key")
+        elif gate_key == "auth2":
+            resp = requests.get('https://stripe.stormx.pw/', headers={'User-Agent': _rand_ua()}, timeout=10)
+            alive = resp.status_code == 200
+            detail = f"HTTP {resp.status_code}"
+        elif gate_key == "stc":
+            resp = requests.get('https://www.cancer.org.nz/', headers={'User-Agent': _rand_ua()}, timeout=10)
+            alive = resp.status_code == 200
+            detail = f"HTTP {resp.status_code}"
+        elif gate_key in ("st1", "st5"):
+            resp = requests.get('https://ck.hiapi.club/', headers={'User-Agent': _rand_ua()}, timeout=10)
+            alive = resp.status_code in (200, 403)
+            detail = f"HTTP {resp.status_code}"
+        elif gate_key == "charge":
+            for merchant in STRIPE_MERCHANTS:
+                try:
+                    resp = requests.get(merchant['url'], headers={'User-Agent': _rand_ua()}, timeout=8, allow_redirects=True)
+                    pk_match = re.search(r'pk_(?:live|test)_[A-Za-z0-9]+', resp.text)
+                    if pk_match:
+                        latency = int((time.time() - start) * 1000)
+                        return True, latency, f"OK via {merchant['name']} | Stripe key found"
+                except Exception:
+                    continue
+            latency = int((time.time() - start) * 1000)
+            return False, latency, "All merchants unreachable"
+        else:
+            return False, 0, "Unknown gate"
+
+        latency = int((time.time() - start) * 1000)
+        return alive, latency, detail
+    except requests.exceptions.Timeout:
+        return False, int((time.time() - start) * 1000), "Timeout"
+    except requests.exceptions.ConnectionError:
+        return False, int((time.time() - start) * 1000), "Connection refused"
+    except Exception as e:
+        return False, int((time.time() - start) * 1000), str(e)[:60]
+
+
+# ============================================================
 #  Duration parsing (for time-limited keys)
 # ============================================================
 DURATION_MAP = {
