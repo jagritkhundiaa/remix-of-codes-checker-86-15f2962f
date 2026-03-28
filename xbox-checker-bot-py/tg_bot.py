@@ -1038,6 +1038,7 @@ def fmt_start(is_adm=False):
         "  /bin        — Set BIN filter\n"
         "  /clearbin   — Clear BIN filter\n"
         "  /cancel     — Stop active task\n"
+        "  /gates      — List all gates & hit rates\n"
         "  /stats      — Your lifetime stats\n"
         "  /mykey      — Check your key info\n"
         "  /proxies    — Upload proxy file\n"
