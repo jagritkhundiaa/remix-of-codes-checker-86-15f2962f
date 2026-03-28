@@ -1535,17 +1535,7 @@ def handle_update(update):
         send_message(chat_id, f"<b>Lookup</b>\n\nComing soon.{FOOTER}")
         return
 
-    # --- Gate commands (coming soon / disabled) ---
-    if text in ("/nonvbv", "/auth2", "/stc", "/charge"):
-        gate_names = {
-            "/nonvbv": "Braintree Non-VBV",
-            "/auth2": "Stripe Auth (Stormx)",
-            "/stc": "Stripe Auth (Alt)",
-            "/charge": "Stripe Charge",
-        }
-        name = gate_names[text]
-        send_message(chat_id, f"<b>{name}</b>\n\nComing soon.{FOOTER}")
-        return
+    # (dead gates removed — no coming soon handler needed)
 
     # --- /adminkey <user_id> <duration> (owner only) ---
     if text.startswith("/adminkey"):
