@@ -1,0 +1,5 @@
+# Shopify sites for /autosho gate
+# Add one site per line (domain or full URL)
+# Example:
+# example-store.myshopify.com
+# www.someshop.com
