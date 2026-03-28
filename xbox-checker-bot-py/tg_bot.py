@@ -619,7 +619,7 @@ def fmt_start(is_adm=False):
     base += (
         "<b>How to use:</b>\n"
         "  1. Send a .txt file\n"
-        "  2. Reply to the file with /auth\n"
+        "  2. Reply to the file with /auth or /auth2\n"
         "  3. Wait for results\n"
         f"{FOOTER}"
     )
