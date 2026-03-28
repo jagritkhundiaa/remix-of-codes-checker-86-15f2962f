@@ -160,31 +160,10 @@ def probe_gate(gate_key):
                                 headers={'User-Agent': _rand_ua()}, timeout=10, allow_redirects=True)
             alive = resp.status_code == 200 and 'stripe' in resp.text.lower()
             detail = f"HTTP {resp.status_code}" + (" | Stripe key found" if alive else " | No Stripe key")
-        elif gate_key == "auth2":
-            resp = requests.get('https://stripe.stormx.pw/', headers={'User-Agent': _rand_ua()}, timeout=10)
-            alive = resp.status_code == 200
-            detail = f"HTTP {resp.status_code}"
-        elif gate_key == "stc":
-            resp = requests.get('https://flavorboutique.com/my-account/', headers={'User-Agent': _rand_ua()}, timeout=10, allow_redirects=True)
-            has_stripe = 'stripe' in resp.text.lower() or 'pk_live' in resp.text or 'pk_test' in resp.text
-            alive = resp.status_code == 200 and has_stripe
-            detail = f"HTTP {resp.status_code}" + (" | Stripe found" if has_stripe else " | No Stripe")
         elif gate_key in ("st1", "st5"):
             resp = requests.get('https://ck.hiapi.club/', headers={'User-Agent': _rand_ua()}, timeout=10)
             alive = resp.status_code in (200, 403)
             detail = f"HTTP {resp.status_code}"
-        elif gate_key == "charge":
-            for merchant in STRIPE_MERCHANTS:
-                try:
-                    resp = requests.get(merchant['url'], headers={'User-Agent': _rand_ua()}, timeout=8, allow_redirects=True)
-                    pk_match = re.search(r'pk_(?:live|test)_[A-Za-z0-9]+', resp.text)
-                    if pk_match:
-                        latency = int((time.time() - start) * 1000)
-                        return True, latency, f"OK via {merchant['name']} | Stripe key found"
-                except Exception:
-                    continue
-            latency = int((time.time() - start) * 1000)
-            return False, latency, "All merchants unreachable"
         else:
             return False, 0, "Unknown gate"
 
