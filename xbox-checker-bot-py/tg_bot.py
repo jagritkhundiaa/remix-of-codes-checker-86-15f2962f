@@ -1461,10 +1461,10 @@ def handle_update(update):
         send_message(chat_id, f"<b>Access Granted</b>\n\nDuration: <code>{dur_label}</code>\nLine Limit: <code>{limit_label}</code>\nWelcome aboard.{FOOTER}")
         return
 
-    # --- /auth and /auth2 (gate commands) ---
-    if text in ("/auth", "/auth2"):
-        gate = "auth2" if text == "/auth2" else "auth"
-        gate_label = "Stripe Auth (Stormx)" if gate == "auth2" else "Stripe Auth (Dilaboards)"
+    # --- /auth, /auth2, /stc (gate commands) ---
+    if text in ("/auth", "/auth2", "/stc"):
+        gate_map = {"/auth": ("auth", "Stripe Auth (Dilaboards)"), "/auth2": ("auth2", "Stripe Auth (Stormx)"), "/stc": ("stc", "PayStation Auth (NZ)")}
+        gate, gate_label = gate_map[text]
 
         if not is_authorized(user_id):
             send_message(chat_id, fmt_unauthorized())
