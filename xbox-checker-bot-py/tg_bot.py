@@ -530,8 +530,8 @@ def run_processing(lines, user_id, on_progress=None, on_complete=None, threads=D
 FOOTER = f"\n{'─' * 28}\n  Made by {DEVELOPER}"
 
 
-def fmt_start():
-    return (
+def fmt_start(is_adm=False):
+    base = (
         "<b>Data Processing Bot</b>\n"
         f"{'─' * 28}\n\n"
         "Upload a <b>.txt</b> file, then reply to it with <b>/run</b>\n\n"
@@ -546,18 +546,33 @@ def fmt_start():
         "  /mykey      — Check your key info\n"
         "  /proxies    — Upload proxy file\n"
         "  /lookup     — Lookup (coming soon)\n\n"
-        "<b>Admin:</b>\n"
-        "  /genkey     — Generate single key\n"
-        "  /genkeys    — Bulk generate keys\n"
-        "  /authlist   — List authorized users\n"
-        "  /revoke     — Revoke user access\n"
-        "  /broadcast  — Message all users\n\n"
+        "<b>Gates (Admin):</b>\n"
+        "  /stripeccn  — Stripe Auth CCN (coming soon)\n"
+        "  /stripecvv  — Stripe Auth CVV (coming soon)\n"
+        "  /nonvbv     — Braintree Non-VBV (coming soon)\n"
+        "  /charge     — Stripe Checkout $3 (coming soon)\n\n"
+    )
+
+    if is_adm:
+        base += (
+            "<b>Admin:</b>\n"
+            "  /genkey     — Generate single key\n"
+            "  /genkeys    — Bulk generate keys\n"
+            "  /adminkey   — Promote user to admin\n"
+            "  /adminlist  — List all admins\n"
+            "  /authlist   — List authorized users\n"
+            "  /revoke     — Revoke user access\n"
+            "  /broadcast  — Message all users\n\n"
+        )
+
+    base += (
         "<b>How to use:</b>\n"
         "  1. Send a .txt file\n"
         "  2. Reply to the file with /run\n"
         "  3. Wait for results\n"
         f"{FOOTER}"
     )
+    return base
 
 
 def fmt_unauthorized():
