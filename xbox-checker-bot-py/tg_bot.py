@@ -385,7 +385,13 @@ def run_automated_process(card_num, card_cvv, card_yy, card_mm, proxies=None):
             'guid': guid, 'muid': muid, 'sid': sid, 'key': pk,
             '_stripe_version': '2024-06-20',
         }
-        response_3 = auto_request(url_3, method='POST', headers={'User-Agent': user_ag}, data=data_3, proxies=proxies)
+        stripe_headers = {
+            'User-Agent': user_ag,
+            'Origin': 'https://js.stripe.com',
+            'Referer': 'https://js.stripe.com/',
+            'Content-Type': 'application/x-www-form-urlencoded',
+        }
+        response_3 = auto_request(url_3, method='POST', headers=stripe_headers, data=data_3, proxies=proxies)
 
         if response_3.status_code != 200: return f"Stripe Error: {extract_message(response_3)}"
         pm = response_3.json().get('id')
