@@ -1154,16 +1154,10 @@ def process_single_entry(entry, proxies_list, user_id, gate="auth"):
                 if not any(c_num.startswith(b) for b in user_bin_list):
                     return "SKIPPED | BIN not allowed"
 
-            if gate == "stc":
-                result = check_cc_stc(c_num, c_mm, c_yy, c_cvv, proxy_dict)
-            elif gate == "auth2":
-                result = check_cc_auth2(c_num, c_mm, c_yy, c_cvv, proxy_dict)
-            elif gate == "st1":
+            if gate == "st1":
                 result = check_cc_hiapi(c_num, c_mm, c_yy, c_cvv, "check3", proxy_dict)
             elif gate == "st5":
                 result = check_cc_hiapi(c_num, c_mm, c_yy, c_cvv, "check", proxy_dict)
-            elif gate == "charge":
-                result = check_cc_charge(c_num, c_mm, c_yy, c_cvv, proxy_dict)
             else:
                 result = run_automated_process(c_num, c_cvv, c_yy, c_mm, proxy_dict)
         else:
