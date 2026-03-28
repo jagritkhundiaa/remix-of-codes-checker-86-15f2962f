@@ -419,6 +419,86 @@ def format_proxy(proxy_str):
     return None
 
 
+# ============================================================
+#  Proxy validation & connectivity testing
+# ============================================================
+PROXY_FORMAT_RE = re.compile(
+    r'^(?:(?:https?|socks[45]h?):\/\/)?'           # optional protocol
+    r'(?:([^:@]+):([^:@]+)@)?'                      # optional user:pass@
+    r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|[\w.\-]+)'  # host/IP
+    r':(\d{1,5})$'                                  # :port
+)
+
+PROXY_FORMAT_4PART_RE = re.compile(
+    r'^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d{1,5}):([^:]+):([^:]+)$'  # ip:port:user:pass
+)
+
+
+def validate_proxy_format(raw):
+    """Validate proxy format. Returns normalized proxy string or None."""
+    line = raw.strip()
+    if not line:
+        return None
+
+    # Try protocol://[user:pass@]host:port or host:port
+    m = PROXY_FORMAT_RE.match(line)
+    if m:
+        host, port_str = m.group(3), m.group(4)
+        port = int(port_str)
+        if port < 1 or port > 65535:
+            return None
+        # Validate IP octets if it looks like an IP
+        if re.match(r'^\d+\.\d+\.\d+\.\d+$', host):
+            octets = host.split('.')
+            if any(int(o) > 255 for o in octets):
+                return None
+        return line
+
+    # Try ip:port:user:pass format
+    m2 = PROXY_FORMAT_4PART_RE.match(line)
+    if m2:
+        host, port_str = m2.group(1), m2.group(2)
+        port = int(port_str)
+        if port < 1 or port > 65535:
+            return None
+        octets = host.split('.')
+        if any(int(o) > 255 for o in octets):
+            return None
+        return line
+
+    return None
+
+
+def test_proxy_connectivity(proxy_str):
+    """Test proxy connectivity. Returns (ok, latency_ms, reason)."""
+    proxy_dict = format_proxy(proxy_str)
+    if not proxy_dict:
+        # Try as-is with protocol prefix
+        if '://' in proxy_str:
+            proxy_dict = {"http": proxy_str, "https": proxy_str}
+        else:
+            proxy_dict = {"http": f"http://{proxy_str}", "https": f"http://{proxy_str}"}
+
+    test_url = "http://httpbin.org/ip"
+    start = time.time()
+    try:
+        resp = requests.get(test_url, proxies=proxy_dict, timeout=10)
+        latency = round((time.time() - start) * 1000)
+        if resp.status_code == 200:
+            return True, latency, None
+        return False, latency, f"HTTP {resp.status_code}"
+    except requests.exceptions.ProxyError:
+        return False, 0, "Proxy connection refused"
+    except requests.exceptions.ConnectTimeout:
+        return False, 0, "Connection timeout (10s)"
+    except requests.exceptions.ReadTimeout:
+        return False, 0, "Read timeout (10s)"
+    except requests.exceptions.ConnectionError as e:
+        return False, 0, f"Connection error"
+    except Exception as e:
+        return False, 0, f"Error: {str(e)[:50]}"
+
+
 def check_cc_auth2(cc_number, month, year, cvv, proxies=None):
     """Auth2 gate — uses stripe.stormx.pw autostripe endpoint."""
     start_time = time.time()
@@ -907,8 +987,11 @@ def handle_update(update):
             send_message(chat_id,
                 "<b>Upload Proxies</b>\n\n"
                 "Reply to a <b>.txt</b> proxy file with /proxies\n\n"
-                "• <b>Admins</b> — sets global proxies for all users\n"
-                "• <b>Users</b> — adds personal proxies (used alongside global)" + FOOTER)
+                "• Max <b>30</b> proxies per batch\n"
+                "• Each proxy is validated &amp; connectivity tested\n"
+                "• Only working proxies are added\n\n"
+                "• <b>Admins</b> — sets global proxies\n"
+                "• <b>Users</b> — adds personal proxies" + FOOTER)
             return
         doc = reply["document"]
         fname = doc.get("file_name", "")
@@ -922,19 +1005,82 @@ def handle_update(update):
         if not content:
             send_message(chat_id, "<b>Failed to download file.</b>" + FOOTER)
             return
-        proxies = [l.strip() for l in content.splitlines() if l.strip()]
+        raw_proxies = [l.strip() for l in content.splitlines() if l.strip() and not l.strip().startswith("#")]
 
+        MAX_BATCH = 30
+        if len(raw_proxies) > MAX_BATCH:
+            send_message(chat_id,
+                f"<b>Batch Too Large</b>\n\n"
+                f"You submitted <code>{len(raw_proxies)}</code> proxies.\n"
+                f"Maximum allowed per batch: <code>{MAX_BATCH}</code>\n\n"
+                f"Please split your list and try again." + FOOTER)
+            return
+
+        # Send processing message
+        prog_msg = send_message(chat_id, f"<b>Validating {len(raw_proxies)} proxies...</b>\n\nPlease wait." + FOOTER)
+        prog_msg_id = prog_msg.get("result", {}).get("message_id")
+
+        valid_proxies = []
+        errors = []
+
+        for raw in raw_proxies:
+            # --- Format validation ---
+            parsed = validate_proxy_format(raw)
+            if parsed is None:
+                errors.append({"proxy": raw, "reason": "Invalid format"})
+                continue
+
+            # --- Connectivity test ---
+            ok, latency, reason = test_proxy_connectivity(parsed)
+            if not ok:
+                errors.append({"proxy": raw, "reason": reason})
+                continue
+
+            valid_proxies.append(raw)
+
+        submitted = len(raw_proxies)
+        accepted = len(valid_proxies)
+        rejected = len(errors)
+
+        # Build result report
+        report = (
+            f"<b>Proxy Ingestion Report</b>\n"
+            f"{'─' * 28}\n\n"
+            f"Submitted: <code>{submitted}</code>\n"
+            f"Accepted: <code>{accepted}</code>\n"
+            f"Rejected: <code>{rejected}</code>\n"
+        )
+
+        if errors:
+            report += f"\n<b>Errors:</b>\n"
+            for e in errors[:15]:
+                p = e['proxy'][:40]
+                report += f"  <code>{p}</code> — {e['reason']}\n"
+            if len(errors) > 15:
+                report += f"  ... and {len(errors) - 15} more\n"
+
+        report += FOOTER
+
+        if accepted == 0:
+            if prog_msg_id:
+                edit_message(chat_id, prog_msg_id, report)
+            else:
+                send_message(chat_id, report)
+            return
+
+        # Save valid proxies
         if is_admin(user_id):
-            # Admin uploads go to global proxies
             with open(PROXIES_FILE, "w") as f:
-                f.write("\n".join(proxies))
-            send_message(chat_id, f"<b>Global Proxies Loaded</b>\n\n<code>{len(proxies)}</code> proxies saved for all users." + FOOTER)
+                f.write("\n".join(valid_proxies))
         else:
-            # Regular users get personal proxies
             user_proxy_file = os.path.join(USER_PROXIES_DIR, f"{user_id}.txt")
             with open(user_proxy_file, "w") as f:
-                f.write("\n".join(proxies))
-            send_message(chat_id, f"<b>Personal Proxies Loaded</b>\n\n<code>{len(proxies)}</code> proxies saved for your sessions." + FOOTER)
+                f.write("\n".join(valid_proxies))
+
+        if prog_msg_id:
+            edit_message(chat_id, prog_msg_id, report)
+        else:
+            send_message(chat_id, report)
         return
 
     # --- /genkey (admin) — /genkey <limit> <duration> ---
