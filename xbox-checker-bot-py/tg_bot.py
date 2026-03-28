@@ -36,6 +36,7 @@ ADMINS_FILE = os.path.join(DATA_DIR, "tg_admins.json")
 GATE_STATS_FILE = os.path.join(DATA_DIR, "tg_gate_stats.json")
 GATE_STATUS_FILE = os.path.join(DATA_DIR, "tg_gate_status.json")
 PROXIES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proxies.txt")
+SITES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sites.txt")
 USER_PROXIES_DIR = os.path.join(DATA_DIR, "user_proxies")
 
 os.makedirs(DATA_DIR, exist_ok=True)
