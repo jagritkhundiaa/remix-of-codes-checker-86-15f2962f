@@ -540,24 +540,36 @@ def test_proxy_connectivity(proxy_str):
         else:
             proxy_dict = {"http": f"http://{proxy_str}", "https": f"http://{proxy_str}"}
 
-    test_url = "http://httpbin.org/ip"
+    # Test with HTTPS to catch tunnel failures (real requests use HTTPS)
+    test_urls = [
+        "https://httpbin.org/ip",
+        "https://www.microsoft.com",
+    ]
     start = time.time()
-    try:
-        resp = requests.get(test_url, proxies=proxy_dict, timeout=10)
-        latency = round((time.time() - start) * 1000)
-        if resp.status_code == 200:
-            return True, latency, None
-        return False, latency, f"HTTP {resp.status_code}"
-    except requests.exceptions.ProxyError:
-        return False, 0, "Proxy connection refused"
-    except requests.exceptions.ConnectTimeout:
-        return False, 0, "Connection timeout (10s)"
-    except requests.exceptions.ReadTimeout:
-        return False, 0, "Read timeout (10s)"
-    except requests.exceptions.ConnectionError as e:
-        return False, 0, f"Connection error"
-    except Exception as e:
-        return False, 0, f"Error: {str(e)[:50]}"
+    last_error = ""
+    for test_url in test_urls:
+        try:
+            resp = requests.get(test_url, proxies=proxy_dict, timeout=10, allow_redirects=True)
+            latency = round((time.time() - start) * 1000)
+            if resp.status_code < 500:
+                return True, latency, None
+            last_error = f"HTTP {resp.status_code}"
+        except requests.exceptions.ProxyError as e:
+            last_error = f"Proxy tunnel failed (HTTPS not supported or auth rejected)"
+            continue
+        except requests.exceptions.ConnectTimeout:
+            last_error = "Connection timeout (10s)"
+            continue
+        except requests.exceptions.ReadTimeout:
+            last_error = "Read timeout (10s)"
+            continue
+        except requests.exceptions.ConnectionError:
+            last_error = "Connection error"
+            continue
+        except Exception as e:
+            last_error = f"Error: {str(e)[:80]}"
+            continue
+    return False, 0, last_error
 
 
 def check_cc_auth2(cc_number, month, year, cvv, proxies=None):
