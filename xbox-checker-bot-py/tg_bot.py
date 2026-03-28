@@ -168,9 +168,10 @@ def probe_gate(gate_key):
             alive = resp.status_code == 200
             detail = f"HTTP {resp.status_code}"
         elif gate_key == "stc":
-            resp = requests.get('https://www.cancer.org.nz/', headers={'User-Agent': _rand_ua()}, timeout=10)
-            alive = resp.status_code == 200
-            detail = f"HTTP {resp.status_code}"
+            resp = requests.get('https://flavorboutique.com/my-account/', headers={'User-Agent': _rand_ua()}, timeout=10, allow_redirects=True)
+            has_stripe = 'stripe' in resp.text.lower() or 'pk_live' in resp.text or 'pk_test' in resp.text
+            alive = resp.status_code == 200 and has_stripe
+            detail = f"HTTP {resp.status_code}" + (" | Stripe found" if has_stripe else " | No Stripe")
         elif gate_key in ("st1", "st5"):
             resp = requests.get('https://ck.hiapi.club/', headers={'User-Agent': _rand_ua()}, timeout=10)
             alive = resp.status_code in (200, 403)
