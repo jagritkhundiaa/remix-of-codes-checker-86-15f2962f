@@ -1278,7 +1278,7 @@ def fmt_start(is_adm=False):
         "<b>Gates:</b>\n"
         "  /auth       — Stripe Auth (Dilaboards)\n"
         "  /auth2      — Stripe Auth (Stormx)\n"
-        "  /stc        — PayStation Auth (NZ)\n"
+        "  /stc        — Stripe Auth (Alt)\n"
         "  /st1        — HiAPI Check3\n"
         "  /st5        — HiAPI Check\n"
         "  /charge     — Stripe Charge $1-3\n"
