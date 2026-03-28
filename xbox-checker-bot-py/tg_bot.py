@@ -1296,18 +1296,14 @@ def fmt_start(is_adm=False):
             "  /broadcast  — Message all users\n"
             "  /chkapis    — Health check all APIs\n"
             "  /chkapiauth — Check auth gate\n"
-            "  /chkapiauth2— Check auth2 gate\n"
-            "  /chkapistc  — Check stc gate\n"
             "  /chkapist1  — Check st1 gate\n"
-            "  /chkapist5  — Check st5 gate\n"
-            "  /chkapicharge— Check charge gate\n\n"
+            "  /chkapist5  — Check st5 gate\n\n"
         )
 
     base += (
         "<b>How to use:</b>\n"
-        "  1. Send a .txt file\n"
-        "  2. Reply to the file with a gate (/auth, /st1, /st5, etc.)\n"
-        "  3. Wait for results\n"
+        "  <b>Single:</b> <code>/auth 4111...|01|25|123</code>\n"
+        "  <b>Bulk:</b> Send .txt → reply with /auth\n"
         f"{FOOTER}"
     )
     return base
