@@ -410,12 +410,31 @@ def run_automated_process(card_num, card_cvv, card_yy, card_mm, proxies=None):
 
 def format_proxy(proxy_str):
     if not proxy_str: return None
+    proxy_str = proxy_str.strip()
+
+    # Already has protocol
+    if '://' in proxy_str:
+        return {"http": proxy_str, "https": proxy_str}
+
+    # user:pass@host:port
+    if '@' in proxy_str:
+        return {"http": f"http://{proxy_str}", "https": f"http://{proxy_str}"}
+
     parts = proxy_str.split(':')
     if len(parts) == 2:
         return {"http": f"http://{proxy_str}", "https": f"http://{proxy_str}"}
+    elif len(parts) == 3:
+        # host:port:user (no password)
+        host, port, user = parts
+        return {"http": f"http://{user}@{host}:{port}", "https": f"http://{user}@{host}:{port}"}
     elif len(parts) == 4:
-        ip, port, user, pwd = parts
-        return {"http": f"http://{user}:{pwd}@{ip}:{port}", "https": f"http://{user}:{pwd}@{ip}:{port}"}
+        # host:port:user:pass or user:pass:host:port
+        if _is_valid_port(parts[1]):
+            ip, port, user, pwd = parts
+            return {"http": f"http://{user}:{pwd}@{ip}:{port}", "https": f"http://{user}:{pwd}@{ip}:{port}"}
+        elif _is_valid_port(parts[3]):
+            user, pwd, ip, port = parts
+            return {"http": f"http://{user}:{pwd}@{ip}:{port}", "https": f"http://{user}:{pwd}@{ip}:{port}"}
     return None
 
 
