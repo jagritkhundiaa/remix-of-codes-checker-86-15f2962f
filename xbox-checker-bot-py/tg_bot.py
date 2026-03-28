@@ -1277,11 +1277,11 @@ def fmt_start(is_adm=False):
         "Upload a <b>.txt</b> file, then reply to it with a gate command\n\n"
         "<b>Gates:</b>\n"
         "  /auth       — Stripe Auth (Dilaboards)\n"
-        "  /auth2      — Stripe Auth (Stormx)\n"
-        "  /stc        — Stripe Auth (Alt)\n"
         "  /st1        — HiAPI Check3\n"
         "  /st5        — HiAPI Check\n"
-        "  /charge     — Stripe Charge $1-3\n"
+        "  /auth2      — Stripe Auth (coming soon)\n"
+        "  /stc        — Stripe Auth Alt (coming soon)\n"
+        "  /charge     — Stripe Charge (coming soon)\n"
         "  /nonvbv     — Braintree Non-VBV (coming soon)\n\n"
         "<b>Commands:</b>\n"
         "  /bin        — Set BIN filter\n"
@@ -1552,10 +1552,13 @@ def handle_update(update):
         send_message(chat_id, f"<b>Lookup</b>\n\nComing soon.{FOOTER}")
         return
 
-    # --- Gate commands (coming soon) ---
-    if text in ("/nonvbv",):
+    # --- Gate commands (coming soon / disabled) ---
+    if text in ("/nonvbv", "/auth2", "/stc", "/charge"):
         gate_names = {
             "/nonvbv": "Braintree Non-VBV",
+            "/auth2": "Stripe Auth (Stormx)",
+            "/stc": "Stripe Auth (Alt)",
+            "/charge": "Stripe Charge",
         }
         name = gate_names[text]
         send_message(chat_id, f"<b>{name}</b>\n\nComing soon.{FOOTER}")
@@ -1710,11 +1713,11 @@ def handle_update(update):
     if text == "/gates":
         GATE_REGISTRY = [
             ("auth", "/auth", "Stripe Auth (Dilaboards)", True),
-            ("auth2", "/auth2", "Stripe Auth (Stormx)", True),
-            ("stc", "/stc", "Stripe Auth (Alt)", True),
             ("st1", "/st1", "HiAPI Check3", True),
             ("st5", "/st5", "HiAPI Check", True),
-            ("charge", "/charge", "Stripe Charge $1-3", True),
+            ("auth2", "/auth2", "Stripe Auth (Stormx)", False),
+            ("stc", "/stc", "Stripe Auth (Alt)", False),
+            ("charge", "/charge", "Stripe Charge", False),
             ("nonvbv", "/nonvbv", "Braintree Non-VBV", False),
         ]
         gs = load_gate_stats()
@@ -2076,8 +2079,8 @@ def handle_update(update):
         return
 
     # --- /auth, /auth2, /stc (gate commands) ---
-    if text in ("/auth", "/auth2", "/stc", "/st1", "/st5", "/charge"):
-        gate_map = {"/auth": ("auth", "Stripe Auth (Dilaboards)"), "/auth2": ("auth2", "Stripe Auth (Stormx)"), "/stc": ("stc", "Stripe Auth (Alt)"), "/st1": ("st1", "HiAPI Check3"), "/st5": ("st5", "HiAPI Check"), "/charge": ("charge", "Stripe Charge $1-3")}
+    if text in ("/auth", "/st1", "/st5"):
+        gate_map = {"/auth": ("auth", "Stripe Auth (Dilaboards)"), "/st1": ("st1", "HiAPI Check3"), "/st5": ("st5", "HiAPI Check")}
         gate, gate_label = gate_map[text]
 
         # Check if gate is disabled
