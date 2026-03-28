@@ -2047,10 +2047,11 @@ def handle_update(update):
         send_message(chat_id, f"<b>Access Granted</b>\n\nDuration: <code>{dur_label}</code>\nLine Limit: <code>{limit_label}</code>\nWelcome aboard.{FOOTER}")
         return
 
-    # --- /auth, /auth2, /stc (gate commands) ---
-    if text in ("/auth", "/st1", "/st5"):
-        gate_map = {"/auth": ("auth", "Stripe Auth (Dilaboards)"), "/st1": ("st1", "HiAPI Check3"), "/st5": ("st5", "HiAPI Check")}
-        gate, gate_label = gate_map[text]
+    # --- Gate commands: /auth, /st1, /st5 (single card OR bulk file) ---
+    gate_map = {"/auth": ("auth", "Stripe Auth (Dilaboards)"), "/st1": ("st1", "HiAPI Check3"), "/st5": ("st5", "HiAPI Check")}
+    cmd_base = text.split()[0] if text else ""
+    if cmd_base in gate_map:
+        gate, gate_label = gate_map[cmd_base]
 
         # Check if gate is disabled
         if not is_gate_enabled(gate):
@@ -2064,9 +2065,51 @@ def handle_update(update):
             send_message(chat_id, fmt_unauthorized())
             return
 
+        # --- SINGLE CARD MODE: /auth 4111...|01|25|123 ---
+        parts = text.split(maxsplit=1)
+        if len(parts) == 2 and '|' in parts[1]:
+            cc_input = parts[1].strip()
+            c_data = cc_input.split('|')
+            if len(c_data) != 4:
+                send_message(chat_id, "<b>Invalid format.</b>\n\nUse: <code>/auth CC|MM|YY|CVV</code>" + FOOTER)
+                return
+
+            send_message(chat_id, f"<b>🔍 Checking...</b>\n<code>{cc_input}</code>")
+
+            def _single_check():
+                result = process_single_entry(cc_input, [], user_id, gate=gate)
+                r_lower = result.lower()
+                if r_lower.startswith("approved") or r_lower.startswith("charged"):
+                    icon = "✅"
+                    status = "APPROVED"
+                elif "skipped" in r_lower:
+                    icon = "⏭️"
+                    status = "SKIPPED"
+                elif "error" in r_lower or "⚠️" in result:
+                    icon = "⚠️"
+                    status = "ERROR"
+                else:
+                    icon = "❌"
+                    status = "DECLINED"
+
+                send_message(chat_id,
+                    f"<b>{icon} {status}</b>\n"
+                    f"{'─' * 28}\n\n"
+                    f"Card: <code>{cc_input}</code>\n"
+                    f"Gate: <code>{gate_label}</code>\n"
+                    f"Result: {result}"
+                    + FOOTER)
+
+            threading.Thread(target=_single_check, daemon=True).start()
+            return
+
+        # --- BULK MODE: reply to .txt file ---
         reply = msg.get("reply_to_message")
         if not reply or not reply.get("document"):
-            send_message(chat_id, f"<b>Reply to a .txt file with {text}</b>" + FOOTER)
+            send_message(chat_id,
+                f"<b>Usage:</b>\n"
+                f"  Single: <code>{cmd_base} CC|MM|YY|CVV</code>\n"
+                f"  Bulk: Reply to a .txt file with <code>{cmd_base}</code>" + FOOTER)
             return
 
         doc = reply["document"]
