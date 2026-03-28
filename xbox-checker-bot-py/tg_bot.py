@@ -421,52 +421,94 @@ def format_proxy(proxy_str):
 
 # ============================================================
 #  Proxy validation & connectivity testing
+#  Supports ALL formats:
+#    protocol://user:pass@host:port   user:pass@host:port
+#    host:port                        host:port:user:pass
+#    host:port:user                   user:pass:host:port
+#    ip:port                          ip:port:user:pass
 # ============================================================
-PROXY_FORMAT_RE = re.compile(
-    r'^(?:(?:https?|socks[45]h?):\/\/)?'           # optional protocol
-    r'(?:([^:@]+):([^:@]+)@)?'                      # optional user:pass@
-    r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|[\w.\-]+)'  # host/IP
-    r':(\d{1,5})$'                                  # :port
-)
 
-PROXY_FORMAT_4PART_RE = re.compile(
-    r'^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d{1,5}):([^:]+):([^:]+)$'  # ip:port:user:pass
-)
+def _is_valid_port(port_str):
+    try:
+        p = int(port_str)
+        return 1 <= p <= 65535
+    except (ValueError, TypeError):
+        return False
+
+
+def _is_valid_host(host):
+    """Accept IPs (validated octets) or hostnames (letters/digits/dots/hyphens)."""
+    if not host:
+        return False
+    if re.match(r'^\d+\.\d+\.\d+\.\d+$', host):
+        return all(0 <= int(o) <= 255 for o in host.split('.'))
+    # Hostname: allow alphanumeric, dots, hyphens
+    return bool(re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9.\-]*[a-zA-Z0-9])?$', host))
 
 
 def validate_proxy_format(raw):
-    """Validate proxy format. Returns normalized proxy string or None."""
+    """Validate any proxy format. Returns the raw string if valid, None otherwise."""
     line = raw.strip()
-    if not line:
+    if not line or line.startswith('#'):
         return None
 
-    # Try protocol://[user:pass@]host:port or host:port
-    m = PROXY_FORMAT_RE.match(line)
-    if m:
-        host, port_str = m.group(3), m.group(4)
-        port = int(port_str)
-        if port < 1 or port > 65535:
-            return None
-        # Validate IP octets if it looks like an IP
-        if re.match(r'^\d+\.\d+\.\d+\.\d+$', host):
-            octets = host.split('.')
-            if any(int(o) > 255 for o in octets):
-                return None
-        return line
+    # --- Has protocol prefix: protocol://... ---
+    proto_match = re.match(r'^(https?|socks[45]h?):\/\/(.+)$', line, re.I)
+    if proto_match:
+        rest = proto_match.group(2)
+        return line if _validate_host_part(rest) else None
 
-    # Try ip:port:user:pass format
-    m2 = PROXY_FORMAT_4PART_RE.match(line)
-    if m2:
-        host, port_str = m2.group(1), m2.group(2)
-        port = int(port_str)
-        if port < 1 or port > 65535:
-            return None
-        octets = host.split('.')
-        if any(int(o) > 255 for o in octets):
-            return None
-        return line
+    # --- Has @ sign: user:pass@host:port ---
+    if '@' in line:
+        return line if _validate_host_part(line) else None
+
+    # --- Count colons to detect format ---
+    parts = line.split(':')
+
+    if len(parts) == 2:
+        # host:port
+        if _is_valid_host(parts[0]) and _is_valid_port(parts[1]):
+            return line
+        return None
+
+    if len(parts) == 3:
+        # host:port:user
+        if _is_valid_host(parts[0]) and _is_valid_port(parts[1]):
+            return line
+        return None
+
+    if len(parts) == 4:
+        # host:port:user:pass OR user:pass:host:port
+        if _is_valid_host(parts[0]) and _is_valid_port(parts[1]):
+            return line  # host:port:user:pass
+        if _is_valid_host(parts[2]) and _is_valid_port(parts[3]):
+            return line  # user:pass:host:port
+        return None
 
     return None
+
+
+def _validate_host_part(rest):
+    """Validate the part after protocol:// or the full user:pass@host:port string."""
+    # user:pass@host:port
+    at_match = re.match(r'^([^@]+)@(.+)$', rest)
+    if at_match:
+        host_part = at_match.group(2)
+        # Extract host:port from the end
+        last_colon = host_part.rfind(':')
+        if last_colon == -1:
+            return False
+        host = host_part[:last_colon]
+        port = host_part[last_colon + 1:]
+        return _is_valid_host(host) and _is_valid_port(port)
+
+    # host:port (no auth)
+    last_colon = rest.rfind(':')
+    if last_colon == -1:
+        return False
+    host = rest[:last_colon]
+    port = rest[last_colon + 1:]
+    return _is_valid_host(host) and _is_valid_port(port)
 
 
 def test_proxy_connectivity(proxy_str):
