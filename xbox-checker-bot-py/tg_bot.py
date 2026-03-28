@@ -1988,6 +1988,14 @@ def handle_update(update):
         gate_map = {"/auth": ("auth", "Stripe Auth (Dilaboards)"), "/auth2": ("auth2", "Stripe Auth (Stormx)"), "/stc": ("stc", "PayStation Auth (NZ)"), "/st1": ("st1", "HiAPI Check3"), "/st5": ("st5", "HiAPI Check"), "/charge": ("charge", "Stripe Charge $1-3")}
         gate, gate_label = gate_map[text]
 
+        # Check if gate is disabled
+        if not is_gate_enabled(gate):
+            send_message(chat_id,
+                f"<b>⛔ {gate_label} — Offline</b>\n\n"
+                f"This gate has been disabled by an admin.\n"
+                f"Try another gate or check /gates for available options." + FOOTER)
+            return
+
         if not is_authorized(user_id):
             send_message(chat_id, fmt_unauthorized())
             return
