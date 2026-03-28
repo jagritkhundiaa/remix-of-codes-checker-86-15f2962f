@@ -2079,8 +2079,8 @@ def handle_update(update):
         return
 
     # --- /auth, /auth2, /stc (gate commands) ---
-    if text in ("/auth", "/auth2", "/stc", "/st1", "/st5", "/charge"):
-        gate_map = {"/auth": ("auth", "Stripe Auth (Dilaboards)"), "/auth2": ("auth2", "Stripe Auth (Stormx)"), "/stc": ("stc", "Stripe Auth (Alt)"), "/st1": ("st1", "HiAPI Check3"), "/st5": ("st5", "HiAPI Check"), "/charge": ("charge", "Stripe Charge $1-3")}
+    if text in ("/auth", "/st1", "/st5"):
+        gate_map = {"/auth": ("auth", "Stripe Auth (Dilaboards)"), "/st1": ("st1", "HiAPI Check3"), "/st5": ("st5", "HiAPI Check")}
         gate, gate_label = gate_map[text]
 
         # Check if gate is disabled
