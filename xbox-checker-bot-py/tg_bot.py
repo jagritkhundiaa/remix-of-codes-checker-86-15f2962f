@@ -142,7 +142,21 @@ def generate_key():
 
 
 def is_admin(user_id):
-    return int(user_id) in ADMIN_IDS
+    uid = int(user_id)
+    if uid in ADMIN_IDS:
+        return True
+    admins = _load_json(ADMINS_FILE, {})
+    entry = admins.get(str(uid))
+    if not entry:
+        return False
+    expires_at = entry.get("expires_at")
+    if expires_at is None:
+        return True
+    if time.time() < expires_at:
+        return True
+    del admins[str(uid)]
+    _save_json(ADMINS_FILE, admins)
+    return False
 
 
 def is_authorized(user_id):
