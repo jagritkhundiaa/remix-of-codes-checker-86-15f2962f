@@ -892,6 +892,18 @@ def handle_update(update):
                 else:
                     status_text = "ERROR — " + detail
 
+                # Instant hit notification — send immediately on approval
+                if status == "APPROVED":
+                    send_message(
+                        chat_id,
+                        f"<b>HIT FOUND</b>\n"
+                        f"{'─' * 28}\n\n"
+                        f"<code>{entry}</code>\n\n"
+                        f"{detail}\n"
+                        f"{'─' * 28}\n"
+                        f"  [{idx}/{total}]"
+                    )
+
                 now = time.time()
                 if progress_msg_id and (now - last_edit_time[0] >= 3 or idx == total):
                     last_edit_time[0] = now
