@@ -161,15 +161,25 @@ def is_authorized(user_id):
     return False
 
 
-def authorize_user(user_id, key, duration_seconds=None):
+def authorize_user(user_id, key, duration_seconds=None, line_limit=None):
     users = load_users()
-    entry = {"key": key, "redeemed_at": time.time()}
+    entry = {"key": key, "redeemed_at": time.time(), "line_limit": line_limit}
     if duration_seconds is not None:
         entry["expires_at"] = time.time() + duration_seconds
     else:
         entry["expires_at"] = None
     users[str(user_id)] = entry
     save_users(users)
+
+
+def get_user_line_limit(user_id):
+    if is_admin(user_id):
+        return None
+    users = load_users()
+    entry = users.get(str(user_id))
+    if not entry:
+        return None
+    return entry.get("line_limit")
 
 
 # ============================================================
