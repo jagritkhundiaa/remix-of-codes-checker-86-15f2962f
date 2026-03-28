@@ -534,11 +534,13 @@ def fmt_start(is_adm=False):
     base = (
         "<b>Data Processing Bot</b>\n"
         f"{'─' * 28}\n\n"
-        "Upload a <b>.txt</b> file, then reply to it with <b>/run</b>\n\n"
+        "Upload a <b>.txt</b> file, then reply to it with <b>/auth</b>\n\n"
         "<b>Commands:</b>\n"
         "  /start      — Show this menu\n"
         "  /redeem     — Unlock access\n"
-        "  /run        — Process uploaded file\n"
+        "  /auth       — Stripe Auth\n"
+        "  /nonvbv     — Braintree Non-VBV (coming soon)\n"
+        "  /charge     — Stripe Checkout $3 (coming soon)\n"
         "  /bin        — Set BIN filter\n"
         "  /clearbin   — Clear BIN filter\n"
         "  /cancel     — Stop active task\n"
@@ -546,11 +548,6 @@ def fmt_start(is_adm=False):
         "  /mykey      — Check your key info\n"
         "  /proxies    — Upload proxy file\n"
         "  /lookup     — Lookup (coming soon)\n\n"
-        "<b>Gates (Admin):</b>\n"
-        "  /stripeccn  — Stripe Auth CCN (coming soon)\n"
-        "  /stripecvv  — Stripe Auth CVV (coming soon)\n"
-        "  /nonvbv     — Braintree Non-VBV (coming soon)\n"
-        "  /charge     — Stripe Checkout $3 (coming soon)\n\n"
     )
 
     if is_adm:
@@ -568,7 +565,7 @@ def fmt_start(is_adm=False):
     base += (
         "<b>How to use:</b>\n"
         "  1. Send a .txt file\n"
-        "  2. Reply to the file with /run\n"
+        "  2. Reply to the file with /auth\n"
         "  3. Wait for results\n"
         f"{FOOTER}"
     )
@@ -767,14 +764,9 @@ def handle_update(update):
         send_message(chat_id, f"<b>Lookup</b>\n\nComing soon.{FOOTER}")
         return
 
-    # --- Gate commands (admin only, coming soon) ---
-    if text in ("/stripeccn", "/stripecvv", "/nonvbv", "/charge"):
-        if not is_admin(user_id):
-            send_message(chat_id, f"<b>Admin only.</b>{FOOTER}")
-            return
+    # --- Gate commands (coming soon) ---
+    if text in ("/nonvbv", "/charge"):
         gate_names = {
-            "/stripeccn": "Stripe Auth CCN",
-            "/stripecvv": "Stripe Auth CVV",
             "/nonvbv": "Braintree Non-VBV",
             "/charge": "Stripe Checkout $3",
         }
@@ -1098,15 +1090,15 @@ def handle_update(update):
         send_message(chat_id, f"<b>Access Granted</b>\n\nDuration: <code>{dur_label}</code>\nLine Limit: <code>{limit_label}</code>\nWelcome aboard.{FOOTER}")
         return
 
-    # --- /run ---
-    if text == "/run":
+    # --- /auth (Stripe Auth) ---
+    if text == "/auth":
         if not is_authorized(user_id):
             send_message(chat_id, fmt_unauthorized())
             return
 
         reply = msg.get("reply_to_message")
         if not reply or not reply.get("document"):
-            send_message(chat_id, "<b>Reply to a .txt file with /run</b>" + FOOTER)
+            send_message(chat_id, "<b>Reply to a .txt file with /auth</b>" + FOOTER)
             return
 
         doc = reply["document"]
