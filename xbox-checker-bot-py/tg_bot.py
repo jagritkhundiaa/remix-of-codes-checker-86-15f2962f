@@ -37,6 +37,7 @@ PROXIES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proxies
 USER_PROXIES_DIR = os.path.join(DATA_DIR, "user_proxies")
 
 os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(USER_PROXIES_DIR, exist_ok=True)
 
 # ============================================================
 #  Persistence — Keys, Users, Stats
