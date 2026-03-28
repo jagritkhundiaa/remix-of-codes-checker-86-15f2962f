@@ -1581,11 +1581,8 @@ def handle_update(update):
     # --- /chkapi* — Admin-only secret API health checks ---
     chkapi_cmds = {
         "/chkapiauth": "auth",
-        "/chkapiauth2": "auth2",
-        "/chkapistc": "stc",
         "/chkapist1": "st1",
         "/chkapist5": "st5",
-        "/chkapicharge": "charge",
     }
     if text in chkapi_cmds:
         if not is_admin(user_id):
