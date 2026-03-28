@@ -146,11 +146,8 @@ def set_gate_enabled(gate_key, enabled, by_user=None):
 # ============================================================
 GATE_PROBE_MAP = {
     "auth": {"name": "Stripe Auth (Dilaboards)", "cmd": "/chkapiauth"},
-    "auth2": {"name": "Stripe Auth (Stormx)", "cmd": "/chkapiauth2"},
-    "stc": {"name": "Stripe Auth (Alt)", "cmd": "/chkapistc"},
     "st1": {"name": "HiAPI Check3", "cmd": "/chkapist1"},
     "st5": {"name": "HiAPI Check", "cmd": "/chkapist5"},
-    "charge": {"name": "Stripe Charge $1-3", "cmd": "/chkapicharge"},
 }
 
 
