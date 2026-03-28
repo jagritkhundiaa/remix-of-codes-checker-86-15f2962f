@@ -1026,6 +1026,14 @@ def handle_update(update):
             send_message(chat_id, "<b>File is empty.</b>" + FOOTER)
             return
 
+        # Enforce line limit from key
+        user_limit = get_user_line_limit(user_id)
+        if user_limit and len(lines) > user_limit:
+            with active_lock:
+                active_users.discard(user_id)
+            send_message(chat_id, f"<b>File Too Large</b>\n\nYour key allows <code>{user_limit}</code> lines.\nYour file has <code>{len(lines)}</code> lines." + FOOTER)
+            return
+
         init_resp = send_message(
             chat_id,
             "Starting Engine...",
