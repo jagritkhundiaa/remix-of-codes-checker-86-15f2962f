@@ -1405,16 +1405,14 @@ def fmt_start(is_adm=False):
             "  /authlist   — List authorized users\n"
             "  /revoke     — Revoke user access\n"
             "  /broadcast  — Message all users\n"
-            "  /chkapis    — Health check all APIs\n"
-            "  /chkapiauth — Check auth gate\n"
-            "  /chkapist1  — Check st1 gate\n"
-            "  /chkapist5  — Check st5 gate\n\n"
+            "  /chkapis    — Health check all APIs\n\n"
         )
 
     base += (
         "<b>How to use:</b>\n"
         "  <b>Single:</b> <code>/auth 4111...|01|25|123</code>\n"
         "  <b>Bulk:</b> Send .txt → reply with /auth\n"
+        "  <b>Shopify:</b> <code>/autosho 4111...|01|25|123</code>\n"
         f"{FOOTER}"
     )
     return base
