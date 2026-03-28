@@ -757,22 +757,35 @@ def handle_update(update):
         send_message(chat_id, f"<b>Proxies Loaded</b>\n\n<code>{len(proxies)}</code> proxies saved." + FOOTER)
         return
 
-    # --- /genkey (admin) with optional duration ---
+    # --- /genkey (admin) — /genkey <limit> <duration> ---
     if text.startswith("/genkey") and not text.startswith("/genkeys"):
         if not is_admin(user_id):
             send_message(chat_id, f"<b>Admin only.</b>{FOOTER}")
             return
 
-        parts = text.split(maxsplit=1)
-        duration_str = parts[1].strip() if len(parts) > 1 else None
+        # Parse: /genkey <limit> <duration>
+        parts = text.split()
+        line_limit = None
         duration_seconds = None
 
-        if duration_str:
-            parsed = parse_duration(duration_str)
-            if parsed == -1:
-                send_message(chat_id, "<b>Invalid duration.</b>\nExamples: 1d, 7d, 1mo, perm" + FOOTER)
-                return
-            duration_seconds = parsed
+        if len(parts) >= 2:
+            # First arg could be a number (limit) or duration
+            try:
+                line_limit = int(parts[1])
+                # Second arg is duration if present
+                if len(parts) >= 3:
+                    parsed = parse_duration(parts[2])
+                    if parsed == -1:
+                        send_message(chat_id, "<b>Invalid duration.</b>\nExamples: 1d, 7d, 1mo, perm" + FOOTER)
+                        return
+                    duration_seconds = parsed
+            except ValueError:
+                # First arg is duration, no limit
+                parsed = parse_duration(parts[1])
+                if parsed == -1:
+                    send_message(chat_id, "<b>Usage:</b> <code>/genkey [limit] [duration]</code>\nExamples: /genkey 500 7d, /genkey 7d, /genkey" + FOOTER)
+                    return
+                duration_seconds = parsed
 
         key = generate_key()
         keys = load_keys()
@@ -781,11 +794,13 @@ def handle_update(update):
             "created_at": time.time(),
             "used": False,
             "duration": duration_seconds,
+            "line_limit": line_limit,
         }
         save_keys(keys)
 
         dur_label = fmt_duration(duration_seconds) if duration_seconds else "Permanent"
-        send_message(chat_id, f"<b>Key Generated</b>\n\n<code>{key}</code>\nDuration: <code>{dur_label}</code>{FOOTER}")
+        limit_label = str(line_limit) if line_limit else "Unlimited"
+        send_message(chat_id, f"<b>Key Generated</b>\n\n<code>{key}</code>\nDuration: <code>{dur_label}</code>\nLine Limit: <code>{limit_label}</code>{FOOTER}")
         return
 
     # --- /genkeys <count> <duration> (admin) — bulk key generation as .txt ---
