@@ -98,6 +98,24 @@ def update_user_stats(user_id, results):
     save_stats(stats)
 
 
+def load_gate_stats():
+    return _load_json(GATE_STATS_FILE, {})
+
+def save_gate_stats(data):
+    _save_json(GATE_STATS_FILE, data)
+
+def update_gate_stats(gate, results):
+    gs = load_gate_stats()
+    if gate not in gs:
+        gs[gate] = {"approved": 0, "declined": 0, "errors": 0, "total": 0, "sessions": 0}
+    gs[gate]["approved"] += results.get("approved", 0)
+    gs[gate]["declined"] += results.get("declined", 0)
+    gs[gate]["errors"] += results.get("errors", 0)
+    gs[gate]["total"] += results.get("total", 0)
+    gs[gate]["sessions"] += 1
+    save_gate_stats(gs)
+
+
 # ============================================================
 #  Duration parsing (for time-limited keys)
 # ============================================================
