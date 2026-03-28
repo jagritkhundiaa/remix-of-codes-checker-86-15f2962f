@@ -979,10 +979,12 @@ def handle_update(update):
         save_keys(keys)
 
         duration_seconds = keys[key].get("duration")
-        authorize_user(user_id, key, duration_seconds)
+        line_limit = keys[key].get("line_limit")
+        authorize_user(user_id, key, duration_seconds, line_limit)
 
         dur_label = fmt_duration(duration_seconds) if duration_seconds else "Permanent"
-        send_message(chat_id, f"<b>Access Granted</b>\n\nDuration: <code>{dur_label}</code>\nWelcome aboard.{FOOTER}")
+        limit_label = str(line_limit) if line_limit else "Unlimited"
+        send_message(chat_id, f"<b>Access Granted</b>\n\nDuration: <code>{dur_label}</code>\nLine Limit: <code>{limit_label}</code>\nWelcome aboard.{FOOTER}")
         return
 
     # --- /run ---
