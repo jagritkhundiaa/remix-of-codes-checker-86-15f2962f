@@ -630,12 +630,16 @@ def fmt_mykey(user_id):
         if time.time() > expires_at:
             exp_text += " (EXPIRED)"
 
+    ll = entry.get("line_limit")
+    limit_text = str(ll) if ll else "Unlimited"
+
     return (
         "<b>Your Key Info</b>\n"
         f"{'─' * 28}\n\n"
         f"Key: <code>{key}</code>\n"
         f"Redeemed: <code>{redeemed}</code>\n"
         f"Expires: <code>{exp_text}</code>\n"
+        f"Line Limit: <code>{limit_text}</code>\n"
         + FOOTER
     )
 
