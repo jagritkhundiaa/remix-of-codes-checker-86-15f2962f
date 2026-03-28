@@ -752,7 +752,7 @@ def handle_update(update):
         return
 
     # --- /genkey (admin) with optional duration ---
-    if text.startswith("/genkey"):
+    if text.startswith("/genkey") and not text.startswith("/genkeys"):
         if not is_admin(user_id):
             send_message(chat_id, f"<b>Admin only.</b>{FOOTER}")
             return
@@ -780,6 +780,117 @@ def handle_update(update):
 
         dur_label = fmt_duration(duration_seconds) if duration_seconds else "Permanent"
         send_message(chat_id, f"<b>Key Generated</b>\n\n<code>{key}</code>\nDuration: <code>{dur_label}</code>{FOOTER}")
+        return
+
+    # --- /genkeys <count> <duration> (admin) — bulk key generation as .txt ---
+    if text.startswith("/genkeys"):
+        if not is_admin(user_id):
+            send_message(chat_id, f"<b>Admin only.</b>{FOOTER}")
+            return
+
+        parts = text.split()
+        if len(parts) < 2:
+            send_message(chat_id, "<b>Usage:</b> <code>/genkeys 10 7d</code>\nCount is required. Duration is optional (default: permanent)." + FOOTER)
+            return
+
+        try:
+            count = int(parts[1])
+        except ValueError:
+            send_message(chat_id, "<b>Invalid count.</b> Must be a number." + FOOTER)
+            return
+
+        if count < 1 or count > 500:
+            send_message(chat_id, "<b>Count must be 1-500.</b>" + FOOTER)
+            return
+
+        duration_str = parts[2] if len(parts) > 2 else None
+        duration_seconds = None
+        if duration_str:
+            parsed = parse_duration(duration_str)
+            if parsed == -1:
+                send_message(chat_id, "<b>Invalid duration.</b>\nExamples: 1d, 7d, 1mo, perm" + FOOTER)
+                return
+            duration_seconds = parsed
+
+        keys = load_keys()
+        generated = []
+        for _ in range(count):
+            key = generate_key()
+            keys[key] = {
+                "created_by": user_id,
+                "created_at": time.time(),
+                "used": False,
+                "duration": duration_seconds,
+            }
+            generated.append(key)
+        save_keys(keys)
+
+        dur_label = fmt_duration(duration_seconds) if duration_seconds else "Permanent"
+
+        # Send as .txt file
+        filename = f"keys_{count}x_{int(time.time())}.txt"
+        filepath = os.path.join(DATA_DIR, filename)
+        with open(filepath, "w") as f:
+            for k in generated:
+                f.write(k + "\n")
+        with open(filepath, "rb") as f:
+            requests.post(
+                f"{API_BASE}/sendDocument",
+                data={"chat_id": chat_id, "caption": f"<b>{count} Keys Generated</b>\nDuration: <code>{dur_label}</code>{FOOTER}", "parse_mode": "HTML"},
+                files={"document": (filename, f)}
+            )
+        return
+
+    # --- /revoke <user_id> (admin) ---
+    if text.startswith("/revoke"):
+        if not is_admin(user_id):
+            send_message(chat_id, f"<b>Admin only.</b>{FOOTER}")
+            return
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            send_message(chat_id, "<b>Usage:</b> <code>/revoke 123456789</code>" + FOOTER)
+            return
+        target_id = parts[1].strip()
+        users = load_users()
+        if target_id in users:
+            del users[target_id]
+            save_users(users)
+            send_message(chat_id, f"<b>Access Revoked</b>\n\nUser <code>{target_id}</code> has been removed." + FOOTER)
+        else:
+            send_message(chat_id, f"<b>User not found.</b>\n\n<code>{target_id}</code> is not authorized." + FOOTER)
+        return
+
+    # --- /authlist (admin) ---
+    if text == "/authlist":
+        if not is_admin(user_id):
+            send_message(chat_id, f"<b>Admin only.</b>{FOOTER}")
+            return
+        users = load_users()
+        if not users:
+            send_message(chat_id, "<b>No authorized users.</b>" + FOOTER)
+            return
+
+        lines_out = []
+        now = time.time()
+        for uid, entry in users.items():
+            key = entry.get("key", "N/A")
+            expires_at = entry.get("expires_at")
+            if expires_at is None:
+                exp = "Permanent"
+            elif now > expires_at:
+                exp = "EXPIRED"
+            else:
+                remaining = int(expires_at - now)
+                exp = fmt_duration(remaining) + " left"
+            lines_out.append(f"  {uid} | {key[:10]}... | {exp}")
+
+        msg_text = (
+            f"<b>Authorized Users ({len(users)})</b>\n"
+            f"{'─' * 28}\n\n"
+            "<code>" + "\n".join(lines_out) + "</code>"
+            + FOOTER
+        )
+        send_message(chat_id, msg_text)
         return
 
     # --- /broadcast (admin) ---
