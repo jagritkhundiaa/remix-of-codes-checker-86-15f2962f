@@ -759,12 +759,89 @@ def handle_update(update):
 
     # --- /start ---
     if text == "/start":
-        send_message(chat_id, fmt_start())
+        send_message(chat_id, fmt_start(is_adm=is_admin(user_id)))
         return
 
     # --- /lookup ---
     if text == "/lookup":
         send_message(chat_id, f"<b>Lookup</b>\n\nComing soon.{FOOTER}")
+        return
+
+    # --- Gate commands (admin only, coming soon) ---
+    if text in ("/stripeccn", "/stripecvv", "/nonvbv", "/charge"):
+        if not is_admin(user_id):
+            send_message(chat_id, f"<b>Admin only.</b>{FOOTER}")
+            return
+        gate_names = {
+            "/stripeccn": "Stripe Auth CCN",
+            "/stripecvv": "Stripe Auth CVV",
+            "/nonvbv": "Braintree Non-VBV",
+            "/charge": "Stripe Checkout $3",
+        }
+        name = gate_names[text]
+        send_message(chat_id, f"<b>{name}</b>\n\nComing soon.{FOOTER}")
+        return
+
+    # --- /adminkey <user_id> <duration> (owner only) ---
+    if text.startswith("/adminkey"):
+        if int(user_id) not in ADMIN_IDS:
+            send_message(chat_id, f"<b>Owner only.</b>{FOOTER}")
+            return
+        parts = text.split()
+        if len(parts) < 2:
+            send_message(chat_id, "<b>Usage:</b> <code>/adminkey 123456789 7d</code>\nDuration optional (default: permanent)." + FOOTER)
+            return
+        target_id = parts[1].strip()
+        if not target_id.isdigit():
+            send_message(chat_id, "<b>Invalid user ID.</b>" + FOOTER)
+            return
+        duration_seconds = None
+        if len(parts) >= 3:
+            parsed = parse_duration(parts[2])
+            if parsed == -1:
+                send_message(chat_id, "<b>Invalid duration.</b>\nExamples: 7d, 1mo, perm" + FOOTER)
+                return
+            duration_seconds = parsed
+        admins = _load_json(ADMINS_FILE, {})
+        entry = {"promoted_by": user_id, "promoted_at": time.time()}
+        if duration_seconds is not None:
+            entry["expires_at"] = time.time() + duration_seconds
+        else:
+            entry["expires_at"] = None
+        admins[target_id] = entry
+        _save_json(ADMINS_FILE, admins)
+        dur_label = fmt_duration(duration_seconds) if duration_seconds else "Permanent"
+        send_message(chat_id, f"<b>Admin Granted</b>\n\nUser <code>{target_id}</code>\nDuration: <code>{dur_label}</code>{FOOTER}")
+        return
+
+    # --- /adminlist (owner only) ---
+    if text == "/adminlist":
+        if int(user_id) not in ADMIN_IDS:
+            send_message(chat_id, f"<b>Owner only.</b>{FOOTER}")
+            return
+        admins = _load_json(ADMINS_FILE, {})
+        lines_out = []
+        now = time.time()
+        for uid, entry in admins.items():
+            expires_at = entry.get("expires_at")
+            if expires_at is None:
+                exp = "Permanent"
+            elif now > expires_at:
+                exp = "EXPIRED"
+            else:
+                remaining = int(expires_at - now)
+                exp = fmt_duration(remaining) + " left"
+            lines_out.append(f"  {uid} | {exp}")
+        # Add hardcoded owner IDs
+        for oid in ADMIN_IDS:
+            lines_out.insert(0, f"  {oid} | Owner (permanent)")
+        msg_text = (
+            f"<b>Admins ({len(lines_out)})</b>\n"
+            f"{'─' * 28}\n\n"
+            "<code>" + "\n".join(lines_out) + "</code>"
+            + FOOTER
+        )
+        send_message(chat_id, msg_text)
         return
 
     # --- /stats ---
