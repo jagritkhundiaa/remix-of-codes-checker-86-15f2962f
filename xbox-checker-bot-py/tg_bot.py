@@ -522,7 +522,7 @@ def run_processing(lines, user_id, on_progress=None, on_complete=None, threads=D
         if not entry:
             return ("", "INVALID", "Empty line", "error")
 
-        result = process_single_entry(entry, proxies_list, user_id)
+        result = process_single_entry(entry, proxies_list, user_id, gate=gate)
 
         if "SKIPPED" in result:
             category = "skipped"
