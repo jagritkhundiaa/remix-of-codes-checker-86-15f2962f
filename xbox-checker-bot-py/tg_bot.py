@@ -1370,6 +1370,43 @@ def handle_callback(update):
         else:
             answer_callback(cb_id, "Not your task.")
 
+    # Gate disable/enable confirmation callbacks
+    elif data.startswith("gate_off_"):
+        if not is_admin(cb_user_id):
+            answer_callback(cb_id, "Admin only.")
+            return
+        gate_key = data.replace("gate_off_", "")
+        set_gate_enabled(gate_key, False, by_user=cb_user_id)
+        gate_name = GATE_PROBE_MAP.get(gate_key, {}).get("name", gate_key)
+        answer_callback(cb_id, f"🔴 {gate_name} disabled!")
+        chat_id = cb.get("message", {}).get("chat", {}).get("id")
+        if chat_id:
+            edit_message(chat_id, cb["message"]["message_id"],
+                f"<b>🔴 {gate_name} — DISABLED</b>\n\n"
+                f"Gate has been turned off. Users cannot use it.\n"
+                f"Use the check command again to re-enable." + FOOTER)
+
+    elif data.startswith("gate_on_"):
+        if not is_admin(cb_user_id):
+            answer_callback(cb_id, "Admin only.")
+            return
+        gate_key = data.replace("gate_on_", "")
+        set_gate_enabled(gate_key, True, by_user=cb_user_id)
+        gate_name = GATE_PROBE_MAP.get(gate_key, {}).get("name", gate_key)
+        answer_callback(cb_id, f"🟢 {gate_name} enabled!")
+        chat_id = cb.get("message", {}).get("chat", {}).get("id")
+        if chat_id:
+            edit_message(chat_id, cb["message"]["message_id"],
+                f"<b>🟢 {gate_name} — ENABLED</b>\n\n"
+                f"Gate is back online for all users." + FOOTER)
+
+    elif data == "gate_keep":
+        answer_callback(cb_id, "No changes made.")
+        chat_id = cb.get("message", {}).get("chat", {}).get("id")
+        if chat_id:
+            edit_message(chat_id, cb["message"]["message_id"],
+                "<b>No changes made.</b>" + FOOTER)
+
 
 def handle_update(update):
     if "callback_query" in update:
