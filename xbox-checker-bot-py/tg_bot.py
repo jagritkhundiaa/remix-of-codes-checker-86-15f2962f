@@ -1157,15 +1157,18 @@ def handle_update(update):
         send_message(chat_id, f"<b>Access Granted</b>\n\nDuration: <code>{dur_label}</code>\nLine Limit: <code>{limit_label}</code>\nWelcome aboard.{FOOTER}")
         return
 
-    # --- /auth (Stripe Auth) ---
-    if text == "/auth":
+    # --- /auth and /auth2 (gate commands) ---
+    if text in ("/auth", "/auth2"):
+        gate = "auth2" if text == "/auth2" else "auth"
+        gate_label = "Stripe Auth (Stormx)" if gate == "auth2" else "Stripe Auth (Dilaboards)"
+
         if not is_authorized(user_id):
             send_message(chat_id, fmt_unauthorized())
             return
 
         reply = msg.get("reply_to_message")
         if not reply or not reply.get("document"):
-            send_message(chat_id, "<b>Reply to a .txt file with /auth</b>" + FOOTER)
+            send_message(chat_id, f"<b>Reply to a .txt file with {text}</b>" + FOOTER)
             return
 
         doc = reply["document"]
@@ -1206,12 +1209,12 @@ def handle_update(update):
 
         init_resp = send_message(
             chat_id,
-            "Starting Engine...",
+            f"Starting Engine — <b>{gate_label}</b>...",
             reply_markup=stop_button_markup(user_id)
         )
         progress_msg_id = init_resp.get("result", {}).get("message_id")
 
-        def _run():
+        def _run(gate=gate):
             start_time = time.time()
             last_edit_time = [0]
 
@@ -1280,7 +1283,7 @@ def handle_update(update):
                 with active_lock:
                     active_users.discard(user_id)
 
-            run_processing(lines, user_id, on_progress=on_progress, on_complete=on_complete)
+            run_processing(lines, user_id, on_progress=on_progress, on_complete=on_complete, gate=gate)
 
         t = threading.Thread(target=_run, daemon=True)
         t.start()
