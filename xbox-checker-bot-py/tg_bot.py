@@ -907,8 +907,11 @@ def handle_update(update):
             send_message(chat_id,
                 "<b>Upload Proxies</b>\n\n"
                 "Reply to a <b>.txt</b> proxy file with /proxies\n\n"
-                "• <b>Admins</b> — sets global proxies for all users\n"
-                "• <b>Users</b> — adds personal proxies (used alongside global)" + FOOTER)
+                "• Max <b>30</b> proxies per batch\n"
+                "• Each proxy is validated &amp; connectivity tested\n"
+                "• Only working proxies are added\n\n"
+                "• <b>Admins</b> — sets global proxies\n"
+                "• <b>Users</b> — adds personal proxies" + FOOTER)
             return
         doc = reply["document"]
         fname = doc.get("file_name", "")
@@ -922,19 +925,82 @@ def handle_update(update):
         if not content:
             send_message(chat_id, "<b>Failed to download file.</b>" + FOOTER)
             return
-        proxies = [l.strip() for l in content.splitlines() if l.strip()]
+        raw_proxies = [l.strip() for l in content.splitlines() if l.strip() and not l.strip().startswith("#")]
 
+        MAX_BATCH = 30
+        if len(raw_proxies) > MAX_BATCH:
+            send_message(chat_id,
+                f"<b>Batch Too Large</b>\n\n"
+                f"You submitted <code>{len(raw_proxies)}</code> proxies.\n"
+                f"Maximum allowed per batch: <code>{MAX_BATCH}</code>\n\n"
+                f"Please split your list and try again." + FOOTER)
+            return
+
+        # Send processing message
+        prog_msg = send_message(chat_id, f"<b>Validating {len(raw_proxies)} proxies...</b>\n\nPlease wait." + FOOTER)
+        prog_msg_id = prog_msg.get("result", {}).get("message_id")
+
+        valid_proxies = []
+        errors = []
+
+        for raw in raw_proxies:
+            # --- Format validation ---
+            parsed = validate_proxy_format(raw)
+            if parsed is None:
+                errors.append({"proxy": raw, "reason": "Invalid format"})
+                continue
+
+            # --- Connectivity test ---
+            ok, latency, reason = test_proxy_connectivity(parsed)
+            if not ok:
+                errors.append({"proxy": raw, "reason": reason})
+                continue
+
+            valid_proxies.append(raw)
+
+        submitted = len(raw_proxies)
+        accepted = len(valid_proxies)
+        rejected = len(errors)
+
+        # Build result report
+        report = (
+            f"<b>Proxy Ingestion Report</b>\n"
+            f"{'─' * 28}\n\n"
+            f"Submitted: <code>{submitted}</code>\n"
+            f"Accepted: <code>{accepted}</code>\n"
+            f"Rejected: <code>{rejected}</code>\n"
+        )
+
+        if errors:
+            report += f"\n<b>Errors:</b>\n"
+            for e in errors[:15]:
+                p = e['proxy'][:40]
+                report += f"  <code>{p}</code> — {e['reason']}\n"
+            if len(errors) > 15:
+                report += f"  ... and {len(errors) - 15} more\n"
+
+        report += FOOTER
+
+        if accepted == 0:
+            if prog_msg_id:
+                edit_message(chat_id, prog_msg_id, report)
+            else:
+                send_message(chat_id, report)
+            return
+
+        # Save valid proxies
         if is_admin(user_id):
-            # Admin uploads go to global proxies
             with open(PROXIES_FILE, "w") as f:
-                f.write("\n".join(proxies))
-            send_message(chat_id, f"<b>Global Proxies Loaded</b>\n\n<code>{len(proxies)}</code> proxies saved for all users." + FOOTER)
+                f.write("\n".join(valid_proxies))
         else:
-            # Regular users get personal proxies
             user_proxy_file = os.path.join(USER_PROXIES_DIR, f"{user_id}.txt")
             with open(user_proxy_file, "w") as f:
-                f.write("\n".join(proxies))
-            send_message(chat_id, f"<b>Personal Proxies Loaded</b>\n\n<code>{len(proxies)}</code> proxies saved for your sessions." + FOOTER)
+                f.write("\n".join(valid_proxies))
+
+        if prog_msg_id:
+            edit_message(chat_id, prog_msg_id, report)
+        else:
+            send_message(chat_id, report)
         return
 
     # --- /genkey (admin) — /genkey <limit> <duration> ---
