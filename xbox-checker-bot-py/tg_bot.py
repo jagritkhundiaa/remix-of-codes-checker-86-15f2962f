@@ -1688,10 +1688,6 @@ def handle_update(update):
             ("auth", "/auth", "Stripe Auth (Dilaboards)", True),
             ("st1", "/st1", "HiAPI Check3", True),
             ("st5", "/st5", "HiAPI Check", True),
-            ("auth2", "/auth2", "Stripe Auth (Stormx)", False),
-            ("stc", "/stc", "Stripe Auth (Alt)", False),
-            ("charge", "/charge", "Stripe Charge", False),
-            ("nonvbv", "/nonvbv", "Braintree Non-VBV", False),
         ]
         gs = load_gate_stats()
         lines_out = ["<b>Available Gates</b>\n"]
