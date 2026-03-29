@@ -2395,6 +2395,7 @@ def handle_update(update):
 # ============================================================
 def main():
     print(f"[Bot] Starting — Made by {DEVELOPER}")
+    load_global_proxies()
     print(f"[Bot] Polling for updates...")
 
     offset = 0
