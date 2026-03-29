@@ -790,14 +790,13 @@ def _retry_request(func, max_retries=2, backoff=2):
     for attempt in range(max_retries + 1):
         try:
             result = func()
-            # If we got a response object, check for 429
             if hasattr(result, 'status_code') and result.status_code == 429:
                 wait = backoff * (attempt + 1)
                 time.sleep(wait)
                 last_err = f"HTTP 429 (rate limited)"
                 continue
             return result
-        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, requests.exceptions.ReadTimeout) as e:
+        except (requests.exceptions.ProxyError, requests.exceptions.ConnectionError, requests.exceptions.Timeout, requests.exceptions.ReadTimeout) as e:
             last_err = str(e)
             if attempt < max_retries:
                 time.sleep(backoff * (attempt + 1))
