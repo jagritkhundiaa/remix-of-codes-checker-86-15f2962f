@@ -2278,7 +2278,8 @@ def handle_update(update):
                         requests.post(
                             f"{API_BASE}/sendDocument",
                             data={"chat_id": chat_id},
-                            files={"document": f}
+                            files={"document": f},
+                            proxies=get_proxy()
                         )
 
                 with active_lock:
