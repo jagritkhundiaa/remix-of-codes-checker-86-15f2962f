@@ -2307,13 +2307,7 @@ def handle_update(update):
                     with open(filepath, "w") as f:
                         for entry in results["approved_list"]:
                             f.write(entry + "\n")
-                    with open(filepath, "rb") as f:
-                        requests.post(
-                            f"{API_BASE}/sendDocument",
-                            data={"chat_id": chat_id},
-                            files={"document": f},
-                            proxies=get_proxy()
-                        )
+                    send_document(chat_id, filepath)
 
                 with active_lock:
                     active_users.discard(user_id)
