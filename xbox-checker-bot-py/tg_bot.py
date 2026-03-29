@@ -407,6 +407,28 @@ def download_file(file_id):
         return None
 
 
+def send_document(chat_id, filepath, filename=None, caption=None):
+    """Send a document via Telegram — proxy with direct fallback."""
+    fname = filename or os.path.basename(filepath)
+    data = {"chat_id": chat_id}
+    if caption:
+        data["caption"] = caption
+        data["parse_mode"] = "HTML"
+    proxy = get_proxy()
+    try:
+        with open(filepath, "rb") as f:
+            requests.post(f"{API_BASE}/sendDocument", data=data,
+                          files={"document": (fname, f)}, proxies=proxy, timeout=30)
+    except Exception:
+        if proxy:
+            try:
+                with open(filepath, "rb") as f:
+                    requests.post(f"{API_BASE}/sendDocument", data=data,
+                                  files={"document": (fname, f)}, timeout=30)
+            except Exception:
+                pass
+
+
 # ============================================================
 #  Processing engine — ported from ehhhh.py (UNCHANGED LOGIC)
 # ============================================================
