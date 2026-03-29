@@ -384,7 +384,7 @@ def download_file(file_id):
     if not url:
         return None
     try:
-        r = requests.get(url, timeout=30)
+        r = requests.get(url, timeout=30, proxies=get_proxy())
         return r.text
     except Exception:
         return None
