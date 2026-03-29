@@ -1371,6 +1371,9 @@ def _run_gate(gate, c_num, c_mm, c_yy, c_cvv, proxy_dict):
     if gate == "b3":
         cc_line = f"{c_num}|{c_mm}|{c_yy}|{c_cvv}"
         return b3_check_card(cc_line, proxy_dict)
+    elif gate == "b3auth":
+        cc_line = f"{c_num}|{c_mm}|{c_yy}|{c_cvv}"
+        return b3auth_check_card(cc_line, proxy_dict)
     elif gate == "st1":
         return check_cc_hiapi(c_num, c_mm, c_yy, c_cvv, "check3", proxy_dict)
     elif gate == "st5":
