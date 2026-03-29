@@ -2198,7 +2198,7 @@ def handle_update(update):
         return
 
     # --- Gate commands: /auth, /st1, /st5 (single card OR bulk file) ---
-    gate_map = {"/auth": ("auth", "Stripe Auth (Dilaboards)"), "/b3": ("b3", "Braintree Auth"), "/autosho": ("autosho", "Shopify Auto"), "/st1": ("st1", "HiAPI Check3"), "/st5": ("st5", "HiAPI Check")}
+    gate_map = {"/auth": ("auth", "Stripe Auth (Dilaboards)"), "/b3": ("b3", "Braintree Auth"), "/b3auth": ("b3auth", "Braintree Auth (Session)"), "/autosho": ("autosho", "Shopify Auto"), "/st1": ("st1", "HiAPI Check3"), "/st5": ("st5", "HiAPI Check")}
     cmd_base = text.split()[0] if text else ""
     if cmd_base in gate_map:
         gate, gate_label = gate_map[cmd_base]
