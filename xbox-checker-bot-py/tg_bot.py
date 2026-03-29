@@ -470,8 +470,20 @@ def auto_request(
     }
 
     request_kwargs = {k: v for k, v in request_kwargs.items() if v is not None}
-    response = req_session.request(method, **request_kwargs)
-    return response
+
+    try:
+        response = req_session.request(method, **request_kwargs)
+        return response
+    except requests.exceptions.ProxyError:
+        if proxies:
+            fallback_kwargs = {k: v for k, v in request_kwargs.items() if k != 'proxies'}
+            return req_session.request(method, **fallback_kwargs)
+        raise
+    except requests.exceptions.ConnectionError as e:
+        if proxies and any(msg in str(e) for msg in ('Tunnel connection failed', '503 Service Unavailable', 'ProxyError', 'Unable to connect to proxy')):
+            fallback_kwargs = {k: v for k, v in request_kwargs.items() if k != 'proxies'}
+            return req_session.request(method, **fallback_kwargs)
+        raise
 
 
 def extract_message(response: requests.Response) -> str:
