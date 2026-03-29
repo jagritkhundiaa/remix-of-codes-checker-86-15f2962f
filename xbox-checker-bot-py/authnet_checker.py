@@ -97,12 +97,20 @@ def _process_card(cc, mm, yy, cvv, proxy_dict=None):
         if resp.status_code != 200:
             return {"status": "Error", "response": f"Product page HTTP {resp.status_code}"}
 
-        vs = _lr(resp.text, 'name="__VIEWSTATE" id="__VIEWSTATE" value="', '"')
-        ev = _lr(resp.text, 'name="__EVENTVALIDATION" id="__EVENTVALIDATION" value="', '"')
-        gen = _lr(resp.text, 'name="__VIEWSTATEGENERATOR" id="__VIEWSTATEGENERATOR" value="', '"')
+        page_text = resp.text
+
+        vs = _lr(page_text, 'name="__VIEWSTATE" id="__VIEWSTATE" value="', '"')
+        ev = _lr(page_text, 'name="__EVENTVALIDATION" id="__EVENTVALIDATION" value="', '"')
+        gen = _lr(page_text, 'name="__VIEWSTATEGENERATOR" id="__VIEWSTATEGENERATOR" value="', '"')
 
         if not vs or not ev or not gen:
             return {"status": "Error", "response": "Failed to extract ViewState from product page"}
+
+        # Extract product ID dynamically
+        pid_match = re.search(r'productDetailsID["\s>]*?value="(\d+)"', page_text)
+        if not pid_match:
+            pid_match = re.search(r'productDetailsID["\s]*>(\d+)<', page_text)
+        product_id = pid_match.group(1) if pid_match else "55965"
 
         # ── Step 2: POST add to cart ────────────────────────
         add_data = (
@@ -111,7 +119,7 @@ def _process_card(cc, mm, yy, cvv, proxy_dict=None):
             f"&__EVENTVALIDATION={quote(ev)}"
             f"&ctl00%24ctl05%24search=&ctl00%24ctl07%24txtSearch="
             f"&ctl00%24ctl08%24manufacturers=Select+..."
-            f"&ctl00%24pageContent%24productDetailsID=154881"
+            f"&ctl00%24pageContent%24productDetailsID={product_id}"
             f"&ctl00%24pageContent%24txtQuantity=1"
             f"&ctl00%24pageContent%24addToCart.x=62"
             f"&ctl00%24pageContent%24addToCart.y=14"
