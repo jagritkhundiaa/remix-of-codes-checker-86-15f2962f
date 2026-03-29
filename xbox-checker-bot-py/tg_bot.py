@@ -195,6 +195,7 @@ def set_gate_enabled(gate_key, enabled, by_user=None):
 GATE_PROBE_MAP = {
     "auth": {"name": "Stripe Auth (Dilaboards)", "cmd": "/chkapiauth"},
     "b3": {"name": "Braintree Auth", "cmd": "/chkapib3"},
+    "b3auth": {"name": "Braintree Auth (Session)", "cmd": "/chkapib3auth"},
     "st1": {"name": "HiAPI Check3", "cmd": "/chkapist1"},
     "st5": {"name": "HiAPI Check", "cmd": "/chkapist5"},
     "autosho": {"name": "Shopify Auto", "cmd": "/chkapiautosho"},
