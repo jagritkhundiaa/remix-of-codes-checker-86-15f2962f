@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from typing import Dict, Any, Optional
 from datetime import datetime
+from braintree_checker import check_card as b3_check_card
 
 try:
     from faker import Faker
