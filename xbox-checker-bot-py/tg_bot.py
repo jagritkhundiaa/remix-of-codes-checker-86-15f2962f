@@ -201,18 +201,19 @@ GATE_PROBE_MAP = {
 def probe_gate(gate_key):
     """Probe a gate's underlying API. Returns (alive: bool, latency_ms: int, detail: str)."""
     start = time.time()
+    proxy = get_proxy()
     try:
         if gate_key == "auth":
             resp = requests.get('https://dilaboards.com/en/moj-racun/add-payment-method/',
-                                headers={'User-Agent': _rand_ua()}, timeout=10, allow_redirects=True)
+                                headers={'User-Agent': _rand_ua()}, timeout=10, allow_redirects=True, proxies=proxy)
             alive = resp.status_code == 200 and 'stripe' in resp.text.lower()
             detail = f"HTTP {resp.status_code}" + (" | Stripe key found" if alive else " | No Stripe key")
         elif gate_key in ("st1", "st5"):
-            resp = requests.get('https://ck.hiapi.club/', headers={'User-Agent': _rand_ua()}, timeout=10)
+            resp = requests.get('https://ck.hiapi.club/', headers={'User-Agent': _rand_ua()}, timeout=10, proxies=proxy)
             alive = resp.status_code in (200, 403)
             detail = f"HTTP {resp.status_code}"
         elif gate_key == "autosho":
-            resp = requests.get('https://teamoicxkiller.online/code/index.php', headers={'User-Agent': _rand_ua()}, timeout=10)
+            resp = requests.get('https://teamoicxkiller.online/code/index.php', headers={'User-Agent': _rand_ua()}, timeout=10, proxies=proxy)
             alive = resp.status_code in (200, 400, 403)
             sites = load_shopify_sites() if 'load_shopify_sites' in dir() else []
             site_count = len(sites) if sites else 0
