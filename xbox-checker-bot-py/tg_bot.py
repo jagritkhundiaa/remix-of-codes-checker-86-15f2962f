@@ -1997,7 +1997,8 @@ def handle_update(update):
             requests.post(
                 f"{API_BASE}/sendDocument",
                 data={"chat_id": chat_id, "caption": f"<b>{count} Keys Generated</b>\nDuration: <code>{dur_label}</code>\nLine Limit: <code>{limit_label}</code>{FOOTER}", "parse_mode": "HTML"},
-                files={"document": (filename, f)}
+                files={"document": (filename, f)},
+                proxies=get_proxy()
             )
         return
 
