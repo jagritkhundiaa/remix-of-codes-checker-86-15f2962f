@@ -214,6 +214,15 @@ def probe_gate(gate_key):
             resp = requests.get('https://ck.hiapi.club/', headers={'User-Agent': _rand_ua()}, timeout=10, proxies=proxy)
             alive = resp.status_code in (200, 403)
             detail = f"HTTP {resp.status_code}"
+        elif gate_key == "b3":
+            from braintree_checker import _get_domain_url
+            domain = _get_domain_url()
+            if not domain:
+                return False, int((time.time() - start) * 1000), "No site.txt configured"
+            resp = requests.get(f'{domain}/my-account/add-payment-method/',
+                                headers={'User-Agent': _rand_ua()}, timeout=10, allow_redirects=True, proxies=proxy)
+            alive = resp.status_code == 200 and 'braintree' in resp.text.lower()
+            detail = f"HTTP {resp.status_code}" + (" | Braintree key found" if alive else " | No Braintree key")
         elif gate_key == "autosho":
             resp = requests.get('https://teamoicxkiller.online/code/index.php', headers={'User-Agent': _rand_ua()}, timeout=10, proxies=proxy)
             alive = resp.status_code in (200, 400, 403)
