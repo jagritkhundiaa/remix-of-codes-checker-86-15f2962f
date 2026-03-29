@@ -1920,6 +1920,7 @@ def handle_update(update):
     if text == "/gates":
         GATE_REGISTRY = [
             ("auth", "/auth", "Stripe Auth (Dilaboards)", True),
+            ("b3", "/b3", "Braintree Auth", True),
             ("autosho", "/autosho", "Shopify Auto 🔜 Soon", False),
             ("st1", "/st1", "HiAPI Check3", True),
             ("st5", "/st5", "HiAPI Check", True),
