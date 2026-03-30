@@ -16,6 +16,7 @@ import requests
 from typing import Dict, Any, Optional
 from datetime import datetime
 from auth_stripe_checker import check_card as auth_check_card, probe_site as auth_probe_site
+from auth2_checker import check_card as auth2_check_card, probe_site as auth2_probe_site
 from braintree_auth_checker import check_card as b3auth_check_card, probe_site as b3auth_probe_site
 from authnet_checker import check_card as authnet_check_card, probe_site as authnet_probe_site
 from br3_charge_checker import check_card as br3charge_check_card, probe_site as br3charge_probe_site
@@ -251,6 +252,7 @@ def set_gate_enabled(gate_key, enabled, by_user=None):
 # ============================================================
 GATE_PROBE_MAP = {
     "auth": {"name": "Stripe Auth", "cmd": "/chkapiauth"},
+    "auth2": {"name": "Authnet Auth", "cmd": "/chkapiauth2"},
     "b3auth": {"name": "Braintree Auth", "cmd": "/chkapib3auth"},
     "b3charge": {"name": "Braintree Charge", "cmd": "/chkapib3charge"},
     "authnet": {"name": "Authorize.net", "cmd": "/chkapiauthnet"},
@@ -264,6 +266,8 @@ def probe_gate(gate_key):
     try:
         if gate_key == "auth":
             alive, detail = auth_probe_site()
+        elif gate_key == "auth2":
+            alive, detail = auth2_probe_site()
         elif gate_key == "b3auth":
             alive, detail = b3auth_probe_site()
         elif gate_key == "b3charge":
@@ -688,6 +692,8 @@ def _run_gate(gate, c_num, c_mm, c_yy, c_cvv, proxy_dict):
     cc_line = f"{c_num}|{c_mm}|{c_yy}|{c_cvv}"
     if gate == "auth":
         return auth_check_card(cc_line, proxy_dict)
+    elif gate == "auth2":
+        return auth2_check_card(cc_line, proxy_dict)
     elif gate == "b3auth":
         return b3auth_check_card(cc_line, proxy_dict)
     elif gate == "b3charge":
@@ -862,7 +868,7 @@ def run_processing(lines, user_id, on_progress=None, on_complete=None, threads=D
 def fmt_start(username, user_id):
     name = f"@{username}" if username else "User"
     return (
-        f"<b>TalkNeon</b>\n\n"
+        f"<b>Neon</b>\n\n"
         f"Welcome, <b>{name}</b>\n"
         f"Your ID: <code>{user_id}</code>\n\n"
         f"Use /help to see all available commands and get started.\n\n"
@@ -1013,6 +1019,7 @@ cancel_flags = {}
 # ============================================================
 GATE_REGISTRY = [
     ("auth", "/auth", "Stripe Auth", True),
+    ("auth2", "/auth2", "Authnet Auth", True),
     ("b3auth", "/b3auth", "Braintree Auth", True),
     ("b3charge", "/b3charge", "Braintree Charge", True),
     ("authnet", "/authnet", "Authorize.net", True),
@@ -1022,6 +1029,7 @@ GATE_REGISTRY = [
 
 GATE_MAP = {
     "/auth": ("auth", "Stripe Auth"),
+    "/auth2": ("auth2", "Authnet Auth"),
     "/b3auth": ("b3auth", "Braintree Auth"),
     "/b3charge": ("b3charge", "Braintree Charge"),
     "/authnet": ("authnet", "Authorize.net"),
@@ -1031,6 +1039,7 @@ GATE_MAP = {
 
 CHKAPI_CMDS = {
     "/chkapiauth": "auth",
+    "/chkapiauth2": "auth2",
     "/chkapib3auth": "b3auth",
     "/chkapib3charge": "b3charge",
     "/chkapiauthnet": "authnet",
@@ -1107,6 +1116,7 @@ def handle_callback(update):
         txt = (
             "<b>Available Gates</b>\n\n"
             "<code>/auth</code>  ·  Stripe Auth\n"
+            "<code>/auth2</code>  ·  Authnet Auth\n"
             "<code>/b3auth</code>  ·  Braintree Auth\n"
             "<code>/b3charge</code>  ·  Braintree Charge\n"
             "<code>/authnet</code>  ·  Authorize.net\n"
@@ -1682,11 +1692,11 @@ def handle_update(update):
                 masked = raw[:25] + "..." if len(raw) > 25 else raw
                 if alive:
                     valid.append(raw)
-                    results_lines.append(f"<code>{masked}</code> — <code>{latency}ms</code>")
+                    results_lines.append(f"✅ <code>{masked}</code> — <code>{latency}ms</code>")
                 else:
-                    # Still add it but mark as slow/dead
-                    valid.append(raw)
-                    results_lines.append(f"<code>{masked}</code> — <code>WARN: {error}</code> (added anyway)")
+                    # Do NOT add dead proxies
+                    invalid.append(raw)
+                    results_lines.append(f"❌ <code>{masked}</code> — <code>{error}</code>")
 
             # Append valid proxies to file and pool
             if valid:
@@ -1696,15 +1706,14 @@ def handle_update(update):
                 with _proxy_lock:
                     _global_proxies.extend(valid)
 
-            alive_count = sum(1 for r in results_lines if "Invalid" not in r and "WARN" not in r)
-            warn_count = sum(1 for r in results_lines if "WARN" in r)
+            dead_count = sum(1 for r in results_lines if "❌" in r)
 
             send_message(chat_id,
                 f"<b>Proxy Add Results</b>\n\n"
                 f"Submitted: <code>{len(new_proxies_raw)}</code>\n"
-                f"Alive: <code>{alive_count}</code>\n"
-                f"Warning: <code>{warn_count}</code>\n"
-                f"Invalid: <code>{len(invalid)}</code>\n"
+                f"✅ Working: <code>{len(valid)}</code>\n"
+                f"❌ Dead: <code>{dead_count}</code>\n"
+                f"⚠️ Invalid: <code>{len(invalid) - dead_count}</code>\n"
                 f"Added to pool: <code>{len(valid)}</code>\n"
                 f"Total pool: <code>{len(_global_proxies)}</code>\n\n"
                 + "\n".join(results_lines[:20]) +
@@ -1783,33 +1792,123 @@ def handle_update(update):
         parts = text.split(maxsplit=1)
         if len(parts) < 2:
             send_message(chat_id,
-                "<b>Auto Hitter</b>\n\n"
-                "<b>Usage:</b>\n"
-                "Reply to a .txt file with cards:\n"
-                "<code>/autohitter https://checkout-url.com</code>\n\n"
-                "Or single card:\n"
-                "<code>/autohitter https://url.com CC|MM|YY|CVV</code>\n\n"
+                "<b>⚡ Auto Hitter</b>\n\n"
+                "<b>Usage Modes:</b>\n\n"
+                "1️⃣ <b>Cards + Link:</b>\n"
+                "<code>/autohitter https://url.com\n"
+                "4111111111111111|01|25|123\n"
+                "5200000000000007|02|26|456</code>\n\n"
+                "2️⃣ <b>Reply to card message + Link:</b>\n"
+                "Reply to a message containing cards with:\n"
+                "<code>/autohitter https://url.com</code>\n\n"
+                "3️⃣ <b>BIN + Link (auto-gen):</b>\n"
+                "<code>/autohitter https://url.com 424242</code>\n"
+                "Auto-generates 10 cards from BIN and hits\n\n"
+                "4️⃣ <b>Reply to .txt file + Link:</b>\n"
+                "Reply to a .txt file with:\n"
+                "<code>/autohitter https://url.com</code>\n\n"
                 "Supports 15+ providers. Auto-detects payment system.\n\n"
                 f"<i>{DEVELOPER}</i>")
             return
 
         remaining = parts[1].strip()
-        url_match = re.match(r'(https?://\S+)', remaining)
+
+        # Extract URL (can be anywhere in the text)
+        url_match = re.search(r'(https?://\S+)', remaining)
         if not url_match:
-            send_message(chat_id, f"<b>Invalid URL.</b>\n\n<i>{DEVELOPER}</i>")
+            send_message(chat_id, f"<b>No valid URL found.</b>\n\n<i>{DEVELOPER}</i>")
             return
 
         target_url = url_match.group(1)
+        # Get text before and after the URL
+        before_url = remaining[:url_match.start()].strip()
         after_url = remaining[url_match.end():].strip()
+        extra_text = (before_url + " " + after_url).strip()
 
-        # Single card mode
-        if after_url and '|' in after_url:
-            card_parts = after_url.split('|')
-            if len(card_parts) != 4:
-                send_message(chat_id, f"<b>Invalid card format.</b> Use CC|MM|YY|CVV\n\n<i>{DEVELOPER}</i>")
+        # Try to extract site name from URL
+        try:
+            from urllib.parse import urlparse
+            parsed_url = urlparse(target_url)
+            site_name = parsed_url.netloc.replace("www.", "")
+        except Exception:
+            site_name = target_url[:40]
+
+        # Determine card source
+        card_lines = []
+
+        # Check for inline cards (multi-line cards after URL or in extra_text)
+        for potential_line in remaining.split('\n'):
+            potential_line = potential_line.strip()
+            if '|' in potential_line and not potential_line.startswith('http'):
+                # Could be CC|MM|YY|CVV
+                cc_match = re.match(r'^\d{13,19}\|', potential_line)
+                if cc_match:
+                    card_lines.append(potential_line)
+
+        # Check if extra_text is a BIN (digits only, 6-8 chars)
+        is_bin_mode = False
+        bin_input = ""
+        if not card_lines and extra_text:
+            clean = extra_text.replace(" ", "")
+            if re.match(r'^\d{6,8}$', clean):
+                is_bin_mode = True
+                bin_input = clean
+
+        # Check if extra_text has a single card
+        if not card_lines and not is_bin_mode and extra_text and '|' in extra_text:
+            cc_parts = extra_text.split('|')
+            if len(cc_parts) == 4:
+                card_lines.append(extra_text)
+
+        # Check reply to message (text with cards)
+        reply = msg.get("reply_to_message")
+        if not card_lines and not is_bin_mode and reply:
+            # Check if reply has a document (.txt file)
+            if reply.get("document"):
+                doc = reply["document"]
+                fname = doc.get("file_name", "")
+                if fname.lower().endswith(".txt"):
+                    content = download_file(doc["file_id"])
+                    if content:
+                        for line in content.splitlines():
+                            line = line.strip()
+                            if line and '|' in line and re.match(r'^\d', line):
+                                card_lines.append(line)
+            # Check if reply has text with cards
+            elif reply.get("text"):
+                for line in reply["text"].splitlines():
+                    line = line.strip()
+                    if line and '|' in line and re.match(r'^\d', line):
+                        card_lines.append(line)
+
+        # BIN mode — auto-generate cards
+        if is_bin_mode:
+            send_message(chat_id,
+                f"<b>⚡ AutoHitter — BIN Mode</b>\n\n"
+                f"Site: <code>{site_name}</code>\n"
+                f"BIN: <code>{bin_input}</code>\n"
+                f"Generating 10 cards...")
+
+            gen_cards = generate_cards(bin_input, 10)
+            if not gen_cards:
+                send_message(chat_id, f"<b>Failed to generate cards from BIN.</b>\n\n<i>{DEVELOPER}</i>")
                 return
+            card_lines = gen_cards
 
-            send_message(chat_id, f"<b>Analyzing target...</b>\n<code>{target_url[:60]}</code>")
+        if not card_lines:
+            send_message(chat_id,
+                "<b>No cards found.</b>\n\n"
+                "Provide cards inline, reply to a card message/file,\n"
+                f"or use a BIN to auto-generate.\n\n<i>{DEVELOPER}</i>")
+            return
+
+        # Single card — quick hit
+        if len(card_lines) == 1:
+            cc_line = card_lines[0]
+            send_message(chat_id,
+                f"<b>⚡ AutoHitter</b>\n\n"
+                f"Site: <code>{site_name}</code>\n"
+                f"Analyzing target...")
 
             def _single_hit():
                 try:
@@ -1820,24 +1919,26 @@ def handle_update(update):
 
                 url_info = URLAnalyzer.analyze(target_url)
                 provider = url_info.get('provider', 'unknown')
+                merchant = url_info.get('merchant', site_name)
 
                 if provider not in SUPPORTED_PROVIDERS:
                     send_message(chat_id,
                         f"<b>Unsupported Provider</b>\n\n"
-                        f"Detected: <code>{provider.upper()}</code>\n"
-                        f"This provider is not supported.\n\n"
+                        f"Site: <code>{site_name}</code>\n"
+                        f"Detected: <code>{provider.upper()}</code>\n\n"
                         f"<i>{DEVELOPER}</i>")
                     return
 
-                card = parse_card_line(after_url)
+                card = parse_card_line(cc_line)
                 if not card:
                     send_message(chat_id, f"<b>Invalid card format.</b>\n\n<i>{DEVELOPER}</i>")
                     return
 
                 send_message(chat_id,
-                    f"<b>Hitting...</b>\n\n"
+                    f"<b>⚡ Hitting...</b>\n\n"
+                    f"Site: <code>{merchant}</code>\n"
                     f"Provider: <code>{provider.upper()}</code>\n"
-                    f"Card: <code>{after_url}</code>")
+                    f"Card: <code>{cc_line}</code>")
 
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
@@ -1845,24 +1946,26 @@ def handle_update(update):
                 loop.close()
 
                 if result.get('success'):
-                    receipt = result.get('receipt_url', 'N/A')
                     send_message(chat_id,
-                        f"<b>APPROVED</b>\n\n"
-                        f"Card: <code>{after_url}</code>\n"
+                        f"<b>✅ APPROVED</b>\n\n"
+                        f"Card: <code>{cc_line}</code>\n"
+                        f"Site: <code>{merchant}</code>\n"
                         f"Provider: <code>{provider.upper()}</code>\n"
                         f"Time: <code>{result.get('response_time', 0):.1f}s</code>\n\n"
                         f"<i>{DEVELOPER}</i>")
-                    notify_hit(user_id, username, f"AutoHitter ({provider})", after_url, "Approved")
+                    notify_hit(user_id, username, f"AutoHitter ({provider})", cc_line, "Approved")
                 elif result.get('error'):
                     send_message(chat_id,
-                        f"<b>ERROR</b>\n\n"
-                        f"Card: <code>{after_url}</code>\n"
+                        f"<b>⚠️ ERROR</b>\n\n"
+                        f"Card: <code>{cc_line}</code>\n"
+                        f"Site: <code>{site_name}</code>\n"
                         f"Error: <code>{result['error'][:80]}</code>\n\n"
                         f"<i>{DEVELOPER}</i>")
                 else:
                     send_message(chat_id,
-                        f"<b>DECLINED</b>\n\n"
-                        f"Card: <code>{after_url}</code>\n"
+                        f"<b>❌ DECLINED</b>\n\n"
+                        f"Card: <code>{cc_line}</code>\n"
+                        f"Site: <code>{site_name}</code>\n"
                         f"Reason: <code>{result.get('decline_code', 'unknown')}</code>\n"
                         f"Time: <code>{result.get('response_time', 0):.1f}s</code>\n\n"
                         f"<i>{DEVELOPER}</i>")
@@ -1870,22 +1973,7 @@ def handle_update(update):
             threading.Thread(target=_single_hit, daemon=True).start()
             return
 
-        # Bulk mode — requires reply to a .txt file
-        reply = msg.get("reply_to_message")
-        if not reply or not reply.get("document"):
-            send_message(chat_id,
-                "<b>Usage</b>\n\n"
-                "Reply to a .txt file with cards:\n"
-                f"<code>/autohitter {target_url[:40]}...</code>\n\n"
-                f"<i>{DEVELOPER}</i>")
-            return
-
-        doc = reply["document"]
-        fname = doc.get("file_name", "")
-        if not fname.lower().endswith(".txt"):
-            send_message(chat_id, f"<b>Only .txt files are accepted.</b>\n\n<i>{DEVELOPER}</i>")
-            return
-
+        # Bulk mode — card_lines already populated above
         with active_lock:
             if user_id in active_users:
                 send_message(chat_id, f"<b>You already have a task running.</b>\n\n<i>{DEVELOPER}</i>")
@@ -1894,35 +1982,22 @@ def handle_update(update):
 
         cancel_flags.pop(user_id, None)
 
-        content = download_file(doc["file_id"])
-        if not content:
-            with active_lock:
-                active_users.discard(user_id)
-            send_message(chat_id, f"<b>Failed to download file.</b>\n\n<i>{DEVELOPER}</i>")
-            return
-
-        card_lines = [l.strip() for l in content.splitlines() if l.strip() and '|' in l.strip()]
-        if not card_lines:
-            with active_lock:
-                active_users.discard(user_id)
-            send_message(chat_id, f"<b>No valid cards found in file.</b>\n\n<i>{DEVELOPER}</i>")
-            return
-
         user_limit = get_user_line_limit(user_id)
         if user_limit and len(card_lines) > user_limit:
             with active_lock:
                 active_users.discard(user_id)
             send_message(chat_id,
-                f"<b>File Too Large</b>\n\n"
+                f"<b>Too Many Cards</b>\n\n"
                 f"Your key allows <code>{user_limit}</code> lines.\n"
-                f"Your file has <code>{len(card_lines)}</code> lines.\n\n"
+                f"Provided: <code>{len(card_lines)}</code> cards.\n\n"
                 f"<i>{DEVELOPER}</i>")
             return
 
+        bin_label = " (BIN gen)" if is_bin_mode else ""
         init_resp = send_message(
             chat_id,
-            f"<b>AutoHitter Starting...</b>\n\n"
-            f"Target: <code>{target_url[:60]}</code>\n"
+            f"<b>⚡ AutoHitter Starting{bin_label}</b>\n\n"
+            f"Site: <code>{site_name}</code>\n"
             f"Cards: <code>{len(card_lines)}</code>",
             reply_markup=stop_button_markup(user_id)
         )
@@ -1930,7 +2005,7 @@ def handle_update(update):
 
         def _run_autohitter():
             try:
-                from dlx_autohitter import URLAnalyzer, hit_single, parse_card_line, detect_provider, SUPPORTED_PROVIDERS, SmartRateLimiter
+                from dlx_autohitter import URLAnalyzer, hit_single, parse_card_line as ah_parse_card, detect_provider, SUPPORTED_PROVIDERS, SmartRateLimiter
             except ImportError:
                 send_message(chat_id, f"<b>AutoHitter module not available.</b>\n\n<i>{DEVELOPER}</i>")
                 with active_lock:
@@ -1939,10 +2014,12 @@ def handle_update(update):
 
             url_info = URLAnalyzer.analyze(target_url)
             provider = url_info.get('provider', 'unknown')
+            merchant = url_info.get('merchant', site_name)
 
             if provider not in SUPPORTED_PROVIDERS:
                 send_message(chat_id,
                     f"<b>Unsupported Provider</b>\n\n"
+                    f"Site: <code>{site_name}</code>\n"
                     f"Detected: <code>{provider.upper()}</code>\n\n"
                     f"<i>{DEVELOPER}</i>")
                 with active_lock:
@@ -1951,10 +2028,11 @@ def handle_update(update):
 
             if progress_msg_id:
                 edit_message(chat_id, progress_msg_id,
-                    f"<b>AutoHitter Active</b>\n\n"
+                    f"<b>⚡ AutoHitter Active</b>\n\n"
+                    f"Site: <code>{merchant}</code>\n"
                     f"Provider: <code>{provider.upper()}</code>\n"
                     f"Cards: <code>{len(card_lines)}</code>\n"
-                    f"Analyzing...",
+                    f"Processing...",
                     reply_markup=stop_button_markup(user_id))
 
             rate_limiter = SmartRateLimiter()
@@ -1972,7 +2050,7 @@ def handle_update(update):
                 if cancel_flags.get(user_id):
                     break
 
-                card = parse_card_line(line)
+                card = ah_parse_card(line)
                 if not card:
                     fails += 1
                     continue
@@ -1987,8 +2065,9 @@ def handle_update(update):
                     successes += 1
                     approved_list.append(line)
                     send_message(chat_id,
-                        f"<b>HIT</b>\n\n"
+                        f"<b>✅ HIT</b>\n\n"
                         f"<code>{line}</code>\n"
+                        f"Site: <code>{merchant}</code>\n"
                         f"Time: <code>{result.get('response_time', 0):.1f}s</code>\n"
                         f"[{i+1}/{total}]\n\n"
                         f"<i>{DEVELOPER}</i>")
@@ -2008,13 +2087,14 @@ def handle_update(update):
 
                     markup = None if (i + 1 == total) else stop_button_markup(user_id)
                     edit_message(chat_id, progress_msg_id,
-                        f"<b>AutoHitter {'Complete' if i+1==total else 'Active'}</b>\n\n"
+                        f"<b>⚡ AutoHitter {'Complete' if i+1==total else 'Active'}</b>\n\n"
+                        f"Site: <code>{merchant}</code>\n"
                         f"<code>{bar}</code> {pct}%\n\n"
                         f"Provider: <code>{provider.upper()}</code>\n"
                         f"Progress: <code>{i+1}/{total}</code>\n"
                         f"Speed: <code>{cpm} CPM</code>\n\n"
-                        f"Approved: <code>{successes}</code>\n"
-                        f"Failed: <code>{fails}</code>\n\n"
+                        f"✅ Approved: <code>{successes}</code>\n"
+                        f"❌ Failed: <code>{fails}</code>\n\n"
                         f"<i>{DEVELOPER}</i>",
                         reply_markup=markup)
 
@@ -2022,11 +2102,12 @@ def handle_update(update):
             cancel_flags.pop(user_id, None)
 
             send_message(chat_id,
-                f"<b>AutoHitter Complete</b>\n\n"
+                f"<b>⚡ AutoHitter Complete</b>\n\n"
+                f"Site: <code>{merchant}</code>\n"
                 f"Provider: <code>{provider.upper()}</code>\n"
                 f"Total: <code>{total}</code>\n"
-                f"Approved: <code>{successes}</code>\n"
-                f"Failed: <code>{fails}</code>\n\n"
+                f"✅ Approved: <code>{successes}</code>\n"
+                f"❌ Failed: <code>{fails}</code>\n\n"
                 f"<i>{DEVELOPER}</i>")
 
             if approved_list:
