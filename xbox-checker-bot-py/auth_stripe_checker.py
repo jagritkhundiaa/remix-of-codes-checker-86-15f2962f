@@ -163,7 +163,7 @@ def _process_card(cc, mm, yy, cvv, proxy_dict=None):
             return {"status": "Error", "response": "Setup nonce not found"}
         addnonce = nonce_match.group(1)
 
-        time.sleep(random.uniform(2.0, 3.0))
+        time.sleep(random.uniform(0.5, 1.2))
 
         # Step 2: Create payment method on Stripe
         stripe_headers = {
