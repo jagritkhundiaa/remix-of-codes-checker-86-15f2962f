@@ -1232,7 +1232,7 @@ def handle_update(update):
     chat_id = msg["chat"]["id"]
     user_id = msg["from"]["id"]
     username = msg["from"].get("username", "")
-    text = (msg.get("text") or "").strip()
+    text = (msg.get("text") or msg.get("caption") or "").strip()
 
     if not text:
         return
