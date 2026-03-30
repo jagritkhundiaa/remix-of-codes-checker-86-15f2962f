@@ -1992,8 +1992,11 @@ def handle_update(update):
             ("auth", "/auth", "Stripe Auth (Dilaboards)", True),
             ("b3", "/b3", "Braintree Auth", True),
             ("b3auth", "/b3auth", "Braintree Auth (Session)", True),
+            ("b3charge", "/b3charge", "Braintree $1 Charge", True),
             ("authnet", "/authnet", "Authorize.net", True),
-            ("autosho", "/autosho", "Shopify Auto 🔜 Soon", False),
+            ("autostripe", "/autostripe", "Auto Stripe (WooCommerce)", True),
+            ("shopifygql", "/shopifygql", "Shopify GQL Direct", True),
+            ("autosho", "/autosho", "Shopify Auto (API)", True),
             ("st1", "/st1", "HiAPI Check3", True),
             ("st5", "/st5", "HiAPI Check", True),
         ]
