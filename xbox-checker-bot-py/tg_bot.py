@@ -738,40 +738,49 @@ def process_single_entry(entry, proxies_list, user_id, gate="auth"):
                 "ReadTimeoutError", "ConnectionResetError", "RemoteDisconnected",
                 "NewConnectionError", "SSLError", "socket.timeout", "ECONNREFUSED",
                 "Connection refused", "Connection timed out", "Connection reset",
+                "ConnError",  # New status from auth_stripe_checker
+                "Rate limited", "Service unavailable",
             ]
 
             def _is_conn_error(r):
                 return isinstance(r, str) and any(e in r for e in _CONN_ERRORS)
 
-            # Try multiple proxies with rotation
-            proxy_candidates = _get_rotating_proxy(proxies_list, max_tries=3)
+            # Try up to 5 proxies with rotation before giving up
+            max_proxy_tries = min(5, len(proxies_list)) if proxies_list else 0
+            proxy_candidates = _get_rotating_proxy(proxies_list, max_tries=max_proxy_tries) if proxies_list else [None]
             result = None
+
             for proxy_dict in proxy_candidates:
+                if cancel_flags.get(user_id):
+                    break
                 try:
                     result = _run_gate(gate, c_num, c_mm, c_yy, c_cvv, proxy_dict)
-                    if not (proxy_dict and _is_conn_error(result)):
+                    if not _is_conn_error(result):
                         break
+                    # Small backoff before next proxy
+                    time.sleep(random.uniform(0.3, 0.7))
                 except (requests.exceptions.ProxyError, requests.exceptions.ConnectionError,
                         requests.exceptions.Timeout, ConnectionError, OSError):
+                    time.sleep(random.uniform(0.2, 0.5))
                     continue
                 except Exception as e:
                     result = f"Error: {str(e)}"
                     if not _is_conn_error(result):
                         break
 
-            # Final fallback: direct connection
+            # Final fallback: direct connection (no proxy)
             if result is None or _is_conn_error(result):
                 try:
                     result = _run_gate(gate, c_num, c_mm, c_yy, c_cvv, None)
                 except Exception as e2:
                     result = f"Error: {str(e2)}"
 
-            # Sanitize connection errors for user — show generic message
+            # Sanitize: never show raw connection errors to users
             if _is_conn_error(result):
                 result = "Declined | Gateway Timeout"
 
             if result is None:
-                result = "Error: All proxies failed"
+                result = "Declined | Gateway Timeout"
         else:
             result = "Error: Invalid Format"
     except Exception as e:
