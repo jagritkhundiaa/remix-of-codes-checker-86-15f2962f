@@ -2039,24 +2039,34 @@ def handle_update(update):
             url_info = URLAnalyzer.analyze(target_url)
             provider = url_info.get('provider', 'unknown')
             merchant = url_info.get('merchant', site_name)
+            ah_product = url_info.get('product', 'Unknown')
+            ah_amount = url_info.get('amount')
+            ah_currency = url_info.get('currency', 'USD')
+            ah_product_url = url_info.get('product_url')
 
             if provider not in SUPPORTED_PROVIDERS:
                 send_message(chat_id,
                     f"<b>Unsupported Provider</b>\n\n"
-                    f"Site: <code>{site_name}</code>\n"
-                    f"Detected: <code>{provider.upper()}</code>\n\n"
+                    f"🏢 Site: <code>{site_name}</code>\n"
+                    f"🔌 Detected: <code>{provider.upper()}</code>\n\n"
                     f"<i>{DEVELOPER}</i>")
                 with active_lock:
                     active_users.discard(user_id)
                 return
 
+            # Build info header
+            info_header = f"🏢 Site: <code>{merchant}</code>\n🔌 Provider: <code>{provider.upper()}</code>"
+            if ah_product and ah_product != 'Unknown':
+                info_header += f"\n📦 Product: <code>{ah_product}</code>"
+            if ah_amount:
+                info_header += f"\n💰 Amount: <code>{ah_amount} {ah_currency}</code>"
+
             if progress_msg_id:
                 edit_message(chat_id, progress_msg_id,
                     f"<b>⚡ AutoHitter Active</b>\n\n"
-                    f"Site: <code>{merchant}</code>\n"
-                    f"Provider: <code>{provider.upper()}</code>\n"
-                    f"Cards: <code>{len(card_lines)}</code>\n"
-                    f"Processing...",
+                    f"{info_header}\n"
+                    f"🎴 Cards: <code>{len(card_lines)}</code>\n\n"
+                    f"⏳ Processing...",
                     reply_markup=stop_button_markup(user_id))
 
             rate_limiter = SmartRateLimiter()
