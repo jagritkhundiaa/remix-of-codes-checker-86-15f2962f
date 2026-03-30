@@ -1214,7 +1214,7 @@ def handle_update(update):
         return
 
     # --- /bin ---
-    if text.startswith("/bin") and not text.startswith("/binlookup"):
+    if text.startswith("/bin") and not text.startswith("/binlookup") and not text.startswith("/binquality"):
         parts = text.split(maxsplit=1)
         if len(parts) < 2:
             send_message(chat_id, f"<b>Usage:</b> <code>/bin 424242,555555</code>\n\n<i>{DEVELOPER}</i>")
