@@ -1706,15 +1706,14 @@ def handle_update(update):
                 with _proxy_lock:
                     _global_proxies.extend(valid)
 
-            alive_count = sum(1 for r in results_lines if "Invalid" not in r and "WARN" not in r)
-            warn_count = sum(1 for r in results_lines if "WARN" in r)
+            dead_count = sum(1 for r in results_lines if "❌" in r)
 
             send_message(chat_id,
                 f"<b>Proxy Add Results</b>\n\n"
                 f"Submitted: <code>{len(new_proxies_raw)}</code>\n"
-                f"Alive: <code>{alive_count}</code>\n"
-                f"Warning: <code>{warn_count}</code>\n"
-                f"Invalid: <code>{len(invalid)}</code>\n"
+                f"✅ Working: <code>{len(valid)}</code>\n"
+                f"❌ Dead: <code>{dead_count}</code>\n"
+                f"⚠️ Invalid: <code>{len(invalid) - dead_count}</code>\n"
                 f"Added to pool: <code>{len(valid)}</code>\n"
                 f"Total pool: <code>{len(_global_proxies)}</code>\n\n"
                 + "\n".join(results_lines[:20]) +
