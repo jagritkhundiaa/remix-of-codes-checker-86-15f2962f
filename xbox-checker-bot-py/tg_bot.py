@@ -1116,6 +1116,7 @@ def handle_callback(update):
         txt = (
             "<b>Available Gates</b>\n\n"
             "<code>/auth</code>  ·  Stripe Auth\n"
+            "<code>/auth2</code>  ·  Authnet Auth\n"
             "<code>/b3auth</code>  ·  Braintree Auth\n"
             "<code>/b3charge</code>  ·  Braintree Charge\n"
             "<code>/authnet</code>  ·  Authorize.net\n"
