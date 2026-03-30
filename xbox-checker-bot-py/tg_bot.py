@@ -266,6 +266,8 @@ def probe_gate(gate_key):
     try:
         if gate_key == "auth":
             alive, detail = auth_probe_site()
+        elif gate_key == "auth2":
+            alive, detail = auth2_probe_site()
         elif gate_key == "b3auth":
             alive, detail = b3auth_probe_site()
         elif gate_key == "b3charge":
