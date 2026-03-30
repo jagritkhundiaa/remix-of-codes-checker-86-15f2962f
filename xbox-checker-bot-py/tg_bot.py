@@ -453,19 +453,19 @@ def get_file_url(file_id):
     return None
 
 
-def download_file(file_id):
+def download_file(file_id, binary=False):
     url = get_file_url(file_id)
     if not url:
         return None
     proxy = get_proxy()
     try:
         r = requests.get(url, timeout=30, proxies=proxy)
-        return r.text
+        return r.content if binary else r.text
     except Exception:
         if proxy:
             try:
                 r = requests.get(url, timeout=30)
-                return r.text
+                return r.content if binary else r.text
             except Exception:
                 pass
         return None
