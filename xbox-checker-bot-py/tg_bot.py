@@ -1,6 +1,6 @@
 # ============================================================
-#  Telegram Bot — TalkNeon
-#  By TalkNeon
+#  Telegram Bot — Neon
+#  made by talkneon
 # ============================================================
 
 import os
