@@ -868,7 +868,7 @@ def run_processing(lines, user_id, on_progress=None, on_complete=None, threads=D
 def fmt_start(username, user_id):
     name = f"@{username}" if username else "User"
     return (
-        f"<b>TalkNeon</b>\n\n"
+        f"<b>Neon</b>\n\n"
         f"Welcome, <b>{name}</b>\n"
         f"Your ID: <code>{user_id}</code>\n\n"
         f"Use /help to see all available commands and get started.\n\n"
