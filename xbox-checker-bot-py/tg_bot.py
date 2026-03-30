@@ -692,6 +692,8 @@ def _run_gate(gate, c_num, c_mm, c_yy, c_cvv, proxy_dict):
     cc_line = f"{c_num}|{c_mm}|{c_yy}|{c_cvv}"
     if gate == "auth":
         return auth_check_card(cc_line, proxy_dict)
+    elif gate == "auth2":
+        return auth2_check_card(cc_line, proxy_dict)
     elif gate == "b3auth":
         return b3auth_check_card(cc_line, proxy_dict)
     elif gate == "b3charge":
