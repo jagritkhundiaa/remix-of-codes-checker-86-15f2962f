@@ -1581,6 +1581,112 @@ def handle_update(update):
             f"<i>{DEVELOPER}</i>")
         return
 
+    # --- /addproxy (admin) — add proxies via paste or .txt reply ---
+    if text.startswith("/addproxy"):
+        if not is_admin(user_id):
+            return
+
+        new_proxies_raw = []
+
+        # Check if replying to a .txt file
+        reply = msg.get("reply_to_message")
+        if reply and reply.get("document"):
+            doc = reply["document"]
+            fname = doc.get("file_name", "")
+            if fname.lower().endswith(".txt"):
+                content = download_file(doc["file_id"])
+                if content:
+                    new_proxies_raw = [l.strip() for l in content.splitlines() if l.strip() and not l.strip().startswith('#')]
+
+        # Check if proxies pasted inline after command
+        parts = text.split(maxsplit=1)
+        if len(parts) >= 2:
+            inline_proxies = [l.strip() for l in parts[1].splitlines() if l.strip() and not l.strip().startswith('#')]
+            # Also handle comma-separated
+            expanded = []
+            for p in inline_proxies:
+                if ',' in p and '://' not in p and '@' not in p:
+                    expanded.extend([x.strip() for x in p.split(',') if x.strip()])
+                else:
+                    expanded.append(p)
+            new_proxies_raw.extend(expanded)
+
+        if not new_proxies_raw:
+            send_message(chat_id,
+                "<b>Add Proxies</b>\n\n"
+                "<b>Methods:</b>\n"
+                "1. Paste inline:\n"
+                "<code>/addproxy 45.3.49.240:3129</code>\n\n"
+                "2. Multiple lines:\n"
+                "<code>/addproxy\n"
+                "45.3.49.240:3129\n"
+                "host:port:user:pass</code>\n\n"
+                "3. Reply to a .txt file with <code>/addproxy</code>\n\n"
+                "<b>Supported formats:</b>\n"
+                "<code>host:port</code>\n"
+                "<code>host:port:user:pass</code>\n"
+                "<code>user:pass@host:port</code>\n"
+                "<code>http://host:port</code>\n"
+                "<code>socks5://user:pass@host:port</code>\n"
+                f"...and more\n\n<i>{DEVELOPER}</i>")
+            return
+
+        send_message(chat_id,
+            f"<b>Validating {len(new_proxies_raw)} proxy(ies)...</b>\n"
+            "Testing connectivity for each one.")
+
+        def _do_add_proxies():
+            global _global_proxies
+            valid = []
+            invalid = []
+            results_lines = []
+
+            for raw in new_proxies_raw:
+                # Format validation
+                validated = validate_proxy_format(raw)
+                if not validated:
+                    invalid.append(raw)
+                    masked = raw[:25] + "..." if len(raw) > 25 else raw
+                    results_lines.append(f"<code>{masked}</code> — <code>Invalid format</code>")
+                    continue
+
+                # Connectivity test
+                alive, latency, error = test_proxy_connectivity(raw)
+                masked = raw[:25] + "..." if len(raw) > 25 else raw
+                if alive:
+                    valid.append(raw)
+                    results_lines.append(f"<code>{masked}</code> — <code>{latency}ms</code>")
+                else:
+                    # Still add it but mark as slow/dead
+                    valid.append(raw)
+                    results_lines.append(f"<code>{masked}</code> — <code>WARN: {error}</code> (added anyway)")
+
+            # Append valid proxies to file and pool
+            if valid:
+                with open(PROXIES_FILE, 'a') as f:
+                    for p in valid:
+                        f.write(p + "\n")
+                with _proxy_lock:
+                    _global_proxies.extend(valid)
+
+            alive_count = sum(1 for r in results_lines if "Invalid" not in r and "WARN" not in r)
+            warn_count = sum(1 for r in results_lines if "WARN" in r)
+
+            send_message(chat_id,
+                f"<b>Proxy Add Results</b>\n\n"
+                f"Submitted: <code>{len(new_proxies_raw)}</code>\n"
+                f"Alive: <code>{alive_count}</code>\n"
+                f"Warning: <code>{warn_count}</code>\n"
+                f"Invalid: <code>{len(invalid)}</code>\n"
+                f"Added to pool: <code>{len(valid)}</code>\n"
+                f"Total pool: <code>{len(_global_proxies)}</code>\n\n"
+                + "\n".join(results_lines[:20]) +
+                (f"\n... and {len(results_lines) - 20} more" if len(results_lines) > 20 else "") +
+                f"\n\n<i>{DEVELOPER}</i>")
+
+        threading.Thread(target=_do_add_proxies, daemon=True).start()
+        return
+
     # --- /setgc (admin) ---
     if text.startswith("/setgc"):
         if not is_admin(user_id):
