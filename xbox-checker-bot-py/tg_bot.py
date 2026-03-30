@@ -252,6 +252,7 @@ def set_gate_enabled(gate_key, enabled, by_user=None):
 # ============================================================
 GATE_PROBE_MAP = {
     "auth": {"name": "Stripe Auth", "cmd": "/chkapiauth"},
+    "auth2": {"name": "Authnet Auth", "cmd": "/chkapiauth2"},
     "b3auth": {"name": "Braintree Auth", "cmd": "/chkapib3auth"},
     "b3charge": {"name": "Braintree Charge", "cmd": "/chkapib3charge"},
     "authnet": {"name": "Authorize.net", "cmd": "/chkapiauthnet"},
