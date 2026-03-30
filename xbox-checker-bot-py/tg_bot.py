@@ -1149,7 +1149,7 @@ def handle_callback(update):
     if data == "help_admin":
         answer_callback(cb_id)
         if not is_admin(cb_user_id):
-            txt = f"<b>Admin section is restricted.</b>\n\n<i>By {DEVELOPER}</i>"
+            txt = f"<b>Admin section is restricted.</b>\n\n<i>{DEVELOPER}</i>"
         else:
             txt = (
                 "<b>Admin Commands</b>\n\n"
@@ -1161,10 +1161,10 @@ def handle_callback(update):
                 "<code>/revoke ID</code>  ·  Revoke user access\n"
                 "<code>/broadcast msg</code>  ·  Message all users\n"
                 "<code>/proxy</code>  ·  Proxy pool status\n"
+                "<code>/addproxy</code>  ·  Add proxies to pool\n"
                 "<code>/scrapeproxies</code>  ·  Scrape fresh proxies\n"
-                "<code>/setgc</code>  ·  Set notification group\n"
                 "<code>/chkapis</code>  ·  Health check all APIs\n\n"
-                f"<i>By {DEVELOPER}</i>"
+                f"<i>{DEVELOPER}</i>"
             )
         if chat_id and msg_id:
             edit_message(chat_id, msg_id, txt, reply_markup=help_back_markup())
