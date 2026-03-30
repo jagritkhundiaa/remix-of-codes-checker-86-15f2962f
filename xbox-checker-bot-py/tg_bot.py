@@ -730,28 +730,45 @@ def process_single_entry(entry, proxies_list, user_id, gate="auth"):
                 if not any(c_num.startswith(b) for b in user_bin_list):
                     return "SKIPPED | BIN not allowed"
 
+            # Connection error patterns that should trigger proxy rotation
+            _CONN_ERRORS = [
+                "ProxyError", "Tunnel connection failed", "503 Service Unavailable",
+                "connection failed", "Max retries", "HTTPSConnectionPool",
+                "HTTPConnectionPool", "ConnectionError", "ConnectTimeoutError",
+                "ReadTimeoutError", "ConnectionResetError", "RemoteDisconnected",
+                "NewConnectionError", "SSLError", "socket.timeout", "ECONNREFUSED",
+                "Connection refused", "Connection timed out", "Connection reset",
+            ]
+
+            def _is_conn_error(r):
+                return isinstance(r, str) and any(e in r for e in _CONN_ERRORS)
+
             # Try multiple proxies with rotation
             proxy_candidates = _get_rotating_proxy(proxies_list, max_tries=3)
             result = None
             for proxy_dict in proxy_candidates:
                 try:
                     result = _run_gate(gate, c_num, c_mm, c_yy, c_cvv, proxy_dict)
-                    # If result doesn't contain proxy errors, use it
-                    if not (proxy_dict and isinstance(result, str) and
-                            any(err in result for err in ["ProxyError", "Tunnel connection failed", "503 Service Unavailable", "connection failed"])):
+                    if not (proxy_dict and _is_conn_error(result)):
                         break
-                except (requests.exceptions.ProxyError, requests.exceptions.ConnectionError):
+                except (requests.exceptions.ProxyError, requests.exceptions.ConnectionError,
+                        requests.exceptions.Timeout, ConnectionError, OSError):
                     continue
                 except Exception as e:
                     result = f"Error: {str(e)}"
-                    break
+                    if not _is_conn_error(result):
+                        break
 
             # Final fallback: direct connection
-            if result is None or (isinstance(result, str) and any(err in result for err in ["ProxyError", "Tunnel connection failed", "503 Service"])):
+            if result is None or _is_conn_error(result):
                 try:
                     result = _run_gate(gate, c_num, c_mm, c_yy, c_cvv, None)
                 except Exception as e2:
                     result = f"Error: {str(e2)}"
+
+            # Sanitize connection errors for user — show generic message
+            if _is_conn_error(result):
+                result = "Declined | Gateway Timeout"
 
             if result is None:
                 result = "Error: All proxies failed"
