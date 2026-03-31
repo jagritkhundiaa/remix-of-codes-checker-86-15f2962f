@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NARUTO</title>
+  <style>
+    :root {
+      --bg-1: #020917;
+      --bg-2: #06193f;
+      --mouse-x: 50vw;
+      --mouse-y: 50vh;
+      --parallax-x: 0px;
+      --parallax-y: 0px;
+      --parallax-x-inv: 0px;
+      --parallax-y-inv: 0px;
+      --panel: #0f1f45;
+      --line: #22407e;
+      --text: #e8efff;
+      --muted: #95a8d8;
+      --ok: #15b981;
+      --err: #ff5d5d;
+      --btn: #0d9488;
+      --btn-hover: #0f766e;
+      --chip: #112a5f;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(220px 180px at var(--mouse-x) var(--mouse-y), rgba(101, 173, 255, 0.14) 0%, rgba(101, 173, 255, 0) 72%),
+        radial-gradient(130% 115% at 100% 0%, var(--bg-2) 0%, var(--bg-1) 58%);
+      color: var(--text);
+      font: 13px/1.4 "Segoe UI", Tahoma, sans-serif;
+      padding: 18px;
+      position: relative;
+      overflow-x: hidden;
+      isolation: isolate;
+    }
+
+    body::before,
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: -1;
+    }
+
+    body::before {
+      background:
+        radial-gradient(40% 28% at 10% 8%, rgba(117, 192, 255, 0.34) 0%, rgba(117, 192, 255, 0.08) 56%, rgba(117, 192, 255, 0) 76%),
+        radial-gradient(34% 24% at 29% 10%, rgba(92, 166, 244, 0.32) 0%, rgba(92, 166, 244, 0.08) 56%, rgba(92, 166, 244, 0) 76%),
+        radial-gradient(36% 26% at 55% 7%, rgba(124, 198, 255, 0.34) 0%, rgba(124, 198, 255, 0.08) 54%, rgba(124, 198, 255, 0) 76%),
+        radial-gradient(42% 28% at 88% 10%, rgba(95, 164, 238, 0.32) 0%, rgba(95, 164, 238, 0.08) 56%, rgba(95, 164, 238, 0) 78%),
+        linear-gradient(to bottom, rgba(75, 138, 225, 0.2) 0%, rgba(43, 85, 165, 0.09) 26%, rgba(10, 24, 56, 0) 62%);
+      filter: blur(18px) saturate(120%);
+      mix-blend-mode: screen;
+      opacity: 0.9;
+      animation:
+        smokeFlow 13s ease-in-out infinite alternate,
+        smokePulse 5.6s ease-in-out infinite;
+      transform: translate3d(var(--parallax-x), var(--parallax-y), 0) scale(1.04);
+      transform-origin: 50% 20%;
+    }
+
+    body::after {
+      background:
+        radial-gradient(13% 56% at 42% 108%, rgba(255, 92, 20, 0.86) 0%, rgba(255, 92, 20, 0.44) 44%, rgba(255, 92, 20, 0) 76%),
+        radial-gradient(10% 64% at 50% 104%, rgba(255, 196, 58, 0.96) 0%, rgba(255, 180, 45, 0.62) 40%, rgba(255, 180, 45, 0) 78%),
+        radial-gradient(14% 56% at 58% 108%, rgba(255, 74, 12, 0.84) 0%, rgba(255, 74, 12, 0.4) 46%, rgba(255, 74, 12, 0) 78%),
+        radial-gradient(30% 28% at 50% 104%, rgba(255, 132, 34, 0.44) 0%, rgba(255, 132, 34, 0) 72%),
+        radial-gradient(240px 170px at var(--mouse-x) calc(var(--mouse-y) + 26px), rgba(255, 188, 74, 0.16) 0%, rgba(255, 188, 74, 0) 72%),
+        radial-gradient(2px 2px at 22% 96%, rgba(255, 224, 146, 0.66) 0%, rgba(255, 224, 146, 0) 70%),
+        radial-gradient(2px 2px at 36% 97%, rgba(255, 172, 86, 0.62) 0%, rgba(255, 172, 86, 0) 70%),
+        radial-gradient(2px 2px at 52% 96%, rgba(255, 230, 156, 0.66) 0%, rgba(255, 230, 156, 0) 70%),
+        radial-gradient(2px 2px at 69% 97%, rgba(255, 170, 82, 0.62) 0%, rgba(255, 170, 82, 0) 70%),
+        radial-gradient(2px 2px at 82% 96%, rgba(255, 226, 148, 0.66) 0%, rgba(255, 226, 148, 0) 70%);
+      filter: blur(6px) saturate(152%);
+      mix-blend-mode: screen;
+      opacity: 0.96;
+      animation:
+        flameLift 2.7s ease-in-out infinite alternate,
+        flameFlicker 1.12s steps(8, end) infinite,
+        emberLift 7.2s linear infinite;
+      transform: translate3d(var(--parallax-x-inv), var(--parallax-y-inv), 0);
+    }
+
+    @keyframes smokeFlow {
+      0% {
+        transform: translate3d(var(--parallax-x), var(--parallax-y), 0) scale(1.03);
+      }
+      100% {
+        transform: translate3d(var(--parallax-x), calc(var(--parallax-y) - 12px), 0) scale(1.08);
+      }
+    }
+
+    @keyframes smokePulse {
+      0% { opacity: 0.78; }
+      45% { opacity: 0.94; }
+      100% {
+        opacity: 0.84;
+      }
+    }
+
+    @keyframes flameLift {
+      0% {
+        transform: translate3d(var(--parallax-x-inv), calc(var(--parallax-y-inv) + 10px), 0) scaleY(0.9) scaleX(1);
+      }
+      50% {
+        transform: translate3d(var(--parallax-x-inv), calc(var(--parallax-y-inv) - 6px), 0) scaleY(1.12) scaleX(1.03);
+      }
+      100% {
+        transform: translate3d(var(--parallax-x-inv), calc(var(--parallax-y-inv) + 4px), 0) scaleY(0.95) scaleX(0.98);
+      }
+    }
+
+    @keyframes flameFlicker {
+      0% { opacity: 0.82; }
+      12% { opacity: 1; }
+      25% { opacity: 0.86; }
+      43% { opacity: 0.96; }
+      61% { opacity: 0.84; }
+      78% { opacity: 0.98; }
+      100% { opacity: 0.88; }
+    }
+
+    @keyframes emberLift {
+      0% {
+        background-position:
+          42% 108%, 50% 104%, 58% 108%, 50% 104%, var(--mouse-x) calc(var(--mouse-y) + 26px),
+          22% 100%, 36% 100%, 52% 100%, 69% 100%, 82% 100%;
+        opacity: 0.92;
+      }
+      100% {
+        background-position:
+          42% 108%, 50% 104%, 58% 108%, 50% 104%, var(--mouse-x) calc(var(--mouse-y) + 26px),
+          22% 88%, 36% 84%, 52% 86%, 69% 83%, 82% 87%;
+        opacity: 0.72;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      body::before,
+      body::after {
+        animation: none;
+      }
+    }
+
+    .wrap {
+      max-width: 920px;
+      margin: 0 auto;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(7, 18, 46, 0.78);
+      box-shadow: 0 24px 56px rgba(0, 0, 0, 0.35);
+      overflow: hidden;
+      backdrop-filter: blur(4px);
+      position: relative;
+      z-index: 1;
+    }
+
+    .head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(10, 28, 72, 0.55);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 800;
+      letter-spacing: 0.3px;
+    }
+
+    .brand img {
+      width: 18px;
+      height: 18px;
+      border-radius: 4px;
+    }
+
+    .target {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .status {
+      margin: 10px 16px 0;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      color: var(--muted);
+      background: rgba(12, 28, 66, 0.55);
+      min-height: 36px;
+    }
+
+    .status.ok { color: var(--ok); }
+    .status.err { color: var(--err); }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      padding: 12px 16px 18px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(15, 31, 69, 0.65);
+      padding: 10px;
+    }
+
+    .card h3 {
+      margin: 0 0 8px;
+      font-size: 12px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #b8c7ee;
+    }
+
+    .mode {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .mode button {
+      flex: 1;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+      background: var(--chip);
+      color: var(--text);
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .mode button.active {
+      background: linear-gradient(135deg, #0d9488, #118a80);
+      border-color: #1ed8c5;
+    }
+
+    .row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .row:last-child { margin-bottom: 0; }
+
+    input[type="text"],
+    input[type="password"],
+    select,
+    textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #0a1a3f;
+      color: #f1f5ff;
+      padding: 8px 10px;
+      outline: none;
+    }
+
+    .switch-row select {
+      width: 210px;
+      max-width: 100%;
+    }
+
+    textarea {
+      min-height: 96px;
+      resize: vertical;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+    }
+
+    .btn {
+      border: 0;
+      border-radius: 8px;
+      background: var(--btn);
+      color: #fff;
+      cursor: pointer;
+      font-weight: 700;
+      padding: 8px 12px;
+    }
+
+    .btn:hover { background: var(--btn-hover); }
+
+    .btn-alt {
+      background: #173260;
+    }
+
+    .btn-alt:hover {
+      background: #1f4278;
+    }
+
+    .log-list {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+      background: #0a1a3f;
+      max-height: 184px;
+      overflow: auto;
+    }
+
+    .log-item {
+      padding: 6px 0;
+      border-bottom: 1px dashed #22407e;
+      color: #c6d4f4;
+      font-size: 12px;
+      word-break: break-word;
+    }
+
+    .log-item:last-child { border-bottom: 0; }
+
+    .switch-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 6px 0;
+      color: #cad7f5;
+    }
+
+    .foot {
+      position: sticky;
+      bottom: 0;
+      padding: 12px 16px 16px;
+      background: linear-gradient(to top, rgba(7, 18, 46, 0.98), rgba(7, 18, 46, 0.62));
+      border-top: 1px solid var(--line);
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    .start-btn {
+      min-width: 140px;
+      font-size: 14px;
+      padding: 10px 14px;
+    }
+
+    .start-btn.running {
+      background: linear-gradient(135deg, #b91c1c, #ef4444);
+    }
+
+    .hidden { display: none !important; }
+
+    @media (max-width: 860px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <div class="brand">
+        <img src="icons/icon16.png" alt="">
+        <span>NARUTO</span>
+      </div>
+      <div id="targetInfo" class="target">Resolving checkout tab...</div>
+    </div>
+
+    <div id="status" class="status">Loading panel...</div>
+
+    <div class="grid">
+      <section class="card">
+        <h3>Mode</h3>
+        <div class="mode">
+          <button id="modeBin" class="active" type="button">BIN</button>
+          <button id="modeCc" type="button">CC</button>
+        </div>
+
+        <div id="binBox">
+          <div class="row">
+            <textarea id="binInput" placeholder="One BIN per line. Example: 424242|09|30|123"></textarea>
+          </div>
+          <div class="row">
+            <button id="saveBinBtn" class="btn" type="button">Save BIN</button>
+          </div>
+        </div>
+
+        <div id="ccBox" class="hidden">
+          <div class="row">
+            <textarea id="ccInput" placeholder="One CC per line. Format: cc|mm|yy|cvv"></textarea>
+          </div>
+          <div class="row">
+            <button id="saveCcBtn" class="btn" type="button">Save CC List</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h3>Telegram</h3>
+        <div class="row">
+          <input id="tgChatId" type="password" placeholder="Chat ID (digits only)">
+        </div>
+        <div class="row">
+          <div id="tgState" class="target">Telegram Status: Unknown</div>
+        </div>
+        <div class="switch-row">
+          <label for="tgUserSsToggle">Send Screenshot To User</label>
+          <input id="tgUserSsToggle" type="checkbox">
+        </div>
+        <div class="row">
+          <button id="tgTestBtn" class="btn btn-alt" type="button">Test Connect</button>
+          <button id="tgSaveBtn" class="btn" type="button">Save</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h3>Logs</h3>
+        <div id="logList" class="log-list">
+          <div class="log-item">No logs yet.</div>
+        </div>
+        <div class="row" style="margin-top: 8px;">
+          <button id="clearLogsBtn" class="btn btn-alt" type="button">Clear Logs</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h3>Settings</h3>
+        <div class="row">
+          <input id="nameInput" type="text" placeholder="Name">
+        </div>
+        <div class="row">
+          <input id="emailInput" type="text" placeholder="Email">
+        </div>
+        <div class="switch-row">
+          <label for="hitSoundToggle">Hit Sound</label>
+          <input id="hitSoundToggle" type="checkbox">
+        </div>
+        <div class="switch-row">
+          <label for="autoSsToggle">Auto Screenshot</label>
+          <input id="autoSsToggle" type="checkbox">
+        </div>
+        <div class="switch-row">
+          <label for="addressModeSelect">Address Autofill</label>
+          <select id="addressModeSelect">
+            <option value="auto">Auto</option>
+            <option value="keep_country">Keep Current Country</option>
+          </select>
+        </div>
+        <div class="row">
+          <button id="saveSettingsBtn" class="btn" type="button">Save Settings</button>
+        </div>
+      </section>
+    </div>
+
+    <div class="foot">
+      <button id="startBtn" class="btn start-btn" type="button">Start</button>
+    </div>
+  </div>
+
+  <script src="script/panel-app.js"></script>
+</body>
+</html>

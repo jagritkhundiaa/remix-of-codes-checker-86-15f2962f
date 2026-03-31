@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NARUTO</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --line: #1f2937;
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --ok: #10b981;
+      --warn: #f59e0b;
+      --err: #ef4444;
+      --btn: #0d9488;
+      --btn-hover: #0f766e;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      width: 330px;
+      background: radial-gradient(120% 120% at 100% 0%, #172554 0%, var(--bg) 55%);
+      color: var(--text);
+      font: 13px/1.4 "Segoe UI", Tahoma, sans-serif;
+    }
+
+    .wrap {
+      padding: 14px;
+    }
+
+    .head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .head img {
+      width: 18px;
+      height: 18px;
+      border-radius: 4px;
+    }
+
+    .title {
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      background: #0b1220;
+      border-radius: 10px;
+      padding: 10px;
+    }
+
+    .status {
+      color: var(--muted);
+      min-height: 18px;
+      margin-bottom: 10px;
+    }
+
+    .status.ok { color: var(--ok); }
+    .status.warn { color: var(--warn); }
+    .status.err { color: var(--err); }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 8px;
+      background: var(--btn);
+      color: #fff;
+      cursor: pointer;
+      font-weight: 700;
+      padding: 8px 10px;
+      flex: 1;
+    }
+
+    button:hover {
+      background: var(--btn-hover);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <img src="icons/icon16.png" alt="">
+      <div class="title">NARUTO</div>
+    </div>
+
+    <div class="card">
+      <div id="status" class="status">Opening panel on current tab...</div>
+      <div class="actions">
+        <button id="openBtn" type="button">Open Panel</button>
+      </div>
+    </div>
+  </div>
+  <script src="script/popup.js"></script>
+</body>
+</html>
