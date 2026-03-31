@@ -76,15 +76,25 @@ export default function UrlAnalyzer({ accessKey, onAnalyzed, analysis }: UrlAnal
       )}
 
       {analysis?.success && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <InfoChip label="Provider" value={PROVIDER_LABELS[analysis.provider] || analysis.provider} highlight />
-          <InfoChip label="Merchant" value={analysis.merchant} />
-          <InfoChip label="Amount" value={analysis.amount || "N/A"} />
-          <InfoChip
-            label="Status"
-            value={analysis.stripePk ? "Ready" : "No PK"}
-            icon={analysis.stripePk ? <CheckCircle className="w-3 h-3 text-primary" /> : <XCircle className="w-3 h-3 text-destructive" />}
-          />
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <InfoChip label="Provider" value={PROVIDER_LABELS[analysis.provider] || analysis.provider} highlight />
+            <InfoChip label="Merchant" value={analysis.merchant} />
+            <InfoChip label="Product" value={analysis.product || "N/A"} />
+            <InfoChip label="Amount" value={analysis.amount ? `${analysis.amount} ${analysis.currency}` : "N/A"} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <InfoChip
+              label="Stripe PK"
+              value={analysis.stripePk ? `${analysis.stripePk.slice(0, 12)}...` : "Not Found"}
+              icon={analysis.stripePk ? <CheckCircle className="w-3 h-3 text-primary" /> : <XCircle className="w-3 h-3 text-destructive" />}
+            />
+            <InfoChip
+              label="Client Secret"
+              value={analysis.clientSecret ? "Found ✓" : "Not Found"}
+              icon={analysis.clientSecret ? <CheckCircle className="w-3 h-3 text-primary" /> : <XCircle className="w-3 h-3 text-muted-foreground" />}
+            />
+          </div>
         </div>
       )}
     </div>
