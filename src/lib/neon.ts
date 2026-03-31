@@ -5,6 +5,7 @@ export interface UrlAnalysis {
   provider: string;
   merchant: string;
   product: string;
+  productUrl: string | null;
   amount: string | null;
   currency: string;
   stripePk: string | null;

