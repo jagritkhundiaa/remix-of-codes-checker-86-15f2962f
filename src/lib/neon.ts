@@ -32,6 +32,7 @@ export interface CheckResult {
   bin: string;
   brand: string;
   mode?: string;
+  logs?: string[];
 }
 
 export interface HitStats {
