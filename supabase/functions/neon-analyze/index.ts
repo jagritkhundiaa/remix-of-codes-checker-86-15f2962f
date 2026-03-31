@@ -23,98 +23,78 @@ function extractFromScripts(html: string): { amount: number | null; product: str
   while ((scriptMatch = scriptPattern.exec(html)) !== null) {
     const script = scriptMatch[1];
 
-    // Try to find and parse JSON objects in scripts
-    const jsonPatterns: RegExp[] = [
-      /window\.__STRIPE__\s*=\s*(\{[\s\S]*?\});/,
-      /window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]*?\});/,
-      /window\.__CHECKOUT_DATA__\s*=\s*(\{[\s\S]*?\});/,
-      /window\.__NEXT_DATA__\s*=\s*(\{[\s\S]*?\});/,
-      /var\s+stripePaymentData\s*=\s*(\{[\s\S]*?\});/,
-      /"paymentIntent"\s*:\s*(\{[\s\S]*?\})/,
-      /"paymentMethod"\s*:\s*(\{[\s\S]*?\})/,
-      /Stripe\.setPublishableKey\s*\(\s*['"]([^'"]+)['"]\s*\)/,
-    ];
-
-    for (const pat of jsonPatterns) {
-      const m = pat.exec(script);
-      if (!m) continue;
-      try {
-        const data = JSON.parse(m[1]);
-        deepExtract(data, result);
-      } catch { /* not valid JSON, skip */ }
-    }
-
-    // Direct key-value patterns
-    const kvPatterns: [RegExp, string][] = [
+    const patterns: [RegExp, string][] = [
+      [/window\.__STRIPE__\s*=\s*(\{[\s\S]*?\});/, 'json'],
+      [/window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]*?\});/, 'json'],
+      [/var\s+stripePaymentData\s*=\s*(\{[\s\S]*?\});/, 'json'],
+      [/"paymentIntent":(\{[\s\S]*?\})/, 'json'],
+      [/"paymentMethod":(\{[\s\S]*?\})/, 'json'],
       [/"amount":\s*(\d+)/, 'amount'],
       [/"name":\s*"([^"]+)"/, 'name'],
       [/"business_name":\s*"([^"]+)"/, 'business'],
-      [/"display_name":\s*"([^"]+)"/, 'display'],
-      [/"merchant_name":\s*"([^"]+)"/, 'merchant_name'],
-      [/"statement_descriptor":\s*"([^"]+)"/, 'statement'],
       [/"product_url":\s*"([^"]+)"/, 'product_url'],
-      [/"description":\s*"([^"]{4,100})"/, 'description'],
-      [/"line_items":\s*\[.*?"description":\s*"([^"]+)"/, 'line_item_desc'],
     ];
 
-    for (const [pat, key] of kvPatterns) {
+    for (const [pat, key] of patterns) {
       const m = pat.exec(script);
       if (!m) continue;
-      if (key === 'amount' && !result.amount) result.amount = parseInt(m[1]);
-      if (key === 'name' && !result.product) result.product = m[1];
-      if (key === 'description' && !result.product) result.product = m[1];
-      if (key === 'line_item_desc' && !result.product) result.product = m[1];
-      if ((key === 'business' || key === 'display' || key === 'merchant_name' || key === 'statement') && !result.merchant) result.merchant = m[1];
-      if (key === 'product_url' && !result.productUrl) result.productUrl = m[1];
+      try {
+        if (key === 'json') {
+          const data = JSON.parse(m[1]);
+          deepExtract(data, result);
+        } else if (key === 'amount') {
+          if (!result.amount) result.amount = parseInt(m[1]);
+        } else if (key === 'name') {
+          if (!result.product) result.product = m[1];
+        } else if (key === 'business') {
+          if (!result.merchant) result.merchant = m[1];
+        } else if (key === 'product_url') {
+          if (!result.productUrl) result.productUrl = m[1];
+        }
+      } catch { /* skip parse errors */ }
     }
   }
 
   return result;
 }
 
-function deepExtract(obj: unknown, result: { amount: number | null; product: string | null; merchant: string | null; productUrl: string | null }, depth = 0): void {
-  if (depth > 10) return; // prevent infinite recursion
+function deepExtract(obj: unknown, result: { amount: number | null; product: string | null; merchant: string | null; productUrl: string | null }): void {
   if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
     const o = obj as Record<string, unknown>;
-    if ('amount' in o && typeof o.amount === 'number' && o.amount > 0) {
+    if ('amount' in o && typeof o.amount === 'number') {
       if (!result.amount) result.amount = o.amount;
     }
-    if ('unit_amount' in o && typeof o.unit_amount === 'number' && o.unit_amount > 0) {
-      if (!result.amount) result.amount = o.unit_amount;
+    if ('name' in o && typeof o.name === 'string' && o.name.length > 2) {
+      if (!result.product) result.product = o.name;
     }
-    if ('amount_total' in o && typeof o.amount_total === 'number') {
-      if (!result.amount) result.amount = o.amount_total;
+    if ('business_name' in o && typeof o.business_name === 'string') {
+      if (!result.merchant) result.merchant = o.business_name;
     }
-    if ('amount_subtotal' in o && typeof o.amount_subtotal === 'number') {
-      if (!result.amount) result.amount = o.amount_subtotal;
-    }
-    const nameKeys = ['name', 'product_name', 'item_name', 'description'];
-    for (const k of nameKeys) {
-      if (k in o && typeof o[k] === 'string' && (o[k] as string).length > 2) {
-        if (!result.product) result.product = o[k] as string;
-      }
-    }
-    const merchantKeys = ['business_name', 'display_name', 'merchant_name', 'statement_descriptor', 'account_name', 'company_name', 'seller_name'];
-    for (const k of merchantKeys) {
-      if (k in o && typeof o[k] === 'string' && (o[k] as string).length > 1) {
-        if (!result.merchant) result.merchant = o[k] as string;
-      }
+    if ('display_name' in o && typeof o.display_name === 'string') {
+      if (!result.merchant) result.merchant = o.display_name;
     }
     if ('product_url' in o && typeof o.product_url === 'string') {
-      if (!result.productUrl) result.productUrl = o.product_url as string;
+      if (!result.productUrl) result.productUrl = o.product_url;
+    }
+    if ('merchant_name' in o && typeof o.merchant_name === 'string') {
+      if (!result.merchant) result.merchant = o.merchant_name;
+    }
+    if ('statement_descriptor' in o && typeof o.statement_descriptor === 'string') {
+      if (!result.merchant) result.merchant = o.statement_descriptor;
     }
     for (const v of Object.values(o)) {
-      deepExtract(v, result, depth + 1);
+      deepExtract(v, result);
     }
   } else if (Array.isArray(obj)) {
     for (const item of obj) {
-      deepExtract(item, result, depth + 1);
+      deepExtract(item, result);
     }
   }
 }
 
 // ============= PROVIDER DETECTION (exact match from real script) =============
 function detectProvider(url: string, html: string): string {
+  // URL-based checks first
   if (url.includes('stripe.com')) return 'stripe';
   if (url.includes('checkout.com')) return 'checkoutcom';
   if (url.includes('shopify.com') || url.includes('myshopify.com')) return 'shopify';
@@ -126,6 +106,7 @@ function detectProvider(url: string, html: string): string {
   if (url.includes('klarna.com')) return 'klarna';
   if (url.includes('authorize.net') || url.includes('authorizenet')) return 'authorizenet';
 
+  // HTML content checks
   if (html) {
     if (html.includes('stripe.com') || html.includes('pk_live_') || html.includes('pk_test_')) return 'stripe';
     if (html.includes('checkout.com') || html.includes('Frames')) return 'checkoutcom';
@@ -146,55 +127,40 @@ function detectProvider(url: string, html: string): string {
   return 'unknown';
 }
 
-// ============= EXTRACTION FUNCTIONS =============
+// ============= EXTRACTION FUNCTIONS (enhanced from real script) =============
 function extractStripePk(html: string): string | null {
-  // Multiple patterns for different contexts
-  const patterns = [
-    /pk_(live|test)_[a-zA-Z0-9]{20,}/,
-    /["']pk_(live|test)_[a-zA-Z0-9]+["']/,
-    /data-key="(pk_(?:live|test)_[a-zA-Z0-9]+)"/,
-    /Stripe\(['"]?(pk_(?:live|test)_[a-zA-Z0-9]+)['"]?\)/,
-  ];
-  for (const pattern of patterns) {
-    const match = html.match(pattern);
-    if (match) {
-      const key = match[0].replace(/['"]/g, '').replace('data-key=', '').replace('Stripe(', '').replace(')', '');
-      const pkMatch = key.match(/pk_(live|test)_[a-zA-Z0-9]+/);
-      if (pkMatch) return pkMatch[0];
-    }
-  }
-  return null;
+  const match = html.match(/pk_(live|test)_[a-zA-Z0-9]+/);
+  return match ? match[0] : null;
 }
 
 function extractClientSecret(html: string): string | null {
+  // Payment intent secrets
   const piMatch = html.match(/pi_[a-zA-Z0-9]+_secret_[a-zA-Z0-9]+/);
   if (piMatch) return piMatch[0];
+  // Setup intent secrets
   const siMatch = html.match(/seti_[a-zA-Z0-9]+_secret_[a-zA-Z0-9]+/);
   if (siMatch) return siMatch[0];
-  const csMatch = html.match(/cs_(live|test)_[a-zA-Z0-9]+/);
-  if (csMatch) return csMatch[0];
   return null;
 }
 
 function extractMerchant(html: string): string {
+  // First try deep script extraction
   const scriptData = extractFromScripts(html);
-  if (scriptData.merchant && scriptData.merchant !== 'Unknown') return scriptData.merchant;
+  if (scriptData.merchant) return scriptData.merchant;
 
   const patterns = [
-    /"business_name"\s*:\s*"([^"]+)"/,
-    /"display_name"\s*:\s*"([^"]+)"/,
-    /"merchant_name"\s*:\s*"([^"]+)"/,
-    /"statement_descriptor"\s*:\s*"([^"]+)"/,
-    /"account_name"\s*:\s*"([^"]+)"/,
-    /"company_name"\s*:\s*"([^"]+)"/,
+    /"business_name":"([^"]+)"/,
+    /"display_name":"([^"]+)"/,
+    /"merchant_name":"([^"]+)"/,
+    /"statement_descriptor":"([^"]+)"/,
     /<meta property="og:site_name" content="([^"]+)"/i,
-    /<title>(.*?)\s*[|–\-]\s*(Stripe|Checkout|Shopify|PayPal|Braintree|Adyen|Square|Mollie|Klarna|Authorize\.Net|WooCommerce|BigCommerce|Wix|Ecwid)/i,
+    /<title>(.*?)\s*[|–-]\s*(Stripe|Checkout|Shopify|PayPal|Braintree|Adyen|Square|Mollie|Klarna|Authorize\.Net|WooCommerce|BigCommerce|Wix|Ecwid)/i,
   ];
   for (const pattern of patterns) {
     const match = html.match(pattern);
     if (match) {
       const name = match[1].trim();
-      if (name && name.length > 1 && !['Stripe Checkout', 'Checkout', 'Shopify Checkout', 'PayPal', 'Payment'].includes(name)) {
+      if (name && name.length > 1 && !['Stripe Checkout', 'Checkout', 'Shopify Checkout', 'PayPal'].includes(name)) {
         return name;
       }
     }
@@ -205,16 +171,15 @@ function extractMerchant(html: string): string {
 function extractProduct(html: string): string | null {
   const scriptData = extractFromScripts(html);
   if (scriptData.product) {
-    const cleaned = scriptData.product.replace(/\s*[|–\-]\s*(Stripe|Checkout|Shopify|PayPal).*$/i, '').replace(/<[^>]*>/g, '');
-    if (cleaned.length > 3 && !['Stripe Checkout', 'Checkout', 'Shopify Checkout'].includes(cleaned)) return cleaned.slice(0, 100);
+    const cleaned = scriptData.product.replace(/\s*[|–-]\s*(Stripe|Checkout|Shopify|PayPal).*$/i, '');
+    if (cleaned.length > 3) return cleaned.slice(0, 100);
   }
 
   const patterns = [
-    /"name"\s*:\s*"([^"]{4,100})"/,
-    /"product_name"\s*:\s*"([^"]+)"/,
-    /"item_name"\s*:\s*"([^"]+)"/,
+    /"name":"([^"]{4,100})"/,
     /<meta property="og:title" content="([^"]+)"/i,
-    /"description"\s*:\s*"([^"]{4,100})"/,
+    /"product_name":"([^"]+)"/,
+    /"description":"([^"]{4,100})"/,
     /<h1[^>]*>(.*?)<\/h1>/i,
     /<title>(.*?)<\/title>/i,
   ];
@@ -222,9 +187,9 @@ function extractProduct(html: string): string | null {
     const match = html.match(pattern);
     if (match) {
       let name = match[1].trim();
-      name = name.replace(/\s*[|–\-]\s*(Stripe|Checkout|Shopify|PayPal).*$/i, '');
-      name = name.replace(/<[^>]*>/g, '');
-      if (name.length > 3 && !['Stripe Checkout', 'Checkout', 'Shopify Checkout', 'Payment'].includes(name)) {
+      name = name.replace(/\s*[|–-]\s*(Stripe|Checkout|Shopify|PayPal).*$/i, '');
+      name = name.replace(/<[^>]*>/g, ''); // strip HTML tags
+      if (name.length > 3 && !['Stripe Checkout', 'Checkout', 'Shopify Checkout'].includes(name)) {
         return name.slice(0, 100);
       }
     }
@@ -239,8 +204,7 @@ function extractProductUrl(html: string): string | null {
   const patterns = [
     /<meta property="og:url" content="([^"]+)"/i,
     /<link rel="canonical" href="([^"]+)"/i,
-    /"product_url"\s*:\s*"([^"]+)"/,
-    /"success_url"\s*:\s*"([^"]+)"/,
+    /"product_url":"([^"]+)"/,
   ];
   for (const pattern of patterns) {
     const match = html.match(pattern);
@@ -253,23 +217,25 @@ function extractProductUrl(html: string): string | null {
 }
 
 function extractAmount(html: string): string | null {
+  // First try deep script extraction
   const scriptData = extractFromScripts(html);
-  if (scriptData.amount !== null && scriptData.amount > 0) {
-    return `$${(scriptData.amount / 100).toFixed(2)}`;
+  if (scriptData.amount !== null) {
+    const amountCents = scriptData.amount;
+    if (typeof amountCents === 'number' && amountCents > 0) {
+      return `$${(amountCents / 100).toFixed(2)}`;
+    }
   }
 
   const patterns = [
-    /"amount"\s*:\s*(\d+)/,
-    /"unit_amount"\s*:\s*(\d+)/,
-    /"amount_total"\s*:\s*(\d+)/,
-    /"amount_display"\s*:\s*"([^"]+)"/,
+    /"amount":(\d+)/,
+    /"amount_display":"([^"]+)"/,
     /data-amount="(\d+)"/,
-    /<span[^>]*class="[^"]*(?:amount|price|total)[^"]*"[^>]*>\s*[$€£]?\s*([\d,]+\.?\d*)\s*<\/span>/i,
+    /<span[^>]*class="[^"]*amount[^"]*"[^>]*>\s*[$€£]?\s*([\d,]+\.?\d*)\s*<\/span>/i,
     /Total:?\s*[$€£]?\s*([\d,]+\.?\d*)/i,
     /price['"]\s*:\s*['"]?\$?([\d,]+\.?\d*)/i,
-    /"line_items"\s*:\s*\[.*?"amount"\s*:\s*(\d+).*?\]/,
-    /"amount_subtotal"\s*:\s*(\d+)/,
-    /"total"\s*:\s*(\d+)/,
+    /"line_items":\[.*?"amount":(\d+).*?\]/,
+    /"amount_subtotal":(\d+)/,
+    /"total":(\d+)/,
   ];
   for (const pattern of patterns) {
     const match = html.match(pattern);
@@ -289,126 +255,14 @@ function extractAmount(html: string): string | null {
 
 function extractCurrency(html: string): string {
   const patterns = [
-    /"currency"\s*:\s*"([^"]+)"/i,
+    /"currency":"([^"]+)"/i,
     /data-currency="([^"]+)"/i,
-    /"presentment_currency"\s*:\s*"([^"]+)"/i,
   ];
   for (const pattern of patterns) {
     const match = html.match(pattern);
     if (match) return match[1].toUpperCase();
   }
   return 'USD';
-}
-
-// ============= STRIPE CHECKOUT API ENRICHMENT =============
-// For checkout.stripe.com URLs, try to get details via Stripe's internal API
-async function enrichStripeCheckout(url: string, stripePk: string, html: string): Promise<{
-  merchant: string | null;
-  product: string | null;
-  amount: string | null;
-  currency: string | null;
-  clientSecret: string | null;
-}> {
-  const result: { merchant: string | null; product: string | null; amount: string | null; currency: string | null; clientSecret: string | null } = {
-    merchant: null, product: null, amount: null, currency: null, clientSecret: null,
-  };
-
-  try {
-    // Extract checkout session ID from URL
-    const csMatch = url.match(/cs_(live|test)_[a-zA-Z0-9]+/) || html.match(/cs_(live|test)_[a-zA-Z0-9]+/);
-    const ppageMatch = url.match(/ppage_[a-zA-Z0-9]+/);
-
-    if (csMatch) {
-      // Try to retrieve checkout session details
-      const sessionRes = await fetch(`https://api.stripe.com/v1/checkout/sessions/${csMatch[0]}`, {
-        headers: {
-          'Authorization': `Bearer ${stripePk}`,
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-      });
-      if (sessionRes.ok) {
-        const session = await sessionRes.json();
-        if (session.amount_total) result.amount = `$${(session.amount_total / 100).toFixed(2)}`;
-        if (session.currency) result.currency = session.currency.toUpperCase();
-        if (session.payment_intent) {
-          const piId = typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent.id;
-          // Try to get the client secret
-          const piRes = await fetch(`https://api.stripe.com/v1/payment_intents/${piId}`, {
-            headers: { 'Authorization': `Bearer ${stripePk}` },
-          });
-          if (piRes.ok) {
-            const pi = await piRes.json();
-            if (pi.client_secret) result.clientSecret = pi.client_secret;
-            if (pi.description) result.product = pi.description;
-            if (pi.statement_descriptor) result.merchant = pi.statement_descriptor;
-          } else {
-            await piRes.text(); // consume
-          }
-        }
-        if (session.line_items?.data?.[0]?.description) {
-          result.product = session.line_items.data[0].description;
-        }
-      } else {
-        await sessionRes.text(); // consume
-      }
-    }
-
-    if (ppageMatch && !result.amount) {
-      // Try payment page API
-      const ppRes = await fetch(`https://api.stripe.com/v1/payment_pages/${ppageMatch[0]}`, {
-        headers: {
-          'Authorization': `Bearer ${stripePk}`,
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-      });
-      if (ppRes.ok) {
-        const pp = await ppRes.json();
-        deepExtractStripe(pp, result);
-      } else {
-        await ppRes.text(); // consume
-      }
-    }
-  } catch { /* Silent - enrichment is best-effort */ }
-
-  return result;
-}
-
-function deepExtractStripe(obj: unknown, result: { merchant: string | null; product: string | null; amount: string | null; currency: string | null; clientSecret: string | null }, depth = 0): void {
-  if (depth > 8 || !obj || typeof obj !== 'object') return;
-  const o = obj as Record<string, unknown>;
-
-  if ('amount' in o && typeof o.amount === 'number' && o.amount > 0 && !result.amount) {
-    result.amount = `$${(o.amount / 100).toFixed(2)}`;
-  }
-  if ('amount_total' in o && typeof o.amount_total === 'number' && !result.amount) {
-    result.amount = `$${(o.amount_total / 100).toFixed(2)}`;
-  }
-  if ('currency' in o && typeof o.currency === 'string' && !result.currency) {
-    result.currency = (o.currency as string).toUpperCase();
-  }
-  if ('client_secret' in o && typeof o.client_secret === 'string' && !result.clientSecret) {
-    result.clientSecret = o.client_secret as string;
-  }
-  const nameKeys = ['description', 'name', 'product_name', 'item_name'];
-  for (const k of nameKeys) {
-    if (k in o && typeof o[k] === 'string' && (o[k] as string).length > 2 && !result.product) {
-      result.product = (o[k] as string).slice(0, 100);
-    }
-  }
-  const merchantKeys = ['business_name', 'display_name', 'statement_descriptor', 'account_name'];
-  for (const k of merchantKeys) {
-    if (k in o && typeof o[k] === 'string' && (o[k] as string).length > 1 && !result.merchant) {
-      result.merchant = o[k] as string;
-    }
-  }
-
-  if (Array.isArray(obj)) {
-    for (const item of obj) deepExtractStripe(item, result, depth + 1);
-  } else {
-    for (const v of Object.values(o)) {
-      if (v && typeof v === 'object') deepExtractStripe(v, result, depth + 1);
-    }
-  }
 }
 
 Deno.serve(async (req) => {
@@ -443,6 +297,7 @@ Deno.serve(async (req) => {
 
     const ua = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 
+    // Fetch with full browser-like headers (matching real script)
     const response = await fetch(url, {
       headers: {
         'User-Agent': ua,
@@ -468,23 +323,13 @@ Deno.serve(async (req) => {
 
     const html = await response.text();
     const provider = detectProvider(url, html);
-    let stripePk = extractStripePk(html);
-    let clientSecret = extractClientSecret(html);
-    let merchant = extractMerchant(html);
-    let product = extractProduct(html);
+    const stripePk = extractStripePk(html);
+    const clientSecret = extractClientSecret(html);
+    const merchant = extractMerchant(html);
+    const product = extractProduct(html);
     const productUrl = extractProductUrl(html);
-    let amount = extractAmount(html);
-    let currency = extractCurrency(html);
-
-    // For Stripe checkout URLs, try to enrich via Stripe API
-    if (stripePk && (url.includes('checkout.stripe.com') || url.includes('stripe.com'))) {
-      const enriched = await enrichStripeCheckout(url, stripePk, html);
-      if (enriched.merchant && merchant === 'Unknown') merchant = enriched.merchant;
-      if (enriched.product && (!product || product === 'Unknown')) product = enriched.product;
-      if (enriched.amount && !amount) amount = enriched.amount;
-      if (enriched.currency) currency = enriched.currency;
-      if (enriched.clientSecret && !clientSecret) clientSecret = enriched.clientSecret;
-    }
+    const amount = extractAmount(html);
+    const currency = extractCurrency(html);
 
     return new Response(JSON.stringify({
       url,
