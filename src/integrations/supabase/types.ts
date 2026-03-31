@@ -14,6 +14,30 @@ export type Database = {
   }
   public: {
     Tables: {
+      access_keys: {
+        Row: {
+          created_at: string
+          expires_at: string | null
+          id: string
+          is_active: boolean
+          key: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          is_active?: boolean
+          key: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          is_active?: boolean
+          key?: string
+        }
+        Relationships: []
+      }
       promos_unchecked: {
         Row: {
           code: string
