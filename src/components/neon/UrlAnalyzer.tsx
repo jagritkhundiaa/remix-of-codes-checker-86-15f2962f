@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Globe, Loader2, CheckCircle, XCircle, Zap } from "lucide-react";
+import { Globe, Loader2, CheckCircle, XCircle, Zap, ChevronDown, ChevronUp, FileText } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { UrlAnalysis, PROVIDER_LABELS } from "@/lib/neon";
 
@@ -13,6 +13,7 @@ export default function UrlAnalyzer({ accessKey, onAnalyzed, analysis }: UrlAnal
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showLogs, setShowLogs] = useState(false);
 
   const handleFetch = async () => {
     if (!url.trim()) return;
@@ -79,22 +80,50 @@ export default function UrlAnalyzer({ accessKey, onAnalyzed, analysis }: UrlAnal
         <div className="space-y-3">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <InfoChip label="Provider" value={PROVIDER_LABELS[analysis.provider] || analysis.provider} highlight />
-            <InfoChip label="Merchant" value={analysis.merchant} />
-            <InfoChip label="Product" value={analysis.product || "N/A"} />
-            <InfoChip label="Amount" value={analysis.amount ? `${analysis.amount} ${analysis.currency}` : "N/A"} />
+            <InfoChip label="Merchant" value={analysis.merchant || "Not Found"} />
+            <InfoChip label="Product" value={analysis.product || "Not Found"} />
+            <InfoChip label="Amount" value={analysis.amount ? `${analysis.amount} ${analysis.currency}` : "Not Found"} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <InfoChip
               label="Stripe PK"
-              value={analysis.stripePk ? `${analysis.stripePk.slice(0, 12)}...` : "Not Found"}
-              icon={analysis.stripePk ? <CheckCircle className="w-3 h-3 text-primary" /> : <XCircle className="w-3 h-3 text-destructive" />}
+              value={analysis.stripePk && analysis.stripePk !== 'Not Found' ? `${analysis.stripePk.slice(0, 12)}...` : "Not Found"}
+              icon={analysis.stripePk && analysis.stripePk !== 'Not Found' ? <CheckCircle className="w-3 h-3 text-primary" /> : <XCircle className="w-3 h-3 text-destructive" />}
             />
             <InfoChip
               label="Client Secret"
               value={analysis.clientSecret ? "Found ✓" : "Not Found"}
               icon={analysis.clientSecret ? <CheckCircle className="w-3 h-3 text-primary" /> : <XCircle className="w-3 h-3 text-muted-foreground" />}
             />
+            <InfoChip
+              label="Status"
+              value={analysis.status || "Valid"}
+              icon={analysis.status === 'Valid' || !analysis.status ? <CheckCircle className="w-3 h-3 text-primary" /> : <XCircle className="w-3 h-3 text-destructive" />}
+            />
           </div>
+
+          {/* Execution Logs */}
+          {analysis.logs && analysis.logs.length > 0 && (
+            <div>
+              <button
+                onClick={() => setShowLogs(!showLogs)}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <FileText className="w-3 h-3" />
+                Execution Logs ({analysis.logs.length})
+                {showLogs ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+              </button>
+              {showLogs && (
+                <div className="mt-2 max-h-40 overflow-y-auto rounded-xl bg-background/60 border border-border/30 p-3 font-mono text-[11px] space-y-0.5">
+                  {analysis.logs.map((log, i) => (
+                    <div key={i} className={`${log.includes('✅') || log.includes('Found') ? 'text-primary' : log.includes('❌') || log.includes('Error') || log.includes('error') ? 'text-destructive' : 'text-muted-foreground'}`}>
+                      {log}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

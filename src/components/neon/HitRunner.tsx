@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Play, Square, Loader2, CheckCircle, XCircle, Shield, Zap } from "lucide-react";
+import { Play, Square, Loader2, CheckCircle, XCircle, Shield, Zap, ChevronDown, ChevronUp, FileText } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { CardData, CheckResult, HitStats, UrlAnalysis, NeonSettings } from "@/lib/neon";
 
@@ -15,6 +15,7 @@ export default function HitRunner({ accessKey, analysis, cards, settings }: HitR
   const [results, setResults] = useState<CheckResult[]>([]);
   const [current, setCurrent] = useState(0);
   const [stats, setStats] = useState<HitStats>({ total: 0, hits: 0, declines: 0, errors: 0, avgTime: 0 });
+  const [expandedLog, setExpandedLog] = useState<number | null>(null);
   const stopRef = useRef(false);
   const logRef = useRef<HTMLDivElement>(null);
 
@@ -22,7 +23,7 @@ export default function HitRunner({ accessKey, analysis, cards, settings }: HitR
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [results]);
 
-  const canStart = analysis?.success && analysis?.stripePk && cards.length > 0 && !running && (settings.hitterEnabled || settings.bypasserEnabled);
+  const canStart = analysis?.success && analysis?.stripePk && analysis.stripePk !== 'Not Found' && cards.length > 0 && !running && (settings.hitterEnabled || settings.bypasserEnabled);
 
   const runCheck = async (card: CardData, mode: string): Promise<CheckResult | null> => {
     try {
@@ -43,12 +44,14 @@ export default function HitRunner({ accessKey, analysis, cards, settings }: HitR
         card: `${card.number.slice(0, 6)}...${card.number.slice(-4)}`,
         status: "error", code: "fn_error", message: data?.error || "Function error",
         responseTime: 0, bin: card.number.slice(0, 6), brand: "UNK", mode,
+        logs: data?.logs || [],
       };
     } catch {
       return {
         card: `${card.number.slice(0, 6)}...${card.number.slice(-4)}`,
         status: "error", code: "network", message: "Network error",
         responseTime: 0, bin: card.number.slice(0, 6), brand: "UNK", mode,
+        logs: ['[ERROR] Network connection failed'],
       };
     }
   };
@@ -60,6 +63,7 @@ export default function HitRunner({ accessKey, analysis, cards, settings }: HitR
     setResults([]);
     setCurrent(0);
     setStats({ total: 0, hits: 0, declines: 0, errors: 0, avgTime: 0 });
+    setExpandedLog(null);
 
     let totalTime = 0, hits = 0, declines = 0, errors = 0;
 
@@ -81,7 +85,6 @@ export default function HitRunner({ accessKey, analysis, cards, settings }: HitR
 
         if (result.status === "live" || result.status === "charged" || result.status === "3ds") {
           hits++;
-          // If hit found and both modes enabled, skip other mode for this card
           break;
         } else if (result.status === "declined") {
           declines++;
@@ -149,7 +152,7 @@ export default function HitRunner({ accessKey, analysis, cards, settings }: HitR
 
       {!canStart && !running && (
         <div className="text-xs text-muted-foreground bg-background/30 rounded-xl px-3 py-2 mb-4">
-          {!analysis?.success ? "Fetch a URL first" : !analysis?.stripePk ? "No Stripe key found" : cards.length === 0 ? "Load cards first" : !settings.hitterEnabled && !settings.bypasserEnabled ? "Enable hitter or bypasser in settings" : ""}
+          {!analysis?.success ? "Fetch a URL first" : !analysis?.stripePk || analysis.stripePk === 'Not Found' ? "No Stripe key found" : cards.length === 0 ? "Load cards first" : !settings.hitterEnabled && !settings.bypasserEnabled ? "Enable hitter or bypasser in settings" : ""}
         </div>
       )}
 
@@ -175,20 +178,38 @@ export default function HitRunner({ accessKey, analysis, cards, settings }: HitR
             <StatBox label="Avg Time" value={`${stats.avgTime.toFixed(1)}s`} />
           </div>
 
-          <div ref={logRef} className="h-48 overflow-y-auto rounded-xl bg-background/60 border border-border/30 p-3 space-y-1 font-mono text-[11px]">
+          <div ref={logRef} className="max-h-64 overflow-y-auto rounded-xl bg-background/60 border border-border/30 p-3 space-y-1 font-mono text-[11px]">
             {results.map((r, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <span className="text-muted-foreground/50 w-8 shrink-0">{String(i + 1).padStart(3, "0")}</span>
-                {getStatusIcon(r.status)}
-                <span className="text-muted-foreground">{r.card}</span>
-                <span className={`font-bold uppercase ${getStatusColor(r.status)}`}>{r.status}</span>
-                {r.mode && (
-                  <span className={`text-[9px] px-1 rounded ${r.mode === 'bypasser' ? 'bg-accent/20 text-accent-foreground' : 'bg-primary/10 text-primary'}`}>
-                    {r.mode === 'bypasser' ? 'BYP' : 'HIT'}
+              <div key={i}>
+                <div className="flex items-center gap-2 cursor-pointer hover:bg-background/40 rounded px-1 py-0.5"
+                  onClick={() => setExpandedLog(expandedLog === i ? null : i)}>
+                  <span className="text-muted-foreground/50 w-8 shrink-0">{String(i + 1).padStart(3, "0")}</span>
+                  {getStatusIcon(r.status)}
+                  <span className="text-muted-foreground">{r.card}</span>
+                  <span className={`font-bold uppercase ${getStatusColor(r.status)}`}>{r.status}</span>
+                  {r.mode && (
+                    <span className={`text-[9px] px-1 rounded ${r.mode === 'bypasser' ? 'bg-accent/20 text-accent-foreground' : 'bg-primary/10 text-primary'}`}>
+                      {r.mode === 'bypasser' ? 'BYP' : 'HIT'}
+                    </span>
+                  )}
+                  <span className="text-muted-foreground/50 truncate">{r.code}</span>
+                  <span className="text-muted-foreground/30 ml-auto shrink-0 flex items-center gap-1">
+                    {r.responseTime.toFixed(1)}s
+                    {r.logs && r.logs.length > 0 && (
+                      <FileText className="w-3 h-3 text-muted-foreground/30" />
+                    )}
+                    {expandedLog === i ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                   </span>
+                </div>
+                {expandedLog === i && r.logs && r.logs.length > 0 && (
+                  <div className="ml-10 mt-1 mb-2 pl-2 border-l-2 border-border/30 space-y-0.5 text-[10px]">
+                    {r.logs.map((log, li) => (
+                      <div key={li} className={`${log.includes('✅') || log.includes('🎉') || log.includes('LIVE') ? 'text-primary' : log.includes('❌') || log.includes('Error') ? 'text-destructive' : log.includes('🔐') ? 'text-blue-400' : 'text-muted-foreground/70'}`}>
+                        {log}
+                      </div>
+                    ))}
+                  </div>
                 )}
-                <span className="text-muted-foreground/50 truncate">{r.code}</span>
-                <span className="text-muted-foreground/30 ml-auto shrink-0">{r.responseTime.toFixed(1)}s</span>
               </div>
             ))}
             {results.length === 0 && running && (

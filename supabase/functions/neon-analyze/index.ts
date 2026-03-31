@@ -94,7 +94,6 @@ function deepExtract(obj: unknown, result: { amount: number | null; product: str
 
 // ============= PROVIDER DETECTION (exact match from real script) =============
 function detectProvider(url: string, html: string): string {
-  // URL-based checks first
   if (url.includes('stripe.com')) return 'stripe';
   if (url.includes('checkout.com')) return 'checkoutcom';
   if (url.includes('shopify.com') || url.includes('myshopify.com')) return 'shopify';
@@ -106,7 +105,6 @@ function detectProvider(url: string, html: string): string {
   if (url.includes('klarna.com')) return 'klarna';
   if (url.includes('authorize.net') || url.includes('authorizenet')) return 'authorizenet';
 
-  // HTML content checks
   if (html) {
     if (html.includes('stripe.com') || html.includes('pk_live_') || html.includes('pk_test_')) return 'stripe';
     if (html.includes('checkout.com') || html.includes('Frames')) return 'checkoutcom';
@@ -127,24 +125,21 @@ function detectProvider(url: string, html: string): string {
   return 'unknown';
 }
 
-// ============= EXTRACTION FUNCTIONS (enhanced from real script) =============
+// ============= EXTRACTION FUNCTIONS =============
 function extractStripePk(html: string): string | null {
   const match = html.match(/pk_(live|test)_[a-zA-Z0-9]+/);
   return match ? match[0] : null;
 }
 
 function extractClientSecret(html: string): string | null {
-  // Payment intent secrets
   const piMatch = html.match(/pi_[a-zA-Z0-9]+_secret_[a-zA-Z0-9]+/);
   if (piMatch) return piMatch[0];
-  // Setup intent secrets
   const siMatch = html.match(/seti_[a-zA-Z0-9]+_secret_[a-zA-Z0-9]+/);
   if (siMatch) return siMatch[0];
   return null;
 }
 
 function extractMerchant(html: string): string {
-  // First try deep script extraction
   const scriptData = extractFromScripts(html);
   if (scriptData.merchant) return scriptData.merchant;
 
@@ -188,7 +183,7 @@ function extractProduct(html: string): string | null {
     if (match) {
       let name = match[1].trim();
       name = name.replace(/\s*[|–-]\s*(Stripe|Checkout|Shopify|PayPal).*$/i, '');
-      name = name.replace(/<[^>]*>/g, ''); // strip HTML tags
+      name = name.replace(/<[^>]*>/g, '');
       if (name.length > 3 && !['Stripe Checkout', 'Checkout', 'Shopify Checkout'].includes(name)) {
         return name.slice(0, 100);
       }
@@ -217,7 +212,6 @@ function extractProductUrl(html: string): string | null {
 }
 
 function extractAmount(html: string): string | null {
-  // First try deep script extraction
   const scriptData = extractFromScripts(html);
   if (scriptData.amount !== null) {
     const amountCents = scriptData.amount;
@@ -265,17 +259,131 @@ function extractCurrency(html: string): string {
   return 'USD';
 }
 
+// ============= STRIPE CHECKOUT API ANALYZER =============
+// For checkout.stripe.com URLs, the HTML is a JS shell with no data.
+// We use the Stripe API to get session/payment page details.
+async function analyzeStripeCheckoutUrl(url: string, stripePk: string, logs: string[]): Promise<{
+  merchant: string; product: string; amount: string | null; currency: string;
+  clientSecret: string | null; productUrl: string | null;
+}> {
+  const result = { merchant: 'Unknown', product: 'Unknown', amount: null as string | null, currency: 'USD', clientSecret: null as string | null, productUrl: null as string | null };
+
+  // Extract ppage ID from URL
+  const ppageMatch = url.match(/ppage_[a-zA-Z0-9]+/);
+  if (!ppageMatch) {
+    logs.push('[ANALYZE] No ppage ID found in Stripe checkout URL');
+    return result;
+  }
+  const ppageId = ppageMatch[0];
+  logs.push(`[ANALYZE] Extracted payment page ID: ${ppageId}`);
+
+  // Try Stripe API v1/payment_pages/{id} with the pk
+  try {
+    logs.push(`[ANALYZE] Calling Stripe API: /v1/payment_pages/${ppageId}`);
+    const ppageRes = await fetch(`https://api.stripe.com/v1/payment_pages/${ppageId}`, {
+      headers: {
+        'Authorization': `Bearer ${stripePk}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Origin': 'https://js.stripe.com',
+        'Referer': 'https://js.stripe.com/',
+      },
+    });
+    const ppageData = await ppageRes.json();
+    logs.push(`[ANALYZE] Stripe API response status: ${ppageRes.status}`);
+
+    if (ppageData && !ppageData.error) {
+      logs.push(`[ANALYZE] Payment page data received, extracting fields...`);
+      // Extract from payment page data
+      if (ppageData.business_name) { result.merchant = ppageData.business_name; logs.push(`[ANALYZE] Merchant: ${result.merchant}`); }
+      if (ppageData.merchant_name) { result.merchant = ppageData.merchant_name; logs.push(`[ANALYZE] Merchant: ${result.merchant}`); }
+      if (ppageData.display_name) { result.merchant = ppageData.display_name; logs.push(`[ANALYZE] Merchant: ${result.merchant}`); }
+      
+      // Deep extract from the whole response
+      const deepResult = { amount: null as number | null, product: null as string | null, merchant: null as string | null, productUrl: null as string | null };
+      deepExtract(ppageData, deepResult);
+      if (deepResult.merchant && result.merchant === 'Unknown') { result.merchant = deepResult.merchant; logs.push(`[ANALYZE] Merchant (deep): ${result.merchant}`); }
+      if (deepResult.product) { result.product = deepResult.product; logs.push(`[ANALYZE] Product (deep): ${result.product}`); }
+      if (deepResult.amount) { result.amount = `$${(deepResult.amount / 100).toFixed(2)}`; logs.push(`[ANALYZE] Amount (deep): ${result.amount}`); }
+      if (deepResult.productUrl) { result.productUrl = deepResult.productUrl; }
+
+      // Check for line_items
+      if (ppageData.line_items?.data) {
+        for (const item of ppageData.line_items.data) {
+          if (item.description && result.product === 'Unknown') { result.product = item.description; logs.push(`[ANALYZE] Product from line_items: ${result.product}`); }
+          if (item.amount && !result.amount) { result.amount = `$${(item.amount / 100).toFixed(2)}`; logs.push(`[ANALYZE] Amount from line_items: ${result.amount}`); }
+          if (item.amount_total && !result.amount) { result.amount = `$${(item.amount_total / 100).toFixed(2)}`; }
+        }
+      }
+
+      // Check for payment_intent
+      if (ppageData.payment_intent) {
+        const piId = typeof ppageData.payment_intent === 'string' ? ppageData.payment_intent : ppageData.payment_intent.id;
+        if (ppageData.payment_intent.client_secret) {
+          result.clientSecret = ppageData.payment_intent.client_secret;
+          logs.push(`[ANALYZE] Client secret found from payment_intent`);
+        }
+        if (ppageData.payment_intent.amount && !result.amount) {
+          result.amount = `$${(ppageData.payment_intent.amount / 100).toFixed(2)}`;
+          logs.push(`[ANALYZE] Amount from payment_intent: ${result.amount}`);
+        }
+        if (ppageData.payment_intent.currency) {
+          result.currency = ppageData.payment_intent.currency.toUpperCase();
+        }
+        if (ppageData.payment_intent.statement_descriptor && result.merchant === 'Unknown') {
+          result.merchant = ppageData.payment_intent.statement_descriptor;
+        }
+      }
+
+      // Check for setup_intent
+      if (ppageData.setup_intent) {
+        if (ppageData.setup_intent.client_secret) {
+          result.clientSecret = ppageData.setup_intent.client_secret;
+          logs.push(`[ANALYZE] Client secret found from setup_intent`);
+        }
+      }
+
+      // Amount from top level
+      if (ppageData.amount && !result.amount) {
+        result.amount = `$${(ppageData.amount / 100).toFixed(2)}`;
+        logs.push(`[ANALYZE] Amount from top-level: ${result.amount}`);
+      }
+      if (ppageData.amount_total && !result.amount) {
+        result.amount = `$${(ppageData.amount_total / 100).toFixed(2)}`;
+      }
+      if (ppageData.currency) {
+        result.currency = ppageData.currency.toUpperCase();
+      }
+    } else {
+      logs.push(`[ANALYZE] Stripe API error: ${JSON.stringify(ppageData?.error || 'unknown')}`);
+    }
+  } catch (e) {
+    logs.push(`[ANALYZE] Stripe API call failed: ${e instanceof Error ? e.message : 'unknown'}`);
+  }
+
+  // If we still don't have a client secret, try to extract from the URL fragment
+  const fragmentMatch = url.match(/client_secret[=:]([^&]+)/);
+  if (fragmentMatch && !result.clientSecret) {
+    result.clientSecret = decodeURIComponent(fragmentMatch[1]);
+    logs.push(`[ANALYZE] Client secret from URL fragment`);
+  }
+
+  return result;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   try {
     const { url, accessKey } = await req.json();
+    const logs: string[] = [];
 
     if (!url || !accessKey) {
       return new Response(JSON.stringify({ error: 'Missing url or accessKey' }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+
+    logs.push(`[START] Analyzing URL: ${url.slice(0, 80)}...`);
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -294,10 +402,13 @@ Deno.serve(async (req) => {
         status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+    logs.push(`[AUTH] Access key validated`);
 
     const ua = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+    const isStripeCheckout = url.includes('checkout.stripe.com');
 
-    // Fetch with full browser-like headers (matching real script)
+    logs.push(`[FETCH] Fetching URL with browser-like headers...`);
+    // Fetch with full browser-like headers
     const response = await fetch(url, {
       headers: {
         'User-Agent': ua,
@@ -316,39 +427,66 @@ Deno.serve(async (req) => {
     });
 
     if (!response.ok) {
-      return new Response(JSON.stringify({ error: `HTTP ${response.status}`, success: false }), {
+      logs.push(`[FETCH] HTTP Error: ${response.status}`);
+      return new Response(JSON.stringify({ error: `HTTP ${response.status}`, success: false, logs }), {
         status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
     const html = await response.text();
+    logs.push(`[FETCH] Got HTML response (${html.length} bytes)`);
+
     const provider = detectProvider(url, html);
-    const stripePk = extractStripePk(html);
-    const clientSecret = extractClientSecret(html);
-    const merchant = extractMerchant(html);
-    const product = extractProduct(html);
-    const productUrl = extractProductUrl(html);
-    const amount = extractAmount(html);
-    const currency = extractCurrency(html);
+    logs.push(`[DETECT] Provider: ${provider}`);
+
+    let stripePk = extractStripePk(html);
+    let clientSecret = extractClientSecret(html);
+    let merchant = extractMerchant(html);
+    let product = extractProduct(html);
+    let productUrl = extractProductUrl(html);
+    let amount = extractAmount(html);
+    let currency = extractCurrency(html);
+
+    logs.push(`[EXTRACT] Static extraction: PK=${stripePk ? stripePk.slice(0, 15) + '...' : 'Not Found'}, Merchant=${merchant}, Product=${product || 'Not Found'}, Amount=${amount || 'Not Found'}`);
+
+    // For Stripe Checkout URLs, use API to get better data
+    if (isStripeCheckout && stripePk) {
+      logs.push(`[STRIPE] Detected Stripe Checkout URL, using Stripe API for deep analysis...`);
+      const stripeData = await analyzeStripeCheckoutUrl(url, stripePk, logs);
+      
+      if (stripeData.merchant !== 'Unknown') merchant = stripeData.merchant;
+      if (stripeData.product !== 'Unknown') product = stripeData.product;
+      if (stripeData.amount) amount = stripeData.amount;
+      if (stripeData.currency !== 'USD') currency = stripeData.currency;
+      if (stripeData.clientSecret) clientSecret = stripeData.clientSecret;
+      if (stripeData.productUrl) productUrl = stripeData.productUrl;
+    }
+
+    // Validate URL is working
+    const status = response.ok ? 'Valid' : 'Invalid';
+    logs.push(`[VALIDATE] URL Status: ${status}`);
+    logs.push(`[DONE] Analysis complete`);
 
     return new Response(JSON.stringify({
       url,
       provider,
-      merchant,
-      product: product || 'Unknown',
+      merchant: merchant || 'Not Found',
+      product: product || 'Not Found',
       productUrl,
-      amount,
+      amount: amount || 'Not Found',
       currency,
-      stripePk,
+      stripePk: stripePk || 'Not Found',
       clientSecret,
+      status,
       success: true,
+      logs,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    return new Response(JSON.stringify({ error: msg, success: false }), {
+    return new Response(JSON.stringify({ error: msg, success: false, logs: [`[ERROR] ${msg}`] }), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
