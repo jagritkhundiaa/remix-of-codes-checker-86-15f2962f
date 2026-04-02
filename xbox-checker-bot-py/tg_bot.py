@@ -16,7 +16,7 @@ import requests
 from typing import Dict, Any, Optional
 from datetime import datetime
 from auth_stripe_checker import check_card as auth_check_card, probe_site as auth_probe_site
-from auth2_checker import check_card as auth2_check_card, probe_site as auth2_probe_site
+from auth2_woo_checker import check_card as auth2_check_card, probe_site as auth2_probe_site, validate_site as auth2_validate_site
 from braintree_auth_checker import check_card as b3auth_check_card, probe_site as b3auth_probe_site
 from authnet_checker import check_card as authnet_check_card, probe_site as authnet_probe_site
 from br3_charge_checker import check_card as br3charge_check_card, probe_site as br3charge_probe_site
@@ -53,6 +53,7 @@ GATE_STATUS_FILE = os.path.join(DATA_DIR, "tg_gate_status.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "tg_settings.json")
 PROXIES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proxies.txt")
 SITES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sites.txt")
+AUTH2_SITES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "auth2_sites.txt")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -252,7 +253,7 @@ def set_gate_enabled(gate_key, enabled, by_user=None):
 # ============================================================
 GATE_PROBE_MAP = {
     "auth": {"name": "Stripe Auth", "cmd": "/chkapiauth"},
-    "auth2": {"name": "Authnet Auth", "cmd": "/chkapiauth2"},
+    "auth2": {"name": "Auto Stripe v2", "cmd": "/chkapiauth2"},
     "b3auth": {"name": "Braintree Auth", "cmd": "/chkapib3auth"},
     "b3charge": {"name": "Braintree Charge", "cmd": "/chkapib3charge"},
     "authnet": {"name": "Authorize.net", "cmd": "/chkapiauthnet"},
@@ -267,7 +268,12 @@ def probe_gate(gate_key):
         if gate_key == "auth":
             alive, detail = auth_probe_site()
         elif gate_key == "auth2":
-            alive, detail = auth2_probe_site()
+            sites = load_auth2_sites()
+            if sites:
+                alive, detail = auth2_probe_site(sites[0])
+            else:
+                alive = False
+                detail = "No sites — add with /auth2site"
         elif gate_key == "b3auth":
             alive, detail = b3auth_probe_site()
         elif gate_key == "b3charge":
@@ -686,6 +692,38 @@ def load_shopify_sites():
 
 
 # ============================================================
+#  Auth2 sites loader + round-robin
+# ============================================================
+_auth2_site_index = 0
+_auth2_site_lock = threading.Lock()
+
+
+def load_auth2_sites():
+    if not os.path.exists(AUTH2_SITES_FILE):
+        return []
+    with open(AUTH2_SITES_FILE, 'r') as f:
+        return [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
+
+
+def save_auth2_sites(sites):
+    with open(AUTH2_SITES_FILE, 'w') as f:
+        for s in sites:
+            f.write(s + '\n')
+
+
+def get_next_auth2_site():
+    """Round-robin site selection for auth2 gate."""
+    global _auth2_site_index
+    sites = load_auth2_sites()
+    if not sites:
+        return None
+    with _auth2_site_lock:
+        site = sites[_auth2_site_index % len(sites)]
+        _auth2_site_index += 1
+    return site
+
+
+# ============================================================
 #  Gate runner
 # ============================================================
 def _run_gate(gate, c_num, c_mm, c_yy, c_cvv, proxy_dict):
@@ -693,7 +731,10 @@ def _run_gate(gate, c_num, c_mm, c_yy, c_cvv, proxy_dict):
     if gate == "auth":
         return auth_check_card(cc_line, proxy_dict)
     elif gate == "auth2":
-        return auth2_check_card(cc_line, proxy_dict)
+        site_url = get_next_auth2_site()
+        if not site_url:
+            return "Error | No sites — add with /auth2site"
+        return auth2_check_card(cc_line, proxy_dict, site_url=site_url)
     elif gate == "b3auth":
         return b3auth_check_card(cc_line, proxy_dict)
     elif gate == "b3charge":
@@ -1019,7 +1060,7 @@ cancel_flags = {}
 # ============================================================
 GATE_REGISTRY = [
     ("auth", "/auth", "Stripe Auth", True),
-    ("auth2", "/auth2", "Authnet Auth", True),
+    ("auth2", "/auth2", "Auto Stripe v2", True),
     ("b3auth", "/b3auth", "Braintree Auth", True),
     ("b3charge", "/b3charge", "Braintree Charge", True),
     ("authnet", "/authnet", "Authorize.net", True),
@@ -1029,7 +1070,7 @@ GATE_REGISTRY = [
 
 GATE_MAP = {
     "/auth": ("auth", "Stripe Auth"),
-    "/auth2": ("auth2", "Authnet Auth"),
+    "/auth2": ("auth2", "Auto Stripe v2"),
     "/b3auth": ("b3auth", "Braintree Auth"),
     "/b3charge": ("b3charge", "Braintree Charge"),
     "/authnet": ("authnet", "Authorize.net"),
@@ -1116,7 +1157,7 @@ def handle_callback(update):
         txt = (
             "<b>Available Gates</b>\n\n"
             "<code>/auth</code>  ·  Stripe Auth\n"
-            "<code>/auth2</code>  ·  Authnet Auth\n"
+            "<code>/auth2</code>  ·  Auto Stripe v2\n"
             "<code>/b3auth</code>  ·  Braintree Auth\n"
             "<code>/b3charge</code>  ·  Braintree Charge\n"
             "<code>/authnet</code>  ·  Authorize.net\n"
@@ -2631,6 +2672,173 @@ def handle_update(update):
 
         # Notify GC about new user
         notify_new_user(user_id, username, f"Duration: {dur_label} | Limit: {limit_label}")
+        return
+
+    # --- /auth2site (manage WooCommerce sites for /auth2) ---
+    if text.startswith("/auth2site"):
+        if not is_admin(user_id):
+            # Regular users can view site count
+            sites = load_auth2_sites()
+            send_message(chat_id,
+                f"<b>Auto Stripe v2 Sites</b>\n\n"
+                f"Loaded: <code>{len(sites)}</code> site(s)\n\n"
+                f"<i>{DEVELOPER}</i>")
+            return
+
+        parts = text.split(maxsplit=1)
+        new_sites_raw = []
+
+        # Check if replying to a .txt file
+        reply = msg.get("reply_to_message")
+        if reply and reply.get("document"):
+            doc = reply["document"]
+            fname = doc.get("file_name", "")
+            if fname.lower().endswith(".txt"):
+                content = download_file(doc["file_id"])
+                if content:
+                    new_sites_raw = [l.strip() for l in content.splitlines()
+                                     if l.strip() and not l.strip().startswith('#')]
+
+        # Check if sites pasted inline after command
+        if len(parts) >= 2:
+            sub = parts[1].strip()
+
+            # /auth2site list
+            if sub.lower() == "list":
+                sites = load_auth2_sites()
+                if not sites:
+                    send_message(chat_id,
+                        "<b>Auth2 Sites — Empty</b>\n\n"
+                        "No sites added yet.\n"
+                        "Use <code>/auth2site URL</code> to add.\n\n"
+                        f"<i>{DEVELOPER}</i>")
+                else:
+                    lines_out = []
+                    for i, s in enumerate(sites[:30], 1):
+                        masked = s[:40] + "..." if len(s) > 40 else s
+                        lines_out.append(f"  {i}. <code>{masked}</code>")
+                    extra = f"\n... and {len(sites) - 30} more" if len(sites) > 30 else ""
+                    send_message(chat_id,
+                        f"<b>Auth2 Sites ({len(sites)})</b>\n\n"
+                        + "\n".join(lines_out) + extra +
+                        f"\n\n<i>{DEVELOPER}</i>")
+                return
+
+            # /auth2site clear
+            if sub.lower() == "clear":
+                save_auth2_sites([])
+                send_message(chat_id,
+                    "<b>Auth2 Sites Cleared</b>\n\n"
+                    f"All sites removed.\n\n<i>{DEVELOPER}</i>")
+                return
+
+            # /auth2site remove <url>
+            if sub.lower().startswith("remove "):
+                remove_url = sub[7:].strip()
+                sites = load_auth2_sites()
+                new_sites = [s for s in sites if s.lower() != remove_url.lower()
+                             and s.lower().replace('https://', '').replace('http://', '').rstrip('/')
+                             != remove_url.lower().replace('https://', '').replace('http://', '').rstrip('/')]
+                removed = len(sites) - len(new_sites)
+                save_auth2_sites(new_sites)
+                send_message(chat_id,
+                    f"<b>Removed {removed} site(s)</b>\n\n"
+                    f"Remaining: <code>{len(new_sites)}</code>\n\n"
+                    f"<i>{DEVELOPER}</i>")
+                return
+
+            # Otherwise treat as inline sites
+            inline_sites = [l.strip() for l in sub.splitlines() if l.strip() and not l.strip().startswith('#')]
+            # Also handle comma-separated
+            expanded = []
+            for s in inline_sites:
+                if ',' in s:
+                    expanded.extend([x.strip() for x in s.split(',') if x.strip()])
+                else:
+                    expanded.append(s)
+            new_sites_raw.extend(expanded)
+
+        if not new_sites_raw:
+            sites = load_auth2_sites()
+            send_message(chat_id,
+                "<b>Auth2 Site Management</b>\n\n"
+                f"Current sites: <code>{len(sites)}</code>\n\n"
+                "<b>Add sites:</b>\n"
+                "<code>/auth2site https://shop.com</code>\n\n"
+                "<b>Multiple sites:</b>\n"
+                "<code>/auth2site\n"
+                "https://shop1.com\n"
+                "https://shop2.com</code>\n\n"
+                "<b>From file:</b>\n"
+                "Reply to a .txt file with <code>/auth2site</code>\n\n"
+                "<b>Other commands:</b>\n"
+                "<code>/auth2site list</code>  ·  List all sites\n"
+                "<code>/auth2site clear</code>  ·  Remove all\n"
+                "<code>/auth2site remove URL</code>  ·  Remove one\n\n"
+                f"<i>{DEVELOPER}</i>")
+            return
+
+        # Validate and add sites
+        send_message(chat_id,
+            f"<b>Validating {len(new_sites_raw)} site(s)...</b>\n"
+            "Checking for WooCommerce + Stripe...")
+
+        def _do_validate_sites():
+            existing = load_auth2_sites()
+            existing_normalized = set(
+                s.lower().replace('https://', '').replace('http://', '').rstrip('/')
+                for s in existing
+            )
+            valid = []
+            invalid = []
+            duplicate = []
+            results_lines = []
+
+            for raw_site in new_sites_raw:
+                # Normalize
+                site_url = raw_site.strip()
+                if not site_url.startswith(('http://', 'https://')):
+                    site_url = 'https://' + site_url
+                site_url = site_url.rstrip('/')
+
+                normalized = site_url.lower().replace('https://', '').replace('http://', '').rstrip('/')
+
+                # Check duplicate
+                if normalized in existing_normalized:
+                    duplicate.append(site_url)
+                    masked = site_url[:40] + "..." if len(site_url) > 40 else site_url
+                    results_lines.append(f"⚠️ <code>{masked}</code> — Already added")
+                    continue
+
+                # Validate
+                is_valid, detail = auth2_validate_site(site_url)
+                masked = site_url[:40] + "..." if len(site_url) > 40 else site_url
+
+                if is_valid:
+                    valid.append(site_url)
+                    existing_normalized.add(normalized)
+                    results_lines.append(f"✅ <code>{masked}</code> — {detail}")
+                else:
+                    invalid.append(site_url)
+                    results_lines.append(f"❌ <code>{masked}</code> — {detail}")
+
+            # Append valid sites to file
+            if valid:
+                existing.extend(valid)
+                save_auth2_sites(existing)
+
+            send_message(chat_id,
+                f"<b>Auth2 Site Results</b>\n\n"
+                f"Submitted: <code>{len(new_sites_raw)}</code>\n"
+                f"✅ Added: <code>{len(valid)}</code>\n"
+                f"❌ Invalid: <code>{len(invalid)}</code>\n"
+                f"⚠️ Duplicate: <code>{len(duplicate)}</code>\n"
+                f"Total sites: <code>{len(existing)}</code>\n\n"
+                + "\n".join(results_lines[:20]) +
+                (f"\n... and {len(results_lines) - 20} more" if len(results_lines) > 20 else "") +
+                f"\n\n<i>{DEVELOPER}</i>")
+
+        threading.Thread(target=_do_validate_sites, daemon=True).start()
         return
 
     # --- Gate commands ---
