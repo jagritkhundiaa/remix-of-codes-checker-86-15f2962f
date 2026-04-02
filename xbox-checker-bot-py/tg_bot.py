@@ -53,6 +53,7 @@ GATE_STATUS_FILE = os.path.join(DATA_DIR, "tg_gate_status.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "tg_settings.json")
 PROXIES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proxies.txt")
 SITES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sites.txt")
+AUTH2_SITES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "auth2_sites.txt")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
