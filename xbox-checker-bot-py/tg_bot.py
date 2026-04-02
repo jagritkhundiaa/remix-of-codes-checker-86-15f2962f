@@ -692,6 +692,38 @@ def load_shopify_sites():
 
 
 # ============================================================
+#  Auth2 sites loader + round-robin
+# ============================================================
+_auth2_site_index = 0
+_auth2_site_lock = threading.Lock()
+
+
+def load_auth2_sites():
+    if not os.path.exists(AUTH2_SITES_FILE):
+        return []
+    with open(AUTH2_SITES_FILE, 'r') as f:
+        return [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
+
+
+def save_auth2_sites(sites):
+    with open(AUTH2_SITES_FILE, 'w') as f:
+        for s in sites:
+            f.write(s + '\n')
+
+
+def get_next_auth2_site():
+    """Round-robin site selection for auth2 gate."""
+    global _auth2_site_index
+    sites = load_auth2_sites()
+    if not sites:
+        return None
+    with _auth2_site_lock:
+        site = sites[_auth2_site_index % len(sites)]
+        _auth2_site_index += 1
+    return site
+
+
+# ============================================================
 #  Gate runner
 # ============================================================
 def _run_gate(gate, c_num, c_mm, c_yy, c_cvv, proxy_dict):
