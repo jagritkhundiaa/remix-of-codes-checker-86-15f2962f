@@ -1070,7 +1070,7 @@ GATE_REGISTRY = [
 
 GATE_MAP = {
     "/auth": ("auth", "Stripe Auth"),
-    "/auth2": ("auth2", "Authnet Auth"),
+    "/auth2": ("auth2", "Auto Stripe v2"),
     "/b3auth": ("b3auth", "Braintree Auth"),
     "/b3charge": ("b3charge", "Braintree Charge"),
     "/authnet": ("authnet", "Authorize.net"),
