@@ -74,6 +74,7 @@ export default function Index() {
       </header>
 
       <main className="relative z-10 max-w-3xl mx-auto px-4 py-6 space-y-4">
+        <GateManager accessKey={accessKey} onGateSelected={setAnalysis} analysis={analysis} />
         <UrlAnalyzer accessKey={accessKey} onAnalyzed={setAnalysis} analysis={analysis} />
         <CardInput cards={cards} onCardsChange={setCards} />
         <HitRunner accessKey={accessKey} analysis={analysis} cards={cards} settings={settings} />
