@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Globe, Plus, Trash2, Loader2, Zap, CheckCircle, XCircle, Database, ChevronDown } from "lucide-react";
+import { Globe, Plus, Trash2, Loader2, Zap, CheckCircle, XCircle, Database, ChevronDown, Copy, Check, ExternalLink } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { CustomGate, UrlAnalysis, PROVIDER_LABELS } from "@/lib/neon";
 
