@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Globe, Plus, Trash2, Loader2, Zap, CheckCircle, XCircle, Database, ChevronDown } from "lucide-react";
+import { Globe, Plus, Trash2, Loader2, Zap, CheckCircle, XCircle, Database, ChevronDown, Copy, Check, ExternalLink } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { CustomGate, UrlAnalysis, PROVIDER_LABELS } from "@/lib/neon";
 
@@ -16,6 +16,9 @@ export default function GateManager({ accessKey, onGateSelected, analysis }: Gat
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const getGateUrl = (gateId: string) => `${window.location.origin}/gate/${gateId}`;
 
   useEffect(() => {
     loadGates();
@@ -173,12 +176,34 @@ export default function GateManager({ accessKey, onGateSelected, analysis }: Gat
                       </div>
                     </div>
                   </button>
-                  <button
-                    onClick={() => handleDelete(gate.id)}
-                    className="opacity-0 group-hover:opacity-100 text-destructive hover:text-destructive/80 transition-all p-1"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
+                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-all">
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(getGateUrl(gate.id));
+                        setCopiedId(gate.id);
+                        setTimeout(() => setCopiedId(null), 2000);
+                      }}
+                      className="text-muted-foreground hover:text-primary transition-all p-1"
+                      title="Copy checker URL"
+                    >
+                      {copiedId === gate.id ? <Check className="w-3 h-3 text-primary" /> : <Copy className="w-3 h-3" />}
+                    </button>
+                    <a
+                      href={getGateUrl(gate.id)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-muted-foreground hover:text-primary transition-all p-1"
+                      title="Open checker page"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                    <button
+                      onClick={() => handleDelete(gate.id)}
+                      className="text-destructive hover:text-destructive/80 transition-all p-1"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
