@@ -98,6 +98,57 @@ export type Database = {
         }
         Relationships: []
       }
+      custom_gates: {
+        Row: {
+          amount: string | null
+          client_secret: string | null
+          created_at: string
+          created_by: string
+          currency: string | null
+          id: string
+          is_active: boolean
+          merchant: string | null
+          name: string
+          product: string | null
+          provider: string
+          site_url: string
+          stripe_pk: string | null
+          updated_at: string
+        }
+        Insert: {
+          amount?: string | null
+          client_secret?: string | null
+          created_at?: string
+          created_by: string
+          currency?: string | null
+          id?: string
+          is_active?: boolean
+          merchant?: string | null
+          name: string
+          product?: string | null
+          provider?: string
+          site_url: string
+          stripe_pk?: string | null
+          updated_at?: string
+        }
+        Update: {
+          amount?: string | null
+          client_secret?: string | null
+          created_at?: string
+          created_by?: string
+          currency?: string | null
+          id?: string
+          is_active?: boolean
+          merchant?: string | null
+          name?: string
+          product?: string | null
+          provider?: string
+          site_url?: string
+          stripe_pk?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       promos_unchecked: {
         Row: {
           code: string

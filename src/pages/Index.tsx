@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { LogOut, Zap, Users } from "lucide-react";
 import AccessGate from "@/components/neon/AccessGate";
 import UrlAnalyzer from "@/components/neon/UrlAnalyzer";
+import GateManager from "@/components/neon/GateManager";
 import CardInput from "@/components/neon/CardInput";
 import HitRunner from "@/components/neon/HitRunner";
 import Credits from "@/components/neon/Credits";
@@ -73,6 +74,7 @@ export default function Index() {
       </header>
 
       <main className="relative z-10 max-w-3xl mx-auto px-4 py-6 space-y-4">
+        <GateManager accessKey={accessKey} onGateSelected={setAnalysis} analysis={analysis} />
         <UrlAnalyzer accessKey={accessKey} onAnalyzed={setAnalysis} analysis={analysis} />
         <CardInput cards={cards} onCardsChange={setCards} />
         <HitRunner accessKey={accessKey} analysis={analysis} cards={cards} settings={settings} />
