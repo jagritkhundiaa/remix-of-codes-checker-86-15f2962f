@@ -163,52 +163,97 @@ export default function GateManager({ accessKey, onGateSelected, analysis }: Gat
           {gates.length > 0 ? (
             <div className="space-y-1.5 max-h-48 overflow-y-auto">
               {gates.map((gate) => (
-                <div
-                  key={gate.id}
-                  className="flex items-center gap-2 bg-background/40 rounded-xl px-3 py-2 border border-border/20 group"
-                >
-                  <button
-                    onClick={() => handleSelect(gate)}
-                    className="flex-1 flex items-center gap-2 text-left hover:opacity-80 transition-opacity"
-                  >
-                    <Globe className="w-3 h-3 text-muted-foreground shrink-0" />
-                    <div className="min-w-0">
-                      <div className="text-xs font-bold text-foreground truncate">{gate.name}</div>
-                      <div className="text-[10px] text-muted-foreground flex items-center gap-1.5">
-                        <span className="text-primary font-semibold">{PROVIDER_LABELS[gate.provider] || gate.provider}</span>
-                        {gate.stripe_pk && <CheckCircle className="w-2.5 h-2.5 text-primary" />}
-                        {gate.merchant && <span>· {gate.merchant}</span>}
+                <div key={gate.id} className="space-y-1">
+                  <div className="flex items-center gap-2 bg-background/40 rounded-xl px-3 py-2 border border-border/20 group">
+                    <button
+                      onClick={() => handleSelect(gate)}
+                      className="flex-1 flex items-center gap-2 text-left hover:opacity-80 transition-opacity"
+                    >
+                      <Globe className="w-3 h-3 text-muted-foreground shrink-0" />
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-foreground truncate">{gate.name}</div>
+                        <div className="text-[10px] text-muted-foreground flex items-center gap-1.5">
+                          <span className="text-primary font-semibold">{PROVIDER_LABELS[gate.provider] || gate.provider}</span>
+                          {gate.stripe_pk && <CheckCircle className="w-2.5 h-2.5 text-primary" />}
+                          {gate.merchant && <span>· {gate.merchant}</span>}
+                        </div>
                       </div>
+                    </button>
+                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-all">
+                      <button
+                        onClick={() => setShowApiInfo(showApiInfo === gate.id ? null : gate.id)}
+                        className="text-[9px] text-muted-foreground hover:text-primary transition-all px-1.5 py-0.5 rounded bg-primary/5 font-bold"
+                        title="Show API"
+                      >
+                        API
+                      </button>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(getGateUrl(gate.id));
+                          setCopiedId(gate.id);
+                          setTimeout(() => setCopiedId(null), 2000);
+                        }}
+                        className="text-muted-foreground hover:text-primary transition-all p-1"
+                        title="Copy checker URL"
+                      >
+                        {copiedId === gate.id ? <Check className="w-3 h-3 text-primary" /> : <Copy className="w-3 h-3" />}
+                      </button>
+                      <a
+                        href={getGateUrl(gate.id)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-muted-foreground hover:text-primary transition-all p-1"
+                        title="Open checker page"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                      <button
+                        onClick={() => handleDelete(gate.id)}
+                        className="text-destructive hover:text-destructive/80 transition-all p-1"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
                     </div>
-                  </button>
-                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-all">
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(getGateUrl(gate.id));
-                        setCopiedId(gate.id);
-                        setTimeout(() => setCopiedId(null), 2000);
-                      }}
-                      className="text-muted-foreground hover:text-primary transition-all p-1"
-                      title="Copy checker URL"
-                    >
-                      {copiedId === gate.id ? <Check className="w-3 h-3 text-primary" /> : <Copy className="w-3 h-3" />}
-                    </button>
-                    <a
-                      href={getGateUrl(gate.id)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-muted-foreground hover:text-primary transition-all p-1"
-                      title="Open checker page"
-                    >
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
-                    <button
-                      onClick={() => handleDelete(gate.id)}
-                      className="text-destructive hover:text-destructive/80 transition-all p-1"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
                   </div>
+
+                  {showApiInfo === gate.id && (
+                    <div className="bg-background/60 rounded-lg border border-primary/10 p-3 space-y-2 ml-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold text-primary uppercase tracking-wider">API Endpoint</span>
+                        <button
+                          onClick={() => {
+                            const example = JSON.stringify({
+                              gate_id: gate.id,
+                              cc: "4111111111111111|01|28|123",
+                              access_key: "YOUR_KEY",
+                              mode: "hitter"
+                            }, null, 2);
+                            navigator.clipboard.writeText(example);
+                            setCopiedId(`api-${gate.id}`);
+                            setTimeout(() => setCopiedId(null), 2000);
+                          }}
+                          className="text-[9px] text-muted-foreground hover:text-primary flex items-center gap-1"
+                        >
+                          {copiedId === `api-${gate.id}` ? <Check className="w-2.5 h-2.5 text-primary" /> : <Copy className="w-2.5 h-2.5" />}
+                          Copy Example
+                        </button>
+                      </div>
+                      <div className="text-[10px] font-mono text-foreground/80 bg-background/80 rounded px-2 py-1.5 break-all select-all">
+                        POST {getApiUrl(gate.id)}
+                      </div>
+                      <pre className="text-[9px] font-mono text-muted-foreground bg-background/80 rounded px-2 py-1.5 overflow-x-auto whitespace-pre">
+{`{
+  "gate_id": "${gate.id}",
+  "cc": "4111111111111111|01|28|123",
+  "access_key": "YOUR_KEY",
+  "mode": "hitter"
+}`}
+                      </pre>
+                      <p className="text-[9px] text-muted-foreground/60">
+                        Returns: status, code, message, responseTime, bin, brand
+                      </p>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
