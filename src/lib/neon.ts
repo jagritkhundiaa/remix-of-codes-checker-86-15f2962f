@@ -236,4 +236,4 @@ export const PROVIDER_LABELS: Record<string, string> = {
   wix: 'Wix',
   ecwid: 'Ecwid',
   unknown: 'Unknown',
-;
+};
