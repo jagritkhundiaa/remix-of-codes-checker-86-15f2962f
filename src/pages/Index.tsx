@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { LogOut, Zap, Users } from "lucide-react";
 import AccessGate from "@/components/neon/AccessGate";
 import UrlAnalyzer from "@/components/neon/UrlAnalyzer";
+import GateManager from "@/components/neon/GateManager";
 import CardInput from "@/components/neon/CardInput";
 import HitRunner from "@/components/neon/HitRunner";
 import Credits from "@/components/neon/Credits";
