@@ -22,6 +22,7 @@ interface ScrapedSite {
   last_checked: string | null;
   notes: string | null;
   created_at: string;
+  gateway_details: { gateType?: string; gateDetails?: string; stripePk?: string } | null;
 }
 
 export default function SiteScraper({ accessKey }: { accessKey: string }) {
