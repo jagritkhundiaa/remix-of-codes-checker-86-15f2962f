@@ -47,6 +47,100 @@ function requiresLogin(html: string, url: string): boolean {
   return h.includes('sign in') || h.includes('log in') || h.includes('login') || h.includes('create account') || h.includes('register') || url.includes('/login') || url.includes('/signin');
 }
 
+// ── 2D/3D Stripe gate check ───────────────────────────────
+// Creates a test payment method with a known test card to determine
+// if the Stripe integration requires 3D Secure or is 2D (no 3DS).
+async function checkStripeGateType(stripePk: string): Promise<{ gateType: '2d' | '3d' | 'unknown'; details: string }> {
+  try {
+    // Generate fingerprint
+    const guid = crypto.randomUUID().replace(/-/g, '');
+    const muid = crypto.randomUUID().replace(/-/g, '');
+    const sid = crypto.randomUUID().replace(/-/g, '');
+
+    // Create a payment method with a test card
+    const pmBody = new URLSearchParams({
+      'type': 'card',
+      'card[number]': '4242424242424242',
+      'card[exp_month]': '12',
+      'card[exp_year]': '28',
+      'card[cvc]': '123',
+      'billing_details[address][country]': 'US',
+      'billing_details[address][postal_code]': '10001',
+      'guid': guid,
+      'muid': muid,
+      'sid': sid,
+      'payment_user_agent': 'stripe.js/v3',
+      'time_on_page': String(30000 + Math.floor(Math.random() * 20000)),
+      'key': stripePk,
+    });
+
+    const pmResp = await fetch('https://api.stripe.com/v1/payment_methods', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Origin': 'https://js.stripe.com',
+        'Referer': 'https://js.stripe.com/',
+      },
+      body: pmBody.toString(),
+    });
+
+    const pmData = await pmResp.json();
+
+    if (pmData.error) {
+      // If key is invalid or restricted, we can't determine
+      return { gateType: 'unknown', details: `PM error: ${pmData.error.code || pmData.error.message}` };
+    }
+
+    // Check if the card's checks indicate 3DS
+    const checks = pmData.card?.checks || {};
+    const threeDSecure = pmData.card?.three_d_secure_usage?.supported;
+
+    if (threeDSecure === false) {
+      return { gateType: '2d', details: '3DS not supported by merchant — 2D gate ✅' };
+    }
+
+    // Now try to create a token to see how the merchant handles it
+    const tokenBody = new URLSearchParams({
+      'card[number]': '4000000000003220', // 3DS required test card
+      'card[exp_month]': '12',
+      'card[exp_year]': '28',
+      'card[cvc]': '123',
+      'key': stripePk,
+    });
+
+    const tokenResp = await fetch('https://api.stripe.com/v1/tokens', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Origin': 'https://js.stripe.com',
+        'Referer': 'https://js.stripe.com/',
+      },
+      body: tokenBody.toString(),
+    });
+
+    const tokenData = await tokenResp.json();
+
+    if (tokenData.error) {
+      // Token creation failed — check error for hints
+      if (tokenData.error.code === 'card_declined') {
+        return { gateType: '2d', details: 'Token declined without 3DS challenge — likely 2D ✅' };
+      }
+      return { gateType: 'unknown', details: `Token error: ${tokenData.error.code}` };
+    }
+
+    // If token created successfully, the 3DS status depends on merchant Radar rules
+    // We check if three_d_secure_usage is supported on the card object
+    if (threeDSecure === true) {
+      return { gateType: '3d', details: '3D Secure supported/required by merchant — 3D gate 🔐' };
+    }
+
+    // Default: if PM created fine and 3DS is neutral, likely 2D
+    return { gateType: '2d', details: 'No 3DS enforcement detected — likely 2D ✅' };
+  } catch (e) {
+    return { gateType: 'unknown', details: `Check error: ${e instanceof Error ? e.message : 'unknown'}` };
+  }
+}
+
 // ── AI-powered site discovery ──────────────────────────────
 async function discoverSites(category: string, queries: string[], apiKey: string): Promise<string[]> {
   const allUrls: string[] = [];
@@ -83,7 +177,6 @@ async function discoverSites(category: string, queries: string[], apiKey: string
       const data = await resp.json();
       const content = data.choices?.[0]?.message?.content || '';
 
-      // Extract URLs from AI response
       const jsonMatch = content.match(/\[[\s\S]*?\]/);
       if (jsonMatch) {
         try {
@@ -94,7 +187,6 @@ async function discoverSites(category: string, queries: string[], apiKey: string
         } catch { /* ignore parse errors */ }
       }
 
-      // Also extract any URLs from text
       const urlRegex = /https?:\/\/[^\s"',\]]+/g;
       const textUrls = content.match(urlRegex) || [];
       allUrls.push(...textUrls);
@@ -103,7 +195,6 @@ async function discoverSites(category: string, queries: string[], apiKey: string
     }
   }
 
-  // Deduplicate by domain
   const seen = new Set<string>();
   return allUrls.filter(u => {
     try {
@@ -123,6 +214,8 @@ async function analyzeSite(url: string): Promise<{
   requiresPhone: boolean;
   domain: string;
   notes: string;
+  gateType: '2d' | '3d' | 'unknown';
+  gateDetails: string;
 }> {
   const result = {
     gateway: 'unknown' as string,
@@ -131,6 +224,8 @@ async function analyzeSite(url: string): Promise<{
     requiresPhone: false,
     domain: '',
     notes: '',
+    gateType: 'unknown' as '2d' | '3d' | 'unknown',
+    gateDetails: '',
   };
 
   try {
@@ -155,7 +250,6 @@ async function analyzeSite(url: string): Promise<{
     result.requiresPhone = requiresPhone(html);
 
     if (result.gateway === 'unknown') {
-      // Try common checkout/pricing pages
       for (const path of ['/pricing', '/checkout', '/payment', '/subscribe', '/plans']) {
         try {
           const checkUrl = `${parsedUrl.origin}${path}`;
@@ -177,6 +271,13 @@ async function analyzeSite(url: string): Promise<{
         } catch { /* skip */ }
       }
     }
+
+    // If Stripe detected with a pk key, check 2D/3D
+    if (result.gateway === 'stripe' && result.stripePk) {
+      const gateCheck = await checkStripeGateType(result.stripePk);
+      result.gateType = gateCheck.gateType;
+      result.gateDetails = gateCheck.details;
+    }
   } catch (e) {
     result.notes = `Fetch error: ${e instanceof Error ? e.message : 'unknown'}`;
   }
@@ -185,15 +286,21 @@ async function analyzeSite(url: string): Promise<{
 }
 
 // ── Send Telegram notification ─────────────────────────────
-async function notifyTelegram(sites: Array<{ url: string; domain: string; gateway: string; category: string }>) {
-  const botToken = Deno.env.get('TG_BOT_TOKEN');
-  const chatId = Deno.env.get('TG_CHAT_ID');
+async function notifyTelegram(sites: Array<{ url: string; domain: string; gateway: string; category: string; gateType?: string; gateDetails?: string; stripePk?: string | null }>) {
+  const botToken = Deno.env.get('SCRAPER_TG_BOT_TOKEN');
+  const chatId = Deno.env.get('SCRAPER_TG_CHAT_ID');
   if (!botToken || !chatId || sites.length === 0) return;
 
   let msg = `🔍 <b>New Sites Found!</b>\n\n`;
   for (const s of sites) {
     const gw = s.gateway === 'stripe' ? '💳 Stripe' : s.gateway === 'adyen' ? '💳 Adyen' : `🔄 ${s.gateway}`;
-    msg += `${gw} — <b>${s.domain}</b>\n<code>${s.url}</code>\n📂 ${s.category}\n\n`;
+    const gateLabel = s.gateType === '2d' ? '✅ 2D' : s.gateType === '3d' ? '🔐 3D' : '❓ Unknown';
+    msg += `${gw} | ${gateLabel}\n`;
+    msg += `<b>${s.domain}</b>\n`;
+    msg += `<code>${s.url}</code>\n`;
+    if (s.stripePk) msg += `🔑 <code>${s.stripePk.slice(0, 25)}...</code>\n`;
+    if (s.gateDetails) msg += `📋 ${s.gateDetails}\n`;
+    msg += `📂 ${s.category}\n\n`;
   }
 
   try {
@@ -224,13 +331,11 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Get body for manual triggers (category filter, etc.)
     let body: any = {};
     if (req.method === 'POST') {
       try { body = await req.json(); } catch { /* empty body ok for cron */ }
     }
 
-    // Fetch active categories
     const { data: categories } = await supabase
       .from('scraper_categories')
       .select('*')
@@ -242,11 +347,10 @@ Deno.serve(async (req) => {
       });
     }
 
-    const results = { discovered: 0, analyzed: 0, confirmed: 0, skipped: 0, errors: 0 };
-    const confirmedSites: Array<{ url: string; domain: string; gateway: string; category: string }> = [];
+    const results = { discovered: 0, analyzed: 0, confirmed: 0, skipped: 0, errors: 0, gates_2d: 0, gates_3d: 0 };
+    const confirmedSites: Array<{ url: string; domain: string; gateway: string; category: string; gateType?: string; gateDetails?: string; stripePk?: string | null }> = [];
 
     for (const cat of categories) {
-      // If specific category requested, skip others
       if (body.category_id && cat.id !== body.category_id) continue;
 
       console.log(`[Scraper] Searching category: ${cat.name}`);
@@ -254,7 +358,6 @@ Deno.serve(async (req) => {
       results.discovered += urls.length;
 
       for (const url of urls) {
-        // Check if already exists
         const { data: existing } = await supabase
           .from('scraped_sites')
           .select('id')
@@ -263,11 +366,9 @@ Deno.serve(async (req) => {
 
         if (existing) continue;
 
-        // Analyze the site
         const analysis = await analyzeSite(url);
         results.analyzed++;
 
-        // Determine status
         let status = 'analyzed';
         if (analysis.requiresPhone) {
           status = 'skipped';
@@ -275,22 +376,32 @@ Deno.serve(async (req) => {
         } else if (analysis.gateway === 'stripe' || analysis.gateway === 'adyen') {
           status = 'confirmed';
           results.confirmed++;
-          confirmedSites.push({ url, domain: analysis.domain, gateway: analysis.gateway, category: cat.name });
+          if (analysis.gateType === '2d') results.gates_2d++;
+          if (analysis.gateType === '3d') results.gates_3d++;
+          confirmedSites.push({
+            url, domain: analysis.domain, gateway: analysis.gateway, category: cat.name,
+            gateType: analysis.gateType, gateDetails: analysis.gateDetails, stripePk: analysis.stripePk,
+          });
         }
 
-        // Insert into DB
         const { error: insertErr } = await supabase.from('scraped_sites').upsert({
           url,
           domain: analysis.domain,
           category_id: cat.id,
           payment_gateway: analysis.gateway,
-          gateway_details: { stripePk: analysis.stripePk },
+          gateway_details: {
+            stripePk: analysis.stripePk,
+            gateType: analysis.gateType,
+            gateDetails: analysis.gateDetails,
+          },
           stripe_pk: analysis.stripePk,
           requires_login: analysis.requiresLogin,
           requires_phone: analysis.requiresPhone,
           status,
           last_checked: new Date().toISOString(),
-          notes: analysis.notes,
+          notes: analysis.gateType !== 'unknown'
+            ? `${analysis.notes ? analysis.notes + ' | ' : ''}Gate: ${analysis.gateType.toUpperCase()} — ${analysis.gateDetails}`
+            : analysis.notes,
         }, { onConflict: 'url' });
 
         if (insertErr) {
@@ -300,11 +411,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Notify Telegram about confirmed sites
     if (confirmedSites.length > 0) {
       await notifyTelegram(confirmedSites);
 
-      // Mark as notified
       for (const s of confirmedSites) {
         await supabase.from('scraped_sites')
           .update({ telegram_notified: true })

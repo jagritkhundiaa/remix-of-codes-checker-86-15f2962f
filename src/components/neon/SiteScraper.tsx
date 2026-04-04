@@ -22,6 +22,7 @@ interface ScrapedSite {
   last_checked: string | null;
   notes: string | null;
   created_at: string;
+  gateway_details: { gateType?: string; gateDetails?: string; stripePk?: string } | null;
 }
 
 export default function SiteScraper({ accessKey }: { accessKey: string }) {
@@ -91,6 +92,8 @@ export default function SiteScraper({ accessKey }: { accessKey: string }) {
     if (filter === "all") return true;
     if (filter === "stripe") return s.payment_gateway === "stripe";
     if (filter === "adyen") return s.payment_gateway === "adyen";
+    if (filter === "2d") return (s.gateway_details as any)?.gateType === '2d';
+    if (filter === "3d") return (s.gateway_details as any)?.gateType === '3d';
     if (filter === "confirmed") return s.status === "confirmed";
     if (filter === "pending") return s.status === "pending" || s.status === "analyzed";
     return true;
@@ -189,14 +192,14 @@ export default function SiteScraper({ accessKey }: { accessKey: string }) {
       </div>
 
       {/* Filter */}
-      <div className="flex gap-1.5">
-        {["all", "stripe", "adyen", "confirmed", "pending"].map(f => (
+      <div className="flex gap-1.5 flex-wrap">
+        {["all", "stripe", "adyen", "2d", "3d", "confirmed", "pending"].map(f => (
           <button
             key={f}
             onClick={() => setFilter(f)}
             className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${filter === f ? "bg-primary text-primary-foreground" : "bg-background/40 text-muted-foreground hover:text-foreground"}`}
           >
-            {f.charAt(0).toUpperCase() + f.slice(1)}
+            {f === '2d' ? '2D Gates' : f === '3d' ? '3D Gates' : f.charAt(0).toUpperCase() + f.slice(1)}
           </button>
         ))}
       </div>
@@ -219,6 +222,8 @@ export default function SiteScraper({ accessKey }: { accessKey: string }) {
                 }`}>
                   {site.payment_gateway}
                 </span>
+                {(site.gateway_details as any)?.gateType === '2d' && <span className="text-[10px] px-1 rounded bg-green-500/20 text-green-400 font-bold">2D</span>}
+                {(site.gateway_details as any)?.gateType === '3d' && <span className="text-[10px] px-1 rounded bg-blue-500/20 text-blue-400 font-bold">3D</span>}
                 {site.requires_login && <span className="text-[10px] text-yellow-500">🔐</span>}
                 {site.requires_phone && <span className="text-[10px] text-destructive">📱</span>}
                 {site.telegram_notified && <span className="text-[10px]">✈️</span>}
