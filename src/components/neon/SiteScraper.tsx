@@ -220,6 +220,8 @@ export default function SiteScraper({ accessKey }: { accessKey: string }) {
                 }`}>
                   {site.payment_gateway}
                 </span>
+                {(site.gateway_details as any)?.gateType === '2d' && <span className="text-[10px] px-1 rounded bg-green-500/20 text-green-400 font-bold">2D</span>}
+                {(site.gateway_details as any)?.gateType === '3d' && <span className="text-[10px] px-1 rounded bg-blue-500/20 text-blue-400 font-bold">3D</span>}
                 {site.requires_login && <span className="text-[10px] text-yellow-500">🔐</span>}
                 {site.requires_phone && <span className="text-[10px] text-destructive">📱</span>}
                 {site.telegram_notified && <span className="text-[10px]">✈️</span>}
