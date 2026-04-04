@@ -92,6 +92,8 @@ export default function SiteScraper({ accessKey }: { accessKey: string }) {
     if (filter === "all") return true;
     if (filter === "stripe") return s.payment_gateway === "stripe";
     if (filter === "adyen") return s.payment_gateway === "adyen";
+    if (filter === "2d") return (s.gateway_details as any)?.gateType === '2d';
+    if (filter === "3d") return (s.gateway_details as any)?.gateType === '3d';
     if (filter === "confirmed") return s.status === "confirmed";
     if (filter === "pending") return s.status === "pending" || s.status === "analyzed";
     return true;
