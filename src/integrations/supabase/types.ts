@@ -218,6 +218,95 @@ export type Database = {
         }
         Relationships: []
       }
+      scraped_sites: {
+        Row: {
+          category_id: string | null
+          client_secret: string | null
+          created_at: string
+          domain: string
+          gateway_details: Json | null
+          id: string
+          last_checked: string | null
+          notes: string | null
+          payment_gateway: string | null
+          requires_login: boolean | null
+          requires_phone: boolean | null
+          status: string
+          stripe_pk: string | null
+          telegram_notified: boolean
+          updated_at: string
+          url: string
+        }
+        Insert: {
+          category_id?: string | null
+          client_secret?: string | null
+          created_at?: string
+          domain: string
+          gateway_details?: Json | null
+          id?: string
+          last_checked?: string | null
+          notes?: string | null
+          payment_gateway?: string | null
+          requires_login?: boolean | null
+          requires_phone?: boolean | null
+          status?: string
+          stripe_pk?: string | null
+          telegram_notified?: boolean
+          updated_at?: string
+          url: string
+        }
+        Update: {
+          category_id?: string | null
+          client_secret?: string | null
+          created_at?: string
+          domain?: string
+          gateway_details?: Json | null
+          id?: string
+          last_checked?: string | null
+          notes?: string | null
+          payment_gateway?: string | null
+          requires_login?: boolean | null
+          requires_phone?: boolean | null
+          status?: string
+          stripe_pk?: string | null
+          telegram_notified?: boolean
+          updated_at?: string
+          url?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "scraped_sites_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: false
+            referencedRelation: "scraper_categories"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      scraper_categories: {
+        Row: {
+          created_at: string
+          id: string
+          is_active: boolean
+          name: string
+          search_queries: string[]
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name: string
+          search_queries?: string[]
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          search_queries?: string[]
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
