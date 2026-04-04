@@ -8,6 +8,7 @@ import HitRunner from "@/components/neon/HitRunner";
 import Credits from "@/components/neon/Credits";
 import Settings from "@/components/neon/Settings";
 import AdminPanel from "@/components/neon/AdminPanel";
+import SiteScraper from "@/components/neon/SiteScraper";
 import { UrlAnalysis, CardData, NeonSettings, loadSettings } from "@/lib/neon";
 
 export default function Index() {
@@ -78,6 +79,7 @@ export default function Index() {
         <UrlAnalyzer accessKey={accessKey} onAnalyzed={setAnalysis} analysis={analysis} />
         <CardInput cards={cards} onCardsChange={setCards} />
         <HitRunner accessKey={accessKey} analysis={analysis} cards={cards} settings={settings} />
+        <SiteScraper accessKey={accessKey} />
       </main>
 
       <Settings settings={settings} onSettingsChange={setSettings} />
