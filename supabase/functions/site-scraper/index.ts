@@ -425,6 +425,8 @@ Deno.serve(async (req) => {
       }
     }
 
+    console.log(`[Scraper] Done — discovered:${results.discovered} analyzed:${results.analyzed} confirmed:${results.confirmed} 2d:${results.gates_2d} 3d:${results.gates_3d}`);
+
     return new Response(JSON.stringify({ success: true, results }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
