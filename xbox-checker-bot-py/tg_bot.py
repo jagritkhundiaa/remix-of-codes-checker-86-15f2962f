@@ -1226,6 +1226,30 @@ def handle_callback(update):
             edit_message(chat_id, msg_id, txt, reply_markup=help_back_markup())
         return
 
+    if data == "help_scraper":
+        answer_callback(cb_id)
+        if not is_admin(cb_user_id):
+            txt = f"<b>Scraper section is admin-only.</b>\n\n<i>{DEVELOPER}</i>"
+        else:
+            txt = (
+                "<b>Site Scraper</b>\n\n"
+                "<code>/scrape</code>  ·  Run scraper (all categories)\n"
+                "<code>/scrape AI Tools</code>  ·  Scrape specific category\n"
+                "<code>/sites</code>  ·  View all found sites\n"
+                "<code>/sites 2d</code>  ·  Filter 2D gates only\n"
+                "<code>/sites 3d</code>  ·  Filter 3D gates only\n"
+                "<code>/sites stripe</code>  ·  Stripe sites only\n"
+                "<code>/cats</code>  ·  List categories\n"
+                "<code>/addcat Name</code>  ·  Add category\n"
+                "<code>/rmcat Name</code>  ·  Remove category\n\n"
+                "Auto-discovers sites with Stripe/Adyen,\n"
+                "detects 2D/3D gates, sends to Telegram.\n\n"
+                f"<i>{DEVELOPER}</i>"
+            )
+        if chat_id and msg_id:
+            edit_message(chat_id, msg_id, txt, reply_markup=help_back_markup())
+        return
+
     if data == "help_admin":
         answer_callback(cb_id)
         if not is_admin(cb_user_id):
