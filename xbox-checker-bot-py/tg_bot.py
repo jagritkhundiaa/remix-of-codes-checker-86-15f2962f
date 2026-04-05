@@ -1032,6 +1032,7 @@ def help_main_markup():
                 {"text": "How to Use", "callback_data": "help_howto"},
             ],
             [
+                {"text": "Scraper", "callback_data": "help_scraper"},
                 {"text": "Admin", "callback_data": "help_admin"},
             ],
         ]
@@ -1221,6 +1222,30 @@ def handle_callback(update):
             "<code>/binlookup 424242</code>\n\n"
             f"<i>{DEVELOPER}</i>"
         )
+        if chat_id and msg_id:
+            edit_message(chat_id, msg_id, txt, reply_markup=help_back_markup())
+        return
+
+    if data == "help_scraper":
+        answer_callback(cb_id)
+        if not is_admin(cb_user_id):
+            txt = f"<b>Scraper section is admin-only.</b>\n\n<i>{DEVELOPER}</i>"
+        else:
+            txt = (
+                "<b>Site Scraper</b>\n\n"
+                "<code>/scrape</code>  ·  Run scraper (all categories)\n"
+                "<code>/scrape AI Tools</code>  ·  Scrape specific category\n"
+                "<code>/sites</code>  ·  View all found sites\n"
+                "<code>/sites 2d</code>  ·  Filter 2D gates only\n"
+                "<code>/sites 3d</code>  ·  Filter 3D gates only\n"
+                "<code>/sites stripe</code>  ·  Stripe sites only\n"
+                "<code>/cats</code>  ·  List categories\n"
+                "<code>/addcat Name</code>  ·  Add category\n"
+                "<code>/rmcat Name</code>  ·  Remove category\n\n"
+                "Auto-discovers sites with Stripe/Adyen,\n"
+                "detects 2D/3D gates, sends to Telegram.\n\n"
+                f"<i>{DEVELOPER}</i>"
+            )
         if chat_id and msg_id:
             edit_message(chat_id, msg_id, txt, reply_markup=help_back_markup())
         return
@@ -2839,6 +2864,256 @@ def handle_update(update):
                 f"\n\n<i>{DEVELOPER}</i>")
 
         threading.Thread(target=_do_validate_sites, daemon=True).start()
+        return
+
+    # --- /scrape (admin) — trigger site scraper ---
+    if text.startswith("/scrape"):
+        if not is_admin(user_id):
+            return
+        parts = text.split(maxsplit=1)
+        cat_filter = parts[1].strip() if len(parts) >= 2 else None
+
+        send_message(chat_id, f"<b>Scraping sites...</b>\n\nThis may take 30-60 seconds.\n\n<i>{DEVELOPER}</i>")
+
+        def _do_scrape_sites():
+            try:
+                sb_url = "https://tdtgyhtcumoetfhfycnn.supabase.co"
+                sb_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRkdGd5aHRjdW1vZXRmaGZ5Y25uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI0Njc2NDMsImV4cCI6MjA4ODA0MzY0M30.H_8Y50hyzmgdOjbaYdppJGENyMBGDxt800qnqPRWgUo"
+
+                body = {}
+                if cat_filter:
+                    # Look up category by name
+                    cat_resp = requests.get(
+                        f"{sb_url}/rest/v1/scraper_categories?name=ilike.%25{cat_filter}%25&select=id,name&limit=1",
+                        headers={"apikey": sb_key, "Authorization": f"Bearer {sb_key}"},
+                        timeout=10
+                    )
+                    cats = cat_resp.json() if cat_resp.ok else []
+                    if cats:
+                        body["category_id"] = cats[0]["id"]
+
+                resp = requests.post(
+                    f"{sb_url}/functions/v1/site-scraper",
+                    json=body,
+                    headers={
+                        "apikey": sb_key,
+                        "Authorization": f"Bearer {sb_key}",
+                        "Content-Type": "application/json",
+                    },
+                    timeout=120
+                )
+
+                if resp.ok:
+                    data = resp.json()
+                    r = data.get("results", {})
+                    msg = (
+                        "<b>Scrape Complete</b>\n\n"
+                        f"Discovered: <code>{r.get('discovered', 0)}</code>\n"
+                        f"Analyzed: <code>{r.get('analyzed', 0)}</code>\n"
+                        f"Confirmed: <code>{r.get('confirmed', 0)}</code>\n"
+                        f"2D Gates: <code>{r.get('gates_2d', 0)}</code>\n"
+                        f"3D Gates: <code>{r.get('gates_3d', 0)}</code>\n"
+                        f"Skipped: <code>{r.get('skipped', 0)}</code>\n\n"
+                    )
+                    if r.get('confirmed', 0) > 0:
+                        msg += "Results sent to your Telegram!\n\n"
+                    msg += f"<i>{DEVELOPER}</i>"
+                    send_message(chat_id, msg)
+                else:
+                    err = resp.text[:200]
+                    send_message(chat_id, f"<b>Scrape Failed</b>\n\n<code>{err}</code>\n\n<i>{DEVELOPER}</i>")
+            except Exception as e:
+                send_message(chat_id, f"<b>Scrape Error</b>\n\n<code>{str(e)[:150]}</code>\n\n<i>{DEVELOPER}</i>")
+
+        threading.Thread(target=_do_scrape_sites, daemon=True).start()
+        return
+
+    # --- /sites (admin) — view scraped sites ---
+    if text.startswith("/sites"):
+        if not is_admin(user_id):
+            return
+        parts = text.split(maxsplit=1)
+        filter_type = parts[1].strip().lower() if len(parts) >= 2 else None
+
+        def _do_list_sites():
+            try:
+                sb_url = "https://tdtgyhtcumoetfhfycnn.supabase.co"
+                sb_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRkdGd5aHRjdW1vZXRmaGZ5Y25uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI0Njc2NDMsImV4cCI6MjA4ODA0MzY0M30.H_8Y50hyzmgdOjbaYdppJGENyMBGDxt800qnqPRWgUo"
+
+                query = f"{sb_url}/rest/v1/scraped_sites?select=url,domain,payment_gateway,status,gateway_details,stripe_pk&order=created_at.desc&limit=30"
+
+                if filter_type == "2d":
+                    query += "&gateway_details->>gateType=eq.2d"
+                elif filter_type == "3d":
+                    query += "&gateway_details->>gateType=eq.3d"
+                elif filter_type == "stripe":
+                    query += "&payment_gateway=eq.stripe"
+                elif filter_type == "adyen":
+                    query += "&payment_gateway=eq.adyen"
+                elif filter_type == "confirmed":
+                    query += "&status=eq.confirmed"
+
+                resp = requests.get(
+                    query,
+                    headers={"apikey": sb_key, "Authorization": f"Bearer {sb_key}"},
+                    timeout=15
+                )
+
+                if not resp.ok:
+                    send_message(chat_id, f"<b>Failed to fetch sites.</b>\n\n<i>{DEVELOPER}</i>")
+                    return
+
+                sites = resp.json()
+                if not sites:
+                    send_message(chat_id, f"<b>No sites found.</b>\n\nRun /scrape first.\n\n<i>{DEVELOPER}</i>")
+                    return
+
+                lines = [f"<b>Sites ({len(sites)})</b>\n"]
+                for s in sites[:20]:
+                    gw = s.get("payment_gateway", "?").upper()
+                    gd = s.get("gateway_details") or {}
+                    gt = gd.get("gateType", "?")
+                    gate_label = "✅ 2D" if gt == "2d" else "🔐 3D" if gt == "3d" else "❓"
+                    pk = s.get("stripe_pk")
+                    pk_short = f"\n🔑 <code>{pk[:25]}...</code>" if pk else ""
+                    lines.append(f"💳 {gw} | {gate_label}\n<b>{s.get('domain', '?')}</b>\n<code>{s.get('url', '')[:60]}</code>{pk_short}\n")
+
+                if len(sites) > 20:
+                    lines.append(f"... and {len(sites) - 20} more")
+
+                lines.append(f"\n<b>Filters:</b> /sites 2d | 3d | stripe | adyen | confirmed\n\n<i>{DEVELOPER}</i>")
+                send_message(chat_id, "\n".join(lines))
+            except Exception as e:
+                send_message(chat_id, f"<b>Error:</b> <code>{str(e)[:100]}</code>\n\n<i>{DEVELOPER}</i>")
+
+        threading.Thread(target=_do_list_sites, daemon=True).start()
+        return
+
+    # --- /cats (admin) — list scraper categories ---
+    if text == "/cats":
+        if not is_admin(user_id):
+            return
+
+        def _do_list_cats():
+            try:
+                sb_url = "https://tdtgyhtcumoetfhfycnn.supabase.co"
+                sb_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRkdGd5aHRjdW1vZXRmaGZ5Y25uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI0Njc2NDMsImV4cCI6MjA4ODA0MzY0M30.H_8Y50hyzmgdOjbaYdppJGENyMBGDxt800qnqPRWgUo"
+
+                resp = requests.get(
+                    f"{sb_url}/rest/v1/scraper_categories?select=id,name,search_queries,is_active&order=created_at.desc",
+                    headers={"apikey": sb_key, "Authorization": f"Bearer {sb_key}"},
+                    timeout=10
+                )
+                cats = resp.json() if resp.ok else []
+                if not cats:
+                    send_message(chat_id, f"<b>No categories.</b>\n\nUse /addcat to add one.\n\n<i>{DEVELOPER}</i>")
+                    return
+
+                lines = [f"<b>Scraper Categories ({len(cats)})</b>\n"]
+                for c in cats:
+                    status = "🟢" if c.get("is_active") else "🔴"
+                    queries = c.get("search_queries", [])
+                    q_text = ", ".join(queries[:3])
+                    if len(queries) > 3:
+                        q_text += f" +{len(queries)-3}"
+                    lines.append(f"{status} <b>{c['name']}</b>\n   Queries: <code>{q_text}</code>\n")
+                lines.append(f"\n<i>{DEVELOPER}</i>")
+                send_message(chat_id, "\n".join(lines))
+            except Exception as e:
+                send_message(chat_id, f"<b>Error:</b> <code>{str(e)[:100]}</code>\n\n<i>{DEVELOPER}</i>")
+
+        threading.Thread(target=_do_list_cats, daemon=True).start()
+        return
+
+    # --- /addcat (admin) — add scraper category ---
+    if text.startswith("/addcat"):
+        if not is_admin(user_id):
+            return
+        parts = text.split("\n", 1)
+        first_line = parts[0].split(maxsplit=1)
+        if len(first_line) < 2:
+            send_message(chat_id,
+                "<b>Add Scraper Category</b>\n\n"
+                "<b>Usage:</b>\n"
+                "<code>/addcat Category Name\n"
+                "search query 1\n"
+                "search query 2</code>\n\n"
+                "<b>Example:</b>\n"
+                "<code>/addcat SaaS Tools\n"
+                "saas tools with stripe checkout\n"
+                "digital subscription payment pages</code>\n\n"
+                f"<i>{DEVELOPER}</i>")
+            return
+
+        cat_name = first_line[1].strip()
+        queries = []
+        if len(parts) >= 2:
+            queries = [q.strip() for q in parts[1].splitlines() if q.strip()]
+        if not queries:
+            queries = [cat_name]
+
+        def _do_add_cat():
+            try:
+                sb_url = "https://tdtgyhtcumoetfhfycnn.supabase.co"
+                sb_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRkdGd5aHRjdW1vZXRmaGZ5Y25uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI0Njc2NDMsImV4cCI6MjA4ODA0MzY0M30.H_8Y50hyzmgdOjbaYdppJGENyMBGDxt800qnqPRWgUo"
+
+                resp = requests.post(
+                    f"{sb_url}/rest/v1/scraper_categories",
+                    json={"name": cat_name, "search_queries": queries, "is_active": True},
+                    headers={
+                        "apikey": sb_key,
+                        "Authorization": f"Bearer {sb_key}",
+                        "Content-Type": "application/json",
+                        "Prefer": "return=minimal",
+                    },
+                    timeout=10
+                )
+                if resp.status_code in (200, 201):
+                    send_message(chat_id,
+                        f"<b>Category Added</b>\n\n"
+                        f"Name: <b>{cat_name}</b>\n"
+                        f"Queries: <code>{len(queries)}</code>\n\n"
+                        f"Run /scrape to start finding sites.\n\n"
+                        f"<i>{DEVELOPER}</i>")
+                else:
+                    send_message(chat_id, f"<b>Failed to add category.</b>\n\n<code>{resp.text[:100]}</code>\n\n<i>{DEVELOPER}</i>")
+            except Exception as e:
+                send_message(chat_id, f"<b>Error:</b> <code>{str(e)[:100]}</code>\n\n<i>{DEVELOPER}</i>")
+
+        threading.Thread(target=_do_add_cat, daemon=True).start()
+        return
+
+    # --- /rmcat (admin) — remove scraper category ---
+    if text.startswith("/rmcat"):
+        if not is_admin(user_id):
+            return
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            send_message(chat_id,
+                "<b>Usage:</b> <code>/rmcat Category Name</code>\n\n"
+                f"Use /cats to see available categories.\n\n<i>{DEVELOPER}</i>")
+            return
+
+        cat_name = parts[1].strip()
+
+        def _do_rm_cat():
+            try:
+                sb_url = "https://tdtgyhtcumoetfhfycnn.supabase.co"
+                sb_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRkdGd5aHRjdW1vZXRmaGZ5Y25uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI0Njc2NDMsImV4cCI6MjA4ODA0MzY0M30.H_8Y50hyzmgdOjbaYdppJGENyMBGDxt800qnqPRWgUo"
+
+                resp = requests.delete(
+                    f"{sb_url}/rest/v1/scraper_categories?name=ilike.%25{cat_name}%25",
+                    headers={"apikey": sb_key, "Authorization": f"Bearer {sb_key}"},
+                    timeout=10
+                )
+                if resp.status_code in (200, 204):
+                    send_message(chat_id, f"<b>Category removed:</b> {cat_name}\n\n<i>{DEVELOPER}</i>")
+                else:
+                    send_message(chat_id, f"<b>Failed.</b>\n\n<code>{resp.text[:100]}</code>\n\n<i>{DEVELOPER}</i>")
+            except Exception as e:
+                send_message(chat_id, f"<b>Error:</b> <code>{str(e)[:100]}</code>\n\n<i>{DEVELOPER}</i>")
+
+        threading.Thread(target=_do_rm_cat, daemon=True).start()
         return
 
     # --- Gate commands ---

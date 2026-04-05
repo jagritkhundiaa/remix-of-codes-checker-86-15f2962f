@@ -355,6 +355,7 @@ Deno.serve(async (req) => {
 
       console.log(`[Scraper] Searching category: ${cat.name}`);
       const urls = await discoverSites(cat.name, cat.search_queries, apiKey);
+      console.log(`[Scraper] ${cat.name}: discovered ${urls.length} URLs`);
       results.discovered += urls.length;
 
       for (const url of urls) {
@@ -364,9 +365,12 @@ Deno.serve(async (req) => {
           .eq('url', url)
           .maybeSingle();
 
-        if (existing) continue;
+        if (existing) {
+          console.log(`[Scraper] Skipping existing: ${url}`);
+          continue;
+        }
 
-        const analysis = await analyzeSite(url);
+        console.log(`[Scraper] Analyzing: ${url} → ${analysis.gateway} (${analysis.gateType})`);
         results.analyzed++;
 
         let status = 'analyzed';
@@ -420,6 +424,8 @@ Deno.serve(async (req) => {
           .eq('url', s.url);
       }
     }
+
+    console.log(`[Scraper] Done — discovered:${results.discovered} analyzed:${results.analyzed} confirmed:${results.confirmed} 2d:${results.gates_2d} 3d:${results.gates_3d}`);
 
     return new Response(JSON.stringify({ success: true, results }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
