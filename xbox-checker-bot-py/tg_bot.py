@@ -1032,6 +1032,7 @@ def help_main_markup():
                 {"text": "How to Use", "callback_data": "help_howto"},
             ],
             [
+                {"text": "Scraper", "callback_data": "help_scraper"},
                 {"text": "Admin", "callback_data": "help_admin"},
             ],
         ]
