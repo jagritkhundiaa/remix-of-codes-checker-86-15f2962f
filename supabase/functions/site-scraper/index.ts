@@ -370,6 +370,7 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        const analysis = await analyzeSite(url);
         console.log(`[Scraper] Analyzing: ${url} → ${analysis.gateway} (${analysis.gateType})`);
         results.analyzed++;
 
