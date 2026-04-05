@@ -2,14 +2,14 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const MAX_RUNTIME_MS = 55_000;
 const MIN_REMAINING_MS = 5_000;
+const OWNER_ID = 5342093297;
 
 Deno.serve(async () => {
   const startTime = Date.now();
 
   const botToken = Deno.env.get('SCRAPER_TG_BOT_TOKEN');
-  const adminChatId = Deno.env.get('SCRAPER_TG_CHAT_ID');
-  if (!botToken || !adminChatId) {
-    return new Response(JSON.stringify({ error: 'Missing SCRAPER_TG_BOT_TOKEN or SCRAPER_TG_CHAT_ID' }), { status: 500 });
+  if (!botToken) {
+    return new Response(JSON.stringify({ error: 'Missing SCRAPER_TG_BOT_TOKEN' }), { status: 500 });
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -57,16 +57,19 @@ Deno.serve(async () => {
       if (!msg?.text) continue;
 
       const chatId = msg.chat.id;
+      const userId = msg.from?.id || chatId;
       const text = msg.text.trim();
-      const isAdmin = String(chatId) === String(adminChatId);
 
-      if (!isAdmin) {
-        await sendTg(botToken, chatId, '⛔ Unauthorized.');
+      const isOwner = userId === OWNER_ID;
+      const isAuthed = isOwner || await checkAuth(supabase, userId);
+
+      if (!isAuthed) {
+        await sendTg(botToken, chatId, '⛔ Unauthorized. Ask the owner for access.');
         continue;
       }
 
       try {
-        await handleCommand(supabase, supabaseUrl, supabaseKey, botToken, chatId, text);
+        await handleCommand(supabase, supabaseUrl, supabaseKey, botToken, chatId, userId, isOwner, text);
       } catch (e) {
         await sendTg(botToken, chatId, `❌ Error: ${e instanceof Error ? e.message : 'unknown'}`);
       }
@@ -82,25 +85,106 @@ Deno.serve(async () => {
   return new Response(JSON.stringify({ ok: true, processed: totalProcessed }));
 });
 
+// ── Auth helpers ──
+async function checkAuth(supabase: any, userId: number): Promise<boolean> {
+  const { data } = await supabase
+    .from('scraper_bot_auth')
+    .select('expires_at')
+    .eq('user_id', String(userId))
+    .eq('is_active', true)
+    .maybeSingle();
+
+  if (!data) return false;
+  if (data.expires_at && new Date(data.expires_at) < new Date()) {
+    await supabase.from('scraper_bot_auth').update({ is_active: false }).eq('user_id', String(userId));
+    return false;
+  }
+  return true;
+}
+
+function parseDuration(s: string): number | null {
+  const m = s.match(/^(\d+)(m|h|d|w|mo)$/i);
+  if (!m) return null;
+  const n = parseInt(m[1]);
+  const unit = m[2].toLowerCase();
+  const multipliers: Record<string, number> = { m: 60, h: 3600, d: 86400, w: 604800, mo: 2592000 };
+  return n * (multipliers[unit] || 0) * 1000;
+}
+
 // ── Command handler ──
-async function handleCommand(supabase: any, supabaseUrl: string, supabaseKey: string, botToken: string, chatId: number, text: string) {
+async function handleCommand(supabase: any, supabaseUrl: string, supabaseKey: string, botToken: string, chatId: number, userId: number, isOwner: boolean, text: string) {
   const parts = text.split(/\s+/);
-  const cmd = parts[0].toLowerCase().replace(/^\//, '');
+  const cmd = parts[0].toLowerCase().replace(/^\//, '').replace(/@.*$/, '');
 
   switch (cmd) {
     case 'start':
-    case 'help':
-      return sendTg(botToken, chatId, `🤖 <b>Scraper Bot</b>\n\n` +
+    case 'help': {
+      let msg = `🤖 <b>Scraper Bot</b>\n\n` +
+        `<b>📋 Commands:</b>\n` +
         `/scrape — Run scraper (all categories)\n` +
         `/scrape [name] — Run for specific category\n` +
         `/sites — List discovered sites\n` +
-        `/sites 2d — Show only 2D gates\n` +
-        `/sites 3d — Show only 3D gates\n` +
-        `/sites stripe — Stripe sites only\n` +
+        `/sites 2d|3d|stripe|adyen — Filter\n` +
         `/cats — List categories\n` +
-        `/addcat Name | query1, query2 — Add category\n` +
-        `/rmcat Name — Remove category\n` +
-        `/stats — Scraper statistics`);
+        `/stats — Scraper statistics\n`;
+
+      if (isOwner) {
+        msg += `\n<b>👑 Owner Commands:</b>\n` +
+          `/auth [user_id] [duration] — Grant access\n` +
+          `/deauth [user_id] — Revoke access\n` +
+          `/authlist — List authorized users\n` +
+          `/addcat Name | query1, query2\n` +
+          `/rmcat Name — Remove category\n`;
+      }
+      return sendTg(botToken, chatId, msg);
+    }
+
+    case 'auth': {
+      if (!isOwner) return sendTg(botToken, chatId, '⛔ Owner only.');
+      const targetId = parts[1];
+      const duration = parts[2];
+      if (!targetId) return sendTg(botToken, chatId, '❌ Usage: /auth [user_id] [duration]\nDurations: 1h, 1d, 7d, 30d, 1mo\nOmit duration for permanent.');
+
+      let expiresAt: string | null = null;
+      let durationLabel = 'permanent';
+      if (duration) {
+        const ms = parseDuration(duration);
+        if (!ms) return sendTg(botToken, chatId, '❌ Invalid duration. Use: 1h, 1d, 7d, 30d, 1mo');
+        expiresAt = new Date(Date.now() + ms).toISOString();
+        durationLabel = duration;
+      }
+
+      await supabase.from('scraper_bot_auth').upsert({
+        user_id: targetId,
+        is_active: true,
+        expires_at: expiresAt,
+        granted_by: String(userId),
+        granted_at: new Date().toISOString(),
+      }, { onConflict: 'user_id' });
+
+      return sendTg(botToken, chatId, `✅ Authorized user <code>${targetId}</code> (${durationLabel})`);
+    }
+
+    case 'deauth': {
+      if (!isOwner) return sendTg(botToken, chatId, '⛔ Owner only.');
+      const targetId = parts[1];
+      if (!targetId) return sendTg(botToken, chatId, '❌ Usage: /deauth [user_id]');
+
+      await supabase.from('scraper_bot_auth').update({ is_active: false }).eq('user_id', targetId);
+      return sendTg(botToken, chatId, `🗑 Revoked access for <code>${targetId}</code>`);
+    }
+
+    case 'authlist': {
+      if (!isOwner) return sendTg(botToken, chatId, '⛔ Owner only.');
+      const { data: users } = await supabase.from('scraper_bot_auth').select('*').eq('is_active', true);
+      if (!users || users.length === 0) return sendTg(botToken, chatId, '📭 No authorized users.');
+      let msg = `👥 <b>Authorized Users</b>\n\n`;
+      for (const u of users) {
+        const exp = u.expires_at ? `expires ${new Date(u.expires_at).toLocaleDateString()}` : 'permanent';
+        msg += `• <code>${u.user_id}</code> — ${exp}\n`;
+      }
+      return sendTg(botToken, chatId, msg);
+    }
 
     case 'scrape': {
       const catName = parts.slice(1).join(' ').trim();
@@ -170,6 +254,7 @@ async function handleCommand(supabase: any, supabaseUrl: string, supabaseKey: st
     }
 
     case 'addcat': {
+      if (!isOwner) return sendTg(botToken, chatId, '⛔ Owner only.');
       const rest = parts.slice(1).join(' ');
       const [name, queriesStr] = rest.split('|').map(s => s.trim());
       if (!name || !queriesStr) return sendTg(botToken, chatId, '❌ Usage: /addcat Name | query1, query2');
@@ -181,6 +266,7 @@ async function handleCommand(supabase: any, supabaseUrl: string, supabaseKey: st
     }
 
     case 'rmcat': {
+      if (!isOwner) return sendTg(botToken, chatId, '⛔ Owner only.');
       const name = parts.slice(1).join(' ').trim();
       if (!name) return sendTg(botToken, chatId, '❌ Usage: /rmcat Category Name');
       const { error } = await supabase.from('scraper_categories').delete().ilike('name', `%${name}%`);
