@@ -435,7 +435,10 @@ def _process_card(cc, mm, yy, cvv, proxy_dict=None, amount=None, currency=None):
         if not tokens.get('form_build_id'):
             return {"status": "error", "response": "Could not extract form tokens"}
 
-        # Solve math captcha
+        # Check for reCAPTCHA v3 (site changed from math captcha)
+        has_recaptcha = 'grecaptcha_token' in html1 or 'recaptcha_v3' in html1
+        
+        # Solve math captcha (legacy — may not be present)
         captcha_answer = _solve_math_captcha(html1)
         captcha_field = _extract_math_field_name(html1)
         captcha_extras = _extract_captcha_sid(html1)
