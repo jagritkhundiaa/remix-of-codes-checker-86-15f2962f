@@ -749,6 +749,8 @@ def _run_gate(gate, c_num, c_mm, c_yy, c_cvv, proxy_dict):
         return autostripe_check_card(cc_line, proxy_dict)
     elif gate == "shopifygql":
         return shopifygql_check_card(cc_line, proxy_dict)
+    elif gate == "ctxt":
+        return ctxt_check_card(cc_line, proxy_dict)
     else:
         return auth_check_card(cc_line, proxy_dict)
 
