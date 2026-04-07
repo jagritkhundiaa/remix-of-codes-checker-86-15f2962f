@@ -31,7 +31,7 @@ FORM_ID = "webform_submission_donations_adyen_node_2732_add_form"
 
 # Default params — user can change amount via settings
 DEFAULT_CURRENCY_SYMBOL = "US$"
-DEFAULT_AMOUNT = "1"
+DEFAULT_AMOUNT = "3"
 DEFAULT_FREQUENCY = "give_once"
 
 # Adyen checkoutshopper base — the site uses 'live-au' for live
