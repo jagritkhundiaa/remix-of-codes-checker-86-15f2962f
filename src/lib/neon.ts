@@ -204,22 +204,6 @@ export function parseCardLine(line: string): CardData | null {
   };
 }
 
-export interface CustomGate {
-  id: string;
-  name: string;
-  site_url: string;
-  provider: string;
-  stripe_pk: string | null;
-  client_secret: string | null;
-  merchant: string | null;
-  product: string | null;
-  amount: string | null;
-  currency: string | null;
-  created_by: string;
-  is_active: boolean;
-  created_at: string;
-}
-
 export const PROVIDER_LABELS: Record<string, string> = {
   stripe: 'Stripe',
   checkoutcom: 'Checkout.com',
