@@ -1171,7 +1171,8 @@ def handle_callback(update):
             "<code>/b3charge</code>  ·  Braintree Charge\n"
             "<code>/authnet</code>  ·  Authorize.net\n"
             "<code>/autostripe</code>  ·  Auto Stripe\n"
-            "<code>/shopifygql</code>  ·  Shopify GQL\n\n"
+            "<code>/shopifygql</code>  ·  Shopify GQL\n"
+            "<code>/ctxt</code>  ·  Adyen Donate\n\n"
             f"<i>{DEVELOPER}</i>"
         )
         if chat_id and msg_id:
