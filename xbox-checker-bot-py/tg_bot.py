@@ -1201,6 +1201,9 @@ def handle_callback(update):
                 "<code>/proxy</code>  ·  Proxy pool status\n"
                 "<code>/addproxy</code>  ·  Add proxies to pool\n"
                 "<code>/scrapeproxies</code>  ·  Scrape fresh proxies\n"
+                "<code>/rpaysite</code>  ·  Manage Razorpay sites\n"
+                "<code>/authsite</code>  ·  Set /auth site URL\n"
+                "<code>/chr1config</code>  ·  Configure /chr1 gate\n"
                 "<code>/chkapis</code>  ·  Health check all APIs\n\n"
                 f"<i>{DEVELOPER}</i>"
             )
