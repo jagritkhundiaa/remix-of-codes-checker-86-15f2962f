@@ -1031,35 +1031,23 @@ cancel_flags = {}
 # ============================================================
 GATE_REGISTRY = [
     ("auth", "/auth", "Stripe Auth", True),
-    ("auth2", "/auth2", "Auto Stripe v2", True),
-    ("b3auth", "/b3auth", "Braintree Auth", True),
-    ("b3charge", "/b3charge", "Braintree Charge", True),
-    ("authnet", "/authnet", "Authorize.net", True),
-    ("autostripe", "/autostripe", "Auto Stripe", True),
-    ("shopifygql", "/shopifygql", "Shopify GQL", True),
-    ("ctxt", "/ctxt", "Adyen Donate", True),
+    ("chr1", "/chr1", "Stripe Charge", True),
+    ("b3", "/b3", "Braintree Auth", True),
+    ("rpay", "/rpay", "Razorpay Charge", True),
 ]
 
 GATE_MAP = {
     "/auth": ("auth", "Stripe Auth"),
-    "/auth2": ("auth2", "Auto Stripe v2"),
-    "/b3auth": ("b3auth", "Braintree Auth"),
-    "/b3charge": ("b3charge", "Braintree Charge"),
-    "/authnet": ("authnet", "Authorize.net"),
-    "/autostripe": ("autostripe", "Auto Stripe"),
-    "/shopifygql": ("shopifygql", "Shopify GQL"),
-    "/ctxt": ("ctxt", "Adyen Donate"),
+    "/chr1": ("chr1", "Stripe Charge"),
+    "/b3": ("b3", "Braintree Auth"),
+    "/rpay": ("rpay", "Razorpay Charge"),
 }
 
 CHKAPI_CMDS = {
     "/chkapiauth": "auth",
-    "/chkapiauth2": "auth2",
-    "/chkapib3auth": "b3auth",
-    "/chkapib3charge": "b3charge",
-    "/chkapiauthnet": "authnet",
-    "/chkapiautostripe": "autostripe",
-    "/chkapishopifygql": "shopifygql",
-    "/chkapictxt": "ctxt",
+    "/chkapichr1": "chr1",
+    "/chkapib3": "b3",
+    "/chkapirpay": "rpay",
 }
 
 
