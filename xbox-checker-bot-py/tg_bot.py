@@ -2636,13 +2636,12 @@ def handle_update(update):
         notify_new_user(user_id, username, f"Duration: {dur_label} | Limit: {limit_label}")
         return
 
-    # --- /auth2site (manage WooCommerce sites for /auth2) ---
-    if text.startswith("/auth2site"):
+    # --- /rpaysite (manage Razorpay sites for /rpay) ---
+    if text.startswith("/rpaysite"):
         if not is_admin(user_id):
-            # Regular users can view site count
-            sites = load_auth2_sites()
+            sites = load_rpay_sites()
             send_message(chat_id,
-                f"<b>Auto Stripe v2 Sites</b>\n\n"
+                f"<b>Razorpay Sites</b>\n\n"
                 f"Loaded: <code>{len(sites)}</code> site(s)\n\n"
                 f"<i>{DEVELOPER}</i>")
             return
@@ -2650,7 +2649,6 @@ def handle_update(update):
         parts = text.split(maxsplit=1)
         new_sites_raw = []
 
-        # Check if replying to a .txt file
         reply = msg.get("reply_to_message")
         if reply and reply.get("document"):
             doc = reply["document"]
@@ -2661,18 +2659,16 @@ def handle_update(update):
                     new_sites_raw = [l.strip() for l in content.splitlines()
                                      if l.strip() and not l.strip().startswith('#')]
 
-        # Check if sites pasted inline after command
         if len(parts) >= 2:
             sub = parts[1].strip()
 
-            # /auth2site list
             if sub.lower() == "list":
-                sites = load_auth2_sites()
+                sites = load_rpay_sites()
                 if not sites:
                     send_message(chat_id,
-                        "<b>Auth2 Sites — Empty</b>\n\n"
+                        "<b>RPay Sites — Empty</b>\n\n"
                         "No sites added yet.\n"
-                        "Use <code>/auth2site URL</code> to add.\n\n"
+                        "Use <code>/rpaysite URL</code> to add.\n\n"
                         f"<i>{DEVELOPER}</i>")
                 else:
                     lines_out = []
@@ -2681,37 +2677,33 @@ def handle_update(update):
                         lines_out.append(f"  {i}. <code>{masked}</code>")
                     extra = f"\n... and {len(sites) - 30} more" if len(sites) > 30 else ""
                     send_message(chat_id,
-                        f"<b>Auth2 Sites ({len(sites)})</b>\n\n"
+                        f"<b>RPay Sites ({len(sites)})</b>\n\n"
                         + "\n".join(lines_out) + extra +
                         f"\n\n<i>{DEVELOPER}</i>")
                 return
 
-            # /auth2site clear
             if sub.lower() == "clear":
-                save_auth2_sites([])
+                save_rpay_sites([])
                 send_message(chat_id,
-                    "<b>Auth2 Sites Cleared</b>\n\n"
+                    "<b>RPay Sites Cleared</b>\n\n"
                     f"All sites removed.\n\n<i>{DEVELOPER}</i>")
                 return
 
-            # /auth2site remove <url>
             if sub.lower().startswith("remove "):
                 remove_url = sub[7:].strip()
-                sites = load_auth2_sites()
+                sites = load_rpay_sites()
                 new_sites = [s for s in sites if s.lower() != remove_url.lower()
                              and s.lower().replace('https://', '').replace('http://', '').rstrip('/')
                              != remove_url.lower().replace('https://', '').replace('http://', '').rstrip('/')]
                 removed = len(sites) - len(new_sites)
-                save_auth2_sites(new_sites)
+                save_rpay_sites(new_sites)
                 send_message(chat_id,
                     f"<b>Removed {removed} site(s)</b>\n\n"
                     f"Remaining: <code>{len(new_sites)}</code>\n\n"
                     f"<i>{DEVELOPER}</i>")
                 return
 
-            # Otherwise treat as inline sites
             inline_sites = [l.strip() for l in sub.splitlines() if l.strip() and not l.strip().startswith('#')]
-            # Also handle comma-separated
             expanded = []
             for s in inline_sites:
                 if ',' in s:
@@ -2721,32 +2713,31 @@ def handle_update(update):
             new_sites_raw.extend(expanded)
 
         if not new_sites_raw:
-            sites = load_auth2_sites()
+            sites = load_rpay_sites()
             send_message(chat_id,
-                "<b>Auth2 Site Management</b>\n\n"
+                "<b>RPay Site Management</b>\n\n"
                 f"Current sites: <code>{len(sites)}</code>\n\n"
                 "<b>Add sites:</b>\n"
-                "<code>/auth2site https://shop.com</code>\n\n"
+                "<code>/rpaysite https://razorpay.me/@merchant</code>\n\n"
                 "<b>Multiple sites:</b>\n"
-                "<code>/auth2site\n"
-                "https://shop1.com\n"
-                "https://shop2.com</code>\n\n"
+                "<code>/rpaysite\n"
+                "https://site1.com\n"
+                "https://site2.com</code>\n\n"
                 "<b>From file:</b>\n"
-                "Reply to a .txt file with <code>/auth2site</code>\n\n"
+                "Reply to a .txt file with <code>/rpaysite</code>\n\n"
                 "<b>Other commands:</b>\n"
-                "<code>/auth2site list</code>  ·  List all sites\n"
-                "<code>/auth2site clear</code>  ·  Remove all\n"
-                "<code>/auth2site remove URL</code>  ·  Remove one\n\n"
+                "<code>/rpaysite list</code>  ·  List all sites\n"
+                "<code>/rpaysite clear</code>  ·  Remove all\n"
+                "<code>/rpaysite remove URL</code>  ·  Remove one\n\n"
                 f"<i>{DEVELOPER}</i>")
             return
 
-        # Validate and add sites
         send_message(chat_id,
             f"<b>Validating {len(new_sites_raw)} site(s)...</b>\n"
-            "Checking for WooCommerce + Stripe...")
+            "Checking Razorpay compatibility...")
 
-        def _do_validate_sites():
-            existing = load_auth2_sites()
+        def _do_validate_rpay():
+            existing = load_rpay_sites()
             existing_normalized = set(
                 s.lower().replace('https://', '').replace('http://', '').rstrip('/')
                 for s in existing
@@ -2757,7 +2748,6 @@ def handle_update(update):
             results_lines = []
 
             for raw_site in new_sites_raw:
-                # Normalize
                 site_url = raw_site.strip()
                 if not site_url.startswith(('http://', 'https://')):
                     site_url = 'https://' + site_url
@@ -2765,15 +2755,13 @@ def handle_update(update):
 
                 normalized = site_url.lower().replace('https://', '').replace('http://', '').rstrip('/')
 
-                # Check duplicate
                 if normalized in existing_normalized:
                     duplicate.append(site_url)
                     masked = site_url[:40] + "..." if len(site_url) > 40 else site_url
                     results_lines.append(f"⚠️ <code>{masked}</code> — Already added")
                     continue
 
-                # Validate
-                is_valid, detail = auth2_validate_site(site_url)
+                is_valid, detail = rpay_validate_site(site_url)
                 masked = site_url[:40] + "..." if len(site_url) > 40 else site_url
 
                 if is_valid:
@@ -2784,13 +2772,12 @@ def handle_update(update):
                     invalid.append(site_url)
                     results_lines.append(f"❌ <code>{masked}</code> — {detail}")
 
-            # Append valid sites to file
             if valid:
                 existing.extend(valid)
-                save_auth2_sites(existing)
+                save_rpay_sites(existing)
 
             send_message(chat_id,
-                f"<b>Auth2 Site Results</b>\n\n"
+                f"<b>RPay Site Results</b>\n\n"
                 f"Submitted: <code>{len(new_sites_raw)}</code>\n"
                 f"✅ Added: <code>{len(valid)}</code>\n"
                 f"❌ Invalid: <code>{len(invalid)}</code>\n"
@@ -2800,7 +2787,67 @@ def handle_update(update):
                 (f"\n... and {len(results_lines) - 20} more" if len(results_lines) > 20 else "") +
                 f"\n\n<i>{DEVELOPER}</i>")
 
-        threading.Thread(target=_do_validate_sites, daemon=True).start()
+        threading.Thread(target=_do_validate_rpay, daemon=True).start()
+        return
+
+    # --- /authsite (admin — set /auth gate site URL) ---
+    if text.startswith("/authsite"):
+        if not is_admin(user_id):
+            return
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            cfg = auth_get_config()
+            send_message(chat_id,
+                "<b>Auth Gate Site</b>\n\n"
+                f"Current: <code>{cfg.get('site_url', 'N/A')}</code>\n\n"
+                "<b>Change:</b> <code>/authsite https://newsite.com</code>\n\n"
+                f"<i>{DEVELOPER}</i>")
+            return
+        new_url = parts[1].strip().rstrip('/')
+        if not new_url.startswith(('http://', 'https://')):
+            new_url = 'https://' + new_url
+        auth_update_config("site_url", new_url)
+        send_message(chat_id,
+            f"<b>Auth Site Updated</b>\n\n"
+            f"New URL: <code>{new_url}</code>\n\n"
+            f"<i>{DEVELOPER}</i>")
+        return
+
+    # --- /chr1config (admin — configure /chr1 gate) ---
+    if text.startswith("/chr1config"):
+        if not is_admin(user_id):
+            return
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            cfg = chr1_get_config()
+            send_message(chat_id,
+                "<b>CHR1 Gate Config</b>\n\n"
+                f"Site: <code>{cfg.get('site_url', 'N/A')}</code>\n"
+                f"Stripe PK: <code>{cfg.get('stripe_pk', 'N/A')[:30]}...</code>\n"
+                f"Amount: <code>{cfg.get('amount', '5.00')}</code>\n\n"
+                "<b>Update:</b>\n"
+                "<code>/chr1config site https://newsite.com</code>\n"
+                "<code>/chr1config pk pk_live_xxx</code>\n"
+                "<code>/chr1config token HCAPTCHA_TOKEN</code>\n"
+                "<code>/chr1config amount 10.00</code>\n\n"
+                f"<i>{DEVELOPER}</i>")
+            return
+        sub = parts[1].strip()
+        sub_parts = sub.split(maxsplit=1)
+        if len(sub_parts) < 2:
+            send_message(chat_id, f"<b>Usage:</b> <code>/chr1config site|pk|token|amount VALUE</code>\n\n<i>{DEVELOPER}</i>")
+            return
+        key_name, value = sub_parts[0].lower(), sub_parts[1].strip()
+        key_map = {"site": "site_url", "pk": "stripe_pk", "token": "hcaptcha_token", "amount": "amount"}
+        if key_name not in key_map:
+            send_message(chat_id, f"<b>Unknown key.</b> Use: site, pk, token, amount\n\n<i>{DEVELOPER}</i>")
+            return
+        chr1_update_config(key_map[key_name], value)
+        send_message(chat_id,
+            f"<b>CHR1 Config Updated</b>\n\n"
+            f"Key: <code>{key_name}</code>\n"
+            f"Value: <code>{value[:40]}{'...' if len(value) > 40 else ''}</code>\n\n"
+            f"<i>{DEVELOPER}</i>")
         return
 
     # --- Gate commands ---
