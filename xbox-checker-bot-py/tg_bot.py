@@ -707,23 +707,15 @@ def _run_gate(gate, c_num, c_mm, c_yy, c_cvv, proxy_dict):
     cc_line = f"{c_num}|{c_mm}|{c_yy}|{c_cvv}"
     if gate == "auth":
         return auth_check_card(cc_line, proxy_dict)
-    elif gate == "auth2":
-        site_url = get_next_auth2_site()
+    elif gate == "chr1":
+        return chr1_check_card(cc_line, proxy_dict)
+    elif gate == "b3":
+        return b3_check_card(cc_line, proxy_dict)
+    elif gate == "rpay":
+        site_url = get_next_rpay_site()
         if not site_url:
-            return "Error | No sites — add with /auth2site"
-        return auth2_check_card(cc_line, proxy_dict, site_url=site_url)
-    elif gate == "b3auth":
-        return b3auth_check_card(cc_line, proxy_dict)
-    elif gate == "b3charge":
-        return br3charge_check_card(cc_line, proxy_dict)
-    elif gate == "authnet":
-        return authnet_check_card(cc_line, proxy_dict)
-    elif gate == "autostripe":
-        return autostripe_check_card(cc_line, proxy_dict)
-    elif gate == "shopifygql":
-        return shopifygql_check_card(cc_line, proxy_dict)
-    elif gate == "ctxt":
-        return ctxt_check_card(cc_line, proxy_dict)
+            return "Error | No sites — add with /rpaysite"
+        return rpay_check_card(cc_line, proxy_dict, site_url=site_url)
     else:
         return auth_check_card(cc_line, proxy_dict)
 
