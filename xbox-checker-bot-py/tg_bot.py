@@ -250,13 +250,9 @@ def set_gate_enabled(gate_key, enabled, by_user=None):
 # ============================================================
 GATE_PROBE_MAP = {
     "auth": {"name": "Stripe Auth", "cmd": "/chkapiauth"},
-    "auth2": {"name": "Auto Stripe v2", "cmd": "/chkapiauth2"},
-    "b3auth": {"name": "Braintree Auth", "cmd": "/chkapib3auth"},
-    "b3charge": {"name": "Braintree Charge", "cmd": "/chkapib3charge"},
-    "authnet": {"name": "Authorize.net", "cmd": "/chkapiauthnet"},
-    "autostripe": {"name": "Auto Stripe", "cmd": "/chkapiautostripe"},
-    "shopifygql": {"name": "Shopify GQL", "cmd": "/chkapishopifygql"},
-    "ctxt": {"name": "Adyen Donate", "cmd": "/chkapictxt"},
+    "chr1": {"name": "Stripe Charge", "cmd": "/chkapichr1"},
+    "b3": {"name": "Braintree Auth", "cmd": "/chkapib3"},
+    "rpay": {"name": "Razorpay Charge", "cmd": "/chkapirpay"},
 }
 
 
