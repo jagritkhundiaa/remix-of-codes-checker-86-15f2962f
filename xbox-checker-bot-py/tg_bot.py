@@ -1118,14 +1118,10 @@ def handle_callback(update):
         answer_callback(cb_id)
         txt = (
             "<b>Available Gates</b>\n\n"
-            "<code>/auth</code>  ·  Stripe Auth\n"
-            "<code>/auth2</code>  ·  Auto Stripe v2\n"
-            "<code>/b3auth</code>  ·  Braintree Auth\n"
-            "<code>/b3charge</code>  ·  Braintree Charge\n"
-            "<code>/authnet</code>  ·  Authorize.net\n"
-            "<code>/autostripe</code>  ·  Auto Stripe\n"
-            "<code>/shopifygql</code>  ·  Shopify GQL\n"
-            "<code>/ctxt</code>  ·  Adyen Donate\n\n"
+            "<code>/auth</code>  ·  Stripe Auth (WooCommerce/WCPay)\n"
+            "<code>/chr1</code>  ·  Stripe Charge (WordPress AJAX)\n"
+            "<code>/b3</code>  ·  Braintree Auth (dnalasering)\n"
+            "<code>/rpay</code>  ·  Razorpay Charge\n\n"
             f"<i>{DEVELOPER}</i>"
         )
         if chat_id and msg_id:
