@@ -15,14 +15,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from typing import Dict, Any, Optional
 from datetime import datetime
-from auth_stripe_checker import check_card as auth_check_card, probe_site as auth_probe_site
-from auth2_woo_checker import check_card as auth2_check_card, probe_site as auth2_probe_site, validate_site as auth2_validate_site
-from braintree_auth_checker import check_card as b3auth_check_card, probe_site as b3auth_probe_site
-from authnet_checker import check_card as authnet_check_card, probe_site as authnet_probe_site
-from br3_charge_checker import check_card as br3charge_check_card, probe_site as br3charge_probe_site
-from auto_stripe_checker import check_card as autostripe_check_card, probe_site as autostripe_probe_site
-from shopify_gql_checker import check_card as shopifygql_check_card
-from msf_checker import check_card as ctxt_check_card, probe_site as ctxt_probe_site
+from auth_checker_v2 import check_card as auth_check_card, probe_site as auth_probe_site, update_config as auth_update_config, get_config as auth_get_config
+from chr1_checker import check_card as chr1_check_card, probe_site as chr1_probe_site, update_config as chr1_update_config, get_config as chr1_get_config
+from b3_checker import check_card as b3_check_card, probe_site as b3_probe_site
+from rpay_checker import check_card as rpay_check_card, probe_site as rpay_probe_site, load_rpay_sites, save_rpay_sites, validate_site as rpay_validate_site
 from dlx_tools import generate_cards, vbv_lookup, analyze_url, scrape_proxies
 
 try:
