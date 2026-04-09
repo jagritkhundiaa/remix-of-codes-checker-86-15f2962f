@@ -810,7 +810,7 @@ def process_single_entry(entry, proxies_list, user_id, gate="auth"):
 # ============================================================
 #  Processing runner
 # ============================================================
-DEFAULT_THREADS = 5
+DEFAULT_THREADS = 10
 
 
 def run_processing(lines, user_id, on_progress=None, on_complete=None, threads=DEFAULT_THREADS, gate="auth"):
@@ -842,7 +842,7 @@ def run_processing(lines, user_id, on_progress=None, on_complete=None, threads=D
         detail = result.split(" | ", 1)[1] if " | " in result else result
         return (entry, status, detail, category)
 
-    max_workers = max(1, min(threads, total, 10))
+    max_workers = max(1, min(threads, total, 20))
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(worker, line): i for i, line in enumerate(lines)}
@@ -2732,62 +2732,48 @@ def handle_update(update):
                 f"<i>{DEVELOPER}</i>")
             return
 
-        send_message(chat_id,
-            f"<b>Validating {len(new_sites_raw)} site(s)...</b>\n"
-            "Checking Razorpay compatibility...")
+        # Skip validation — just add directly (admin only)
+        existing = load_rpay_sites()
+        existing_normalized = set(
+            s.lower().replace('https://', '').replace('http://', '').rstrip('/')
+            for s in existing
+        )
+        added = []
+        duplicate = []
+        results_lines = []
 
-        def _do_validate_rpay():
-            existing = load_rpay_sites()
-            existing_normalized = set(
-                s.lower().replace('https://', '').replace('http://', '').rstrip('/')
-                for s in existing
-            )
-            valid = []
-            invalid = []
-            duplicate = []
-            results_lines = []
+        for raw_site in new_sites_raw:
+            site_url = raw_site.strip()
+            if not site_url.startswith(('http://', 'https://')):
+                site_url = 'https://' + site_url
+            site_url = site_url.rstrip('/')
 
-            for raw_site in new_sites_raw:
-                site_url = raw_site.strip()
-                if not site_url.startswith(('http://', 'https://')):
-                    site_url = 'https://' + site_url
-                site_url = site_url.rstrip('/')
+            normalized = site_url.lower().replace('https://', '').replace('http://', '').rstrip('/')
 
-                normalized = site_url.lower().replace('https://', '').replace('http://', '').rstrip('/')
-
-                if normalized in existing_normalized:
-                    duplicate.append(site_url)
-                    masked = site_url[:40] + "..." if len(site_url) > 40 else site_url
-                    results_lines.append(f"⚠️ <code>{masked}</code> — Already added")
-                    continue
-
-                is_valid, detail = rpay_validate_site(site_url)
+            if normalized in existing_normalized:
+                duplicate.append(site_url)
                 masked = site_url[:40] + "..." if len(site_url) > 40 else site_url
+                results_lines.append(f"⚠️ <code>{masked}</code> — Already added")
+                continue
 
-                if is_valid:
-                    valid.append(site_url)
-                    existing_normalized.add(normalized)
-                    results_lines.append(f"✅ <code>{masked}</code> — {detail}")
-                else:
-                    invalid.append(site_url)
-                    results_lines.append(f"❌ <code>{masked}</code> — {detail}")
+            added.append(site_url)
+            existing_normalized.add(normalized)
+            masked = site_url[:40] + "..." if len(site_url) > 40 else site_url
+            results_lines.append(f"✅ <code>{masked}</code> — Added")
 
-            if valid:
-                existing.extend(valid)
-                save_rpay_sites(existing)
+        if added:
+            existing.extend(added)
+            save_rpay_sites(existing)
 
-            send_message(chat_id,
-                f"<b>RPay Site Results</b>\n\n"
-                f"Submitted: <code>{len(new_sites_raw)}</code>\n"
-                f"✅ Added: <code>{len(valid)}</code>\n"
-                f"❌ Invalid: <code>{len(invalid)}</code>\n"
-                f"⚠️ Duplicate: <code>{len(duplicate)}</code>\n"
-                f"Total sites: <code>{len(existing)}</code>\n\n"
-                + "\n".join(results_lines[:20]) +
-                (f"\n... and {len(results_lines) - 20} more" if len(results_lines) > 20 else "") +
-                f"\n\n<i>{DEVELOPER}</i>")
-
-        threading.Thread(target=_do_validate_rpay, daemon=True).start()
+        send_message(chat_id,
+            f"<b>RPay Site Results</b>\n\n"
+            f"Submitted: <code>{len(new_sites_raw)}</code>\n"
+            f"✅ Added: <code>{len(added)}</code>\n"
+            f"⚠️ Duplicate: <code>{len(duplicate)}</code>\n"
+            f"Total sites: <code>{len(existing)}</code>\n\n"
+            + "\n".join(results_lines[:20]) +
+            (f"\n... and {len(results_lines) - 20} more" if len(results_lines) > 20 else "") +
+            f"\n\n<i>{DEVELOPER}</i>")
         return
 
     # --- /authsite (admin — set /auth gate site URL) ---
