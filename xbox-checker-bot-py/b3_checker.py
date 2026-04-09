@@ -83,9 +83,14 @@ def _process_card(number, mm, yy, cvv, proxy_dict=None):
         'user-agent': USER_AGENT,
     }
 
-    # Step 1: Get register nonce
-    response = s.post(f'{SITE_URL}/my-account/', headers=headers, timeout=30)
-    register_nonce = _safe_regex(r'name="woocommerce-register-nonce".*?value="([^"]+)"', response.text)
+    # Step 1: Get register nonce (retry up to 3 times)
+    register_nonce = None
+    for _reg_attempt in range(3):
+        response = s.post(f'{SITE_URL}/my-account/', headers=headers, timeout=30)
+        register_nonce = _safe_regex(r'name="woocommerce-register-nonce".*?value="([^"]+)"', response.text)
+        if register_nonce:
+            break
+        time.sleep(1)
     if not register_nonce:
         return "Error", "Failed to get register nonce"
 
@@ -114,9 +119,14 @@ def _process_card(number, mm, yy, cvv, proxy_dict=None):
     }
     s.post(f'{SITE_URL}/my-account/', headers=headers, data=data, timeout=30)
 
-    # Step 3: Set billing address
-    response = s.get(f'{SITE_URL}/my-account/edit-address/billing/', headers=headers, timeout=30)
-    adn = _safe_regex(r'name="woocommerce-edit-address-nonce".*?value="([^"]+)"', response.text)
+    # Step 3: Set billing address (retry up to 3 times)
+    adn = None
+    for _addr_attempt in range(3):
+        response = s.get(f'{SITE_URL}/my-account/edit-address/billing/', headers=headers, timeout=30)
+        adn = _safe_regex(r'name="woocommerce-edit-address-nonce".*?value="([^"]+)"', response.text)
+        if adn:
+            break
+        time.sleep(1)
     if not adn:
         return "Error", "Failed to get address nonce"
 
