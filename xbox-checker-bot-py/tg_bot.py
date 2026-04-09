@@ -527,7 +527,9 @@ def format_proxy(proxy_str):
             user, pwd, ip, port = parts
             url = f"{proto}://{user}:{pwd}@{ip}:{port}"
             return {"http": url, "https": url}
-    return None
+    # Fallback: try as-is with proto
+    url = f"{proto}://{proxy_str}"
+    return {"http": url, "https": url}
 
 
 def _is_valid_port(port_str):
@@ -810,7 +812,7 @@ def process_single_entry(entry, proxies_list, user_id, gate="auth"):
 # ============================================================
 #  Processing runner
 # ============================================================
-DEFAULT_THREADS = 5
+DEFAULT_THREADS = 10
 
 
 def run_processing(lines, user_id, on_progress=None, on_complete=None, threads=DEFAULT_THREADS, gate="auth"):
@@ -842,7 +844,7 @@ def run_processing(lines, user_id, on_progress=None, on_complete=None, threads=D
         detail = result.split(" | ", 1)[1] if " | " in result else result
         return (entry, status, detail, category)
 
-    max_workers = max(1, min(threads, total, 10))
+    max_workers = max(1, min(threads, total, 20))
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(worker, line): i for i, line in enumerate(lines)}
@@ -1672,10 +1674,6 @@ def handle_update(update):
                 f"...and more\n\n<i>{DEVELOPER}</i>")
             return
 
-        send_message(chat_id,
-            f"<b>Validating {len(new_proxies_raw)} proxy(ies)...</b>\n"
-            "Testing connectivity for each one.")
-
         def _do_add_proxies():
             global _global_proxies
             valid = []
@@ -1683,24 +1681,22 @@ def handle_update(update):
             results_lines = []
 
             for raw in new_proxies_raw:
-                # Format validation
+                # Format validation only — skip connectivity test
                 validated = validate_proxy_format(raw)
                 if not validated:
-                    invalid.append(raw)
-                    masked = raw[:25] + "..." if len(raw) > 25 else raw
-                    results_lines.append(f"<code>{masked}</code> — <code>Invalid format</code>")
-                    continue
-
-                # Connectivity test
-                alive, latency, error = test_proxy_connectivity(raw)
-                masked = raw[:25] + "..." if len(raw) > 25 else raw
-                if alive:
-                    valid.append(raw)
-                    results_lines.append(f"✅ <code>{masked}</code> — <code>{latency}ms</code>")
+                    # Fallback: if it looks like a proxy (has host:port pattern), accept it anyway
+                    if ':' in raw and len(raw) > 5:
+                        valid.append(raw)
+                        masked = raw[:25] + "..." if len(raw) > 25 else raw
+                        results_lines.append(f"✅ <code>{masked}</code> — Added (raw)")
+                    else:
+                        invalid.append(raw)
+                        masked = raw[:25] + "..." if len(raw) > 25 else raw
+                        results_lines.append(f"❌ <code>{masked}</code> — Invalid format")
                 else:
-                    # Do NOT add dead proxies
-                    invalid.append(raw)
-                    results_lines.append(f"❌ <code>{masked}</code> — <code>{error}</code>")
+                    valid.append(raw)
+                    masked = raw[:25] + "..." if len(raw) > 25 else raw
+                    results_lines.append(f"✅ <code>{masked}</code> — Added")
 
             # Append valid proxies to file and pool
             if valid:
@@ -1710,15 +1706,11 @@ def handle_update(update):
                 with _proxy_lock:
                     _global_proxies.extend(valid)
 
-            dead_count = sum(1 for r in results_lines if "❌" in r)
-
             send_message(chat_id,
                 f"<b>Proxy Add Results</b>\n\n"
                 f"Submitted: <code>{len(new_proxies_raw)}</code>\n"
-                f"✅ Working: <code>{len(valid)}</code>\n"
-                f"❌ Dead: <code>{dead_count}</code>\n"
-                f"⚠️ Invalid: <code>{len(invalid) - dead_count}</code>\n"
-                f"Added to pool: <code>{len(valid)}</code>\n"
+                f"✅ Added: <code>{len(valid)}</code>\n"
+                f"❌ Invalid: <code>{len(invalid)}</code>\n"
                 f"Total pool: <code>{len(_global_proxies)}</code>\n\n"
                 + "\n".join(results_lines[:20]) +
                 (f"\n... and {len(results_lines) - 20} more" if len(results_lines) > 20 else "") +
@@ -2732,62 +2724,48 @@ def handle_update(update):
                 f"<i>{DEVELOPER}</i>")
             return
 
-        send_message(chat_id,
-            f"<b>Validating {len(new_sites_raw)} site(s)...</b>\n"
-            "Checking Razorpay compatibility...")
+        # Skip validation — just add directly (admin only)
+        existing = load_rpay_sites()
+        existing_normalized = set(
+            s.lower().replace('https://', '').replace('http://', '').rstrip('/')
+            for s in existing
+        )
+        added = []
+        duplicate = []
+        results_lines = []
 
-        def _do_validate_rpay():
-            existing = load_rpay_sites()
-            existing_normalized = set(
-                s.lower().replace('https://', '').replace('http://', '').rstrip('/')
-                for s in existing
-            )
-            valid = []
-            invalid = []
-            duplicate = []
-            results_lines = []
+        for raw_site in new_sites_raw:
+            site_url = raw_site.strip()
+            if not site_url.startswith(('http://', 'https://')):
+                site_url = 'https://' + site_url
+            site_url = site_url.rstrip('/')
 
-            for raw_site in new_sites_raw:
-                site_url = raw_site.strip()
-                if not site_url.startswith(('http://', 'https://')):
-                    site_url = 'https://' + site_url
-                site_url = site_url.rstrip('/')
+            normalized = site_url.lower().replace('https://', '').replace('http://', '').rstrip('/')
 
-                normalized = site_url.lower().replace('https://', '').replace('http://', '').rstrip('/')
-
-                if normalized in existing_normalized:
-                    duplicate.append(site_url)
-                    masked = site_url[:40] + "..." if len(site_url) > 40 else site_url
-                    results_lines.append(f"⚠️ <code>{masked}</code> — Already added")
-                    continue
-
-                is_valid, detail = rpay_validate_site(site_url)
+            if normalized in existing_normalized:
+                duplicate.append(site_url)
                 masked = site_url[:40] + "..." if len(site_url) > 40 else site_url
+                results_lines.append(f"⚠️ <code>{masked}</code> — Already added")
+                continue
 
-                if is_valid:
-                    valid.append(site_url)
-                    existing_normalized.add(normalized)
-                    results_lines.append(f"✅ <code>{masked}</code> — {detail}")
-                else:
-                    invalid.append(site_url)
-                    results_lines.append(f"❌ <code>{masked}</code> — {detail}")
+            added.append(site_url)
+            existing_normalized.add(normalized)
+            masked = site_url[:40] + "..." if len(site_url) > 40 else site_url
+            results_lines.append(f"✅ <code>{masked}</code> — Added")
 
-            if valid:
-                existing.extend(valid)
-                save_rpay_sites(existing)
+        if added:
+            existing.extend(added)
+            save_rpay_sites(existing)
 
-            send_message(chat_id,
-                f"<b>RPay Site Results</b>\n\n"
-                f"Submitted: <code>{len(new_sites_raw)}</code>\n"
-                f"✅ Added: <code>{len(valid)}</code>\n"
-                f"❌ Invalid: <code>{len(invalid)}</code>\n"
-                f"⚠️ Duplicate: <code>{len(duplicate)}</code>\n"
-                f"Total sites: <code>{len(existing)}</code>\n\n"
-                + "\n".join(results_lines[:20]) +
-                (f"\n... and {len(results_lines) - 20} more" if len(results_lines) > 20 else "") +
-                f"\n\n<i>{DEVELOPER}</i>")
-
-        threading.Thread(target=_do_validate_rpay, daemon=True).start()
+        send_message(chat_id,
+            f"<b>RPay Site Results</b>\n\n"
+            f"Submitted: <code>{len(new_sites_raw)}</code>\n"
+            f"✅ Added: <code>{len(added)}</code>\n"
+            f"⚠️ Duplicate: <code>{len(duplicate)}</code>\n"
+            f"Total sites: <code>{len(existing)}</code>\n\n"
+            + "\n".join(results_lines[:20]) +
+            (f"\n... and {len(results_lines) - 20} more" if len(results_lines) > 20 else "") +
+            f"\n\n<i>{DEVELOPER}</i>")
         return
 
     # --- /authsite (admin — set /auth gate site URL) ---

