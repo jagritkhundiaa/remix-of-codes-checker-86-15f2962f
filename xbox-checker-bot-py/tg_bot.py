@@ -1337,10 +1337,32 @@ def handle_update(update):
     if text.startswith("/vbv"):
         parts = text.split(maxsplit=1)
         if len(parts) < 2:
-            send_message(chat_id, f"<b>Usage:</b> <code>/vbv 4111111111111111</code>\n\n<i>{DEVELOPER}</i>")
+            send_message(chat_id,
+                f"<b>🔒 VBV/3DS Enrollment Check</b>\n\n"
+                f"<b>Usage:</b> <code>/vbv CC|MM|YY|CVV</code>\n"
+                f"or: <code>/vbv 4111111111111111</code>\n\n"
+                f"Real 3DS enrollment check via Stripe SetupIntent.\n\n"
+                f"<i>{DEVELOPER}</i>")
             return
-        result = vbv_lookup(parts[1].strip())
-        send_message(chat_id, f"<b>VBV/3DS Check</b>\n\n{result}\n\n<i>{DEVELOPER}</i>")
+        send_message(chat_id, f"🔍 <b>Checking VBV/3DS enrollment...</b>\n<i>This may take 5-10 seconds</i>")
+        proxy_dict = get_next_proxy()
+        result = vbv_lookup(parts[1].strip(), proxy_dict=proxy_dict)
+
+        # BIN info
+        cc_num = re.sub(r'\D', '', parts[1].strip().split('|')[0])
+        bin6 = cc_num[:6] if len(cc_num) >= 6 else cc_num
+        bin_info, _ = bin_lookup(bin6)
+        bin_line = ""
+        if bin_info:
+            bin_line = (f"\n<b>BIN:</b> <code>{bin6}</code>\n"
+                        f"<b>Brand:</b> {bin_info.get('brand', '?')} - {bin_info.get('type', '?')}\n"
+                        f"<b>Bank:</b> {bin_info.get('bank', '?')}\n"
+                        f"<b>Country:</b> {bin_info.get('country', '?')} {bin_info.get('emoji', '')}\n")
+
+        send_message(chat_id,
+            f"<b>🔒 VBV/3DS Result</b>\n\n"
+            f"{result}{bin_line}\n"
+            f"<i>{DEVELOPER}</i>")
         return
 
     # --- /binquality ---
