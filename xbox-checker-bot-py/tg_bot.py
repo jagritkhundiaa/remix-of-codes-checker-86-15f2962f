@@ -19,6 +19,7 @@ from auth_checker_v2 import check_card as auth_check_card, probe_site as auth_pr
 from chr1_checker import check_card as chr1_check_card, probe_site as chr1_probe_site, update_config as chr1_update_config, get_config as chr1_get_config
 from b3_checker import check_card as b3_check_card, probe_site as b3_probe_site
 from rpay_checker import check_card as rpay_check_card, probe_site as rpay_probe_site, load_rpay_sites, save_rpay_sites, validate_site as rpay_validate_site
+from shopify_checker import check_card as shopify_check_card, probe_site as shopify_probe_site, load_shopify_sites, save_shopify_sites, validate_site as shopify_validate_site
 from dlx_tools import generate_cards, vbv_lookup, analyze_url, scrape_proxies
 
 try:
@@ -253,6 +254,7 @@ GATE_PROBE_MAP = {
     "chr1": {"name": "Stripe Charge", "cmd": "/chkapichr1"},
     "b3": {"name": "Braintree Auth", "cmd": "/chkapib3"},
     "rpay": {"name": "Razorpay Charge", "cmd": "/chkapirpay"},
+    "shopify": {"name": "Shopify Charge", "cmd": "/chkapishopify"},
 }
 
 
@@ -272,6 +274,13 @@ def probe_gate(gate_key):
             else:
                 alive = False
                 detail = "No sites — add with /rpaysite"
+        elif gate_key == "shopify":
+            sites = load_shopify_sites()
+            if sites:
+                alive, detail = shopify_probe_site(sites[0])
+            else:
+                alive = False
+                detail = "No sites — add with /shopifysite"
         else:
             return False, 0, "Unknown gate"
 
