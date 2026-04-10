@@ -1064,6 +1064,7 @@ GATE_REGISTRY = [
     ("chr1", "/chr1", "Stripe Charge", True),
     ("b3", "/b3", "Braintree Auth", True),
     ("rpay", "/rpay", "Razorpay Charge", True),
+    ("shopify", "/shopify", "Shopify Charge", True),
 ]
 
 GATE_MAP = {
@@ -1071,6 +1072,7 @@ GATE_MAP = {
     "/chr1": ("chr1", "Stripe Charge"),
     "/b3": ("b3", "Braintree Auth"),
     "/rpay": ("rpay", "Razorpay Charge"),
+    "/shopify": ("shopify", "Shopify Charge"),
 }
 
 CHKAPI_CMDS = {
@@ -1078,6 +1080,7 @@ CHKAPI_CMDS = {
     "/chkapichr1": "chr1",
     "/chkapib3": "b3",
     "/chkapirpay": "rpay",
+    "/chkapishopify": "shopify",
 }
 
 
