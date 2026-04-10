@@ -741,6 +741,11 @@ def _run_gate(gate, c_num, c_mm, c_yy, c_cvv, proxy_dict):
         if not site_url:
             return "Error | No sites — add with /rpaysite"
         return rpay_check_card(cc_line, proxy_dict, site_url=site_url)
+    elif gate == "shopify":
+        site_url = get_next_shopify_site()
+        if not site_url:
+            return "Error | No sites — add with /shopifysite"
+        return shopify_check_card(cc_line, proxy_dict, site_url=site_url)
     else:
         return auth_check_card(cc_line, proxy_dict)
 
