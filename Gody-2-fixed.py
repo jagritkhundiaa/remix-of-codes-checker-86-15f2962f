@@ -1196,13 +1196,22 @@ def get_transaction_history(s, combo):
 def fetch_discord_promo(s, combo, xbl3_auth):
     """Fetch Discord Nitro promo from Xbox Game Pass perks"""
     try:
-        response = s.post('https://profile.gamepass.com/v2/offers/A3525E6D4370403B9763BCFA97D383D9/', headers={'authorization': xbl3_auth, 'User-Agent': UA}, timeout=20)
-        if response.status_code != 200:
+        # Try v3 first, fall back to v2 for the Discord Nitro offer
+        nitro_offer_id = 'A3525E6D4370403B9763BCFA97D383D9'
+        data = None
+        for ver in ('v3', 'v2'):
+            try:
+                response = s.post(f'https://profile.gamepass.com/{ver}/offers/{nitro_offer_id}/', headers={'authorization': xbl3_auth, 'User-Agent': UA}, timeout=20)
+                if response.status_code == 200:
+                    data = response.json()
+                    break
+            except Exception:
+                continue
+        if not data:
             return None
-        data = response.json()
-        if 'resource' not in data:
+        link = data.get('resource') or data.get('code') or data.get('redemptionUrl')
+        if not link:
             return None
-        link = data['resource']
         code = link.split('/')[-1]
         try:
             discord_check = requests.get(f'https://discord.com/api/v9/entitlements/gift-codes/{code}?with_application=false&with_subscription_plan=true', timeout=20)
@@ -1916,16 +1925,26 @@ def pull_single_promo(combo, proxy=None):
 
         xbl_auth = f'XBL3.0 x={xsts_uhs};{xsts_token}'
 
-        # Fetch promo
-        response = sess.post('https://profile.gamepass.com/v2/offers/A3525E6D4370403B9763BCFA97D383D9/', headers={'authorization': xbl_auth, 'User-Agent': UA}, timeout=20)
-        if response.status_code != 200:
-            if 'ineligible' in response.text.lower():
+        # Fetch promo - try v3 first, fall back to v2
+        nitro_offer_id = 'A3525E6D4370403B9763BCFA97D383D9'
+        response = None
+        response_json = None
+        for ver in ('v3', 'v2'):
+            try:
+                response = sess.post(f'https://profile.gamepass.com/{ver}/offers/{nitro_offer_id}/', headers={'authorization': xbl_auth, 'User-Agent': UA}, timeout=20)
+                if response.status_code == 200:
+                    response_json = response.json()
+                    break
+            except Exception:
+                continue
+        if not response or response.status_code != 200:
+            if response and 'ineligible' in response.text.lower():
                 log_result('INELIGIBLE', 'Not eligible for promo')
                 return {'status': 'ineligible', 'message': 'Account ineligible for promo'}
-            log_result('ERROR', f'Promo API error: {response.status_code}')
-            return {'status': 'error', 'message': f'Promo API error: {response.status_code}'}
+            log_result('ERROR', f'Promo API error: {response.status_code if response else "no response"}')
+            return {'status': 'error', 'message': f'Promo API error: {response.status_code if response else "no response"}'}
 
-        response_json = response.json()
+        if not response_json:
         if 'resource' not in response_json:
             if 'ineligible' in str(response_json).lower():
                 log_result('INELIGIBLE', 'Not eligible for promo')

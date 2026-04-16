@@ -473,53 +473,66 @@ def is_link(resource):
 def fetch_codes_from_xbox(uhs, xsts_token):
     try:
         auth = f"XBL3.0 x={uhs};{xsts_token}"
-        res = proxied_request(
-            "GET",
-            "https://profile.gamepass.com/v2/offers",
-            headers={
-                "Authorization": auth,
-                "Content-Type": "application/json",
-                "User-Agent": "okhttp/4.12.0",
-            },
-            timeout=15,
-        )
-        if res.status_code != 200:
+        base_headers = {
+            "Authorization": auth,
+            "Content-Type": "application/json",
+            "User-Agent": "okhttp/4.12.0",
+        }
+
+        # Try v3 first (new endpoint), fall back to v2
+        data = None
+        for ver in ("v3", "v2"):
+            try:
+                res = proxied_request(
+                    "GET",
+                    f"https://profile.gamepass.com/{ver}/offers",
+                    headers=base_headers,
+                    timeout=15,
+                )
+                if res.status_code == 200:
+                    data = res.json()
+                    offer_list = data.get("offers") or data.get("perks") or []
+                    if offer_list:
+                        break
+            except Exception:
+                continue
+        if not data:
             return [], []
-        data = res.json()
+
         codes = []
         links = []
-        for offer in data.get("offers", []):
-            resource = offer.get("resource")
+        offer_list = data.get("offers") or data.get("perks") or []
+        for offer in offer_list:
+            resource = offer.get("resource") or offer.get("code") or offer.get("redemptionUrl") or offer.get("url")
             if resource:
                 if is_link(resource):
                     links.append(resource)
                 else:
                     codes.append(resource)
-            elif offer.get("offerStatus") == "available":
+                continue
+
+            if offer.get("offerStatus") == "available" or offer.get("status") == "available" or offer.get("claimable"):
+                offer_id = offer.get("offerId") or offer.get("id")
+                if not offer_id:
+                    continue
                 chars = string.ascii_letters + string.digits
                 cv = "".join(random.choice(chars) for _ in range(22)) + ".0"
                 try:
                     claim_res = proxied_request(
                         "POST",
-                        f"https://profile.gamepass.com/v2/offers/{offer['offerId']}",
-                        headers={
-                            "Authorization": auth,
-                            "Content-Type": "application/json",
-                            "User-Agent": "okhttp/4.12.0",
-                            "ms-cv": cv,
-                            "Content-Length": "0",
-                        },
+                        f"https://profile.gamepass.com/v2/offers/{offer_id}",
+                        headers={**base_headers, "ms-cv": cv, "Content-Length": "0"},
                         data="",
                         timeout=15,
                     )
                     if claim_res.status_code == 200:
                         claim_data = claim_res.json()
-                        claimed_resource = claim_data.get("resource")
-                        if claimed_resource:
-                            if is_link(claimed_resource):
-                                links.append(claimed_resource)
+                        claimed = claim_data.get("resource") or claim_data.get("code") or claim_data.get("redemptionUrl")
+                        if claimed:
+                            if is_link(claimed):
+                                links.append(claimed)
                             else:
-                                codes.append(claimed_resource)
+                                codes.append(claimed)
                 except Exception:
                     pass
         return codes, links
