@@ -229,26 +229,48 @@ function isLink(resource) {
 async function fetchCodesFromXbox(uhs, xstsToken) {
   try {
     const auth = `XBL3.0 x=${uhs};${xstsToken}`;
-    const res = await proxiedFetch("https://profile.gamepass.com/v2/offers", {
-      headers: {
-        Authorization: auth,
-        "Content-Type": "application/json",
-        "User-Agent": "okhttp/4.12.0",
-      },
-    });
-    if (res.status !== 200) return { codes: [], links: [] };
+    const baseHeaders = {
+      Authorization: auth,
+      "Content-Type": "application/json",
+      "User-Agent": "okhttp/4.12.0",
+    };
 
-    const data = await res.json();
+    // Try v3 first (new endpoint), fall back to v2
+    let data = null;
+    for (const ver of ["v3", "v2"]) {
+      try {
+        const res = await proxiedFetch(`https://profile.gamepass.com/${ver}/offers`, {
+          headers: baseHeaders,
+        });
+        if (res.status === 200) {
+          data = await res.json();
+          if (data && (data.offers?.length > 0 || data.perks?.length > 0)) break;
+        }
+      } catch {}
+    }
+    if (!data) return { codes: [], links: [] };
+
     const codes = [];
     const links = [];
-    for (const offer of data.offers || []) {
-      if (offer.resource) {
-        if (isLink(offer.resource)) {
-          links.push(offer.resource);
+
+    // Handle both response formats: data.offers (v2) and data.perks (possible v3)
+    const offerList = data.offers || data.perks || [];
+    for (const offer of offerList) {
+      // Extract resource from various possible fields
+      const resource = offer.resource || offer.code || offer.redemptionUrl || offer.url || null;
+      if (resource) {
+        if (isLink(resource)) {
+          links.push(resource);
         } else {
-          codes.push(offer.resource);
+          codes.push(resource);
         }
-      } else if (offer.offerStatus === "available") {
+        continue;
+      }
+
+      // If offer is claimable, try claiming via v2 POST (v3 is GET-only)
+      if (offer.offerStatus === "available" || offer.status === "available" || offer.claimable) {
+        const offerId = offer.offerId || offer.id;
+        if (!offerId) continue;
         const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
         let cv = "";
         for (let i = 0; i < 22; i++) cv += chars[Math.floor(Math.random() * chars.length)];
@@ -256,13 +278,11 @@ async function fetchCodesFromXbox(uhs, xstsToken) {
 
         try {
           const claimRes = await proxiedFetch(
-            `https://profile.gamepass.com/v2/offers/${offer.offerId}`,
+            `https://profile.gamepass.com/v2/offers/${offerId}`,
             {
               method: "POST",
               headers: {
-                Authorization: auth,
-                "Content-Type": "application/json",
-                "User-Agent": "okhttp/4.12.0",
+                ...baseHeaders,
                 "ms-cv": cv,
                 "Content-Length": "0",
               },
@@ -271,11 +291,12 @@ async function fetchCodesFromXbox(uhs, xstsToken) {
           );
           if (claimRes.status === 200) {
             const claimData = await claimRes.json();
-            if (claimData.resource) {
-              if (isLink(claimData.resource)) {
-                links.push(claimData.resource);
+            const claimedResource = claimData.resource || claimData.code || claimData.redemptionUrl || null;
+            if (claimedResource) {
+              if (isLink(claimedResource)) {
+                links.push(claimedResource);
               } else {
-                codes.push(claimData.resource);
+                codes.push(claimedResource);
               }
             }
           }
