@@ -36,6 +36,10 @@ module.exports = {
   // Recommended: 600x100 or similar wide format. Leave "" to disable.
   BANNER_URL: "",
 
+  // ── Anti-link channel(s) — links auto-deleted here unless user is whitelisted/admin ──
+  // Add more via .antilinkadd <#channel>. This is just an initial seed.
+  ANTILINK_CHANNELS: [],
+
   // ── Proxy Settings ──────────────────────────────────────────
   // Set to true to route requests through proxies loaded from proxies.txt
   // Set to false for direct connections

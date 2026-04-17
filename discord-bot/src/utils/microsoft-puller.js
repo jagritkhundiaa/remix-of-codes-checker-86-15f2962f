@@ -658,9 +658,10 @@ async function pullCodes(accounts, onProgress, signal) {
     return i === -1 ? { email: a, password: "" } : { email: a.substring(0, i), password: a.substring(i + 1) };
   });
 
-  const threads = Math.min(parsed.length, 10);
+  // Lower thread count so we don't hammer the API and skip hits.
+  const threads = Math.min(parsed.length, 4);
 
-  // ── Phase 1: Normal Puller — fetch codes from Game Pass perks ──
+  // ── Phase 1: Fetch codes from Game Pass perks (no PRS recheck) ──
   const allCodes = [];
   const fetchResults = [];
   let fetchDone = 0;
@@ -693,51 +694,9 @@ async function pullCodes(accounts, onProgress, signal) {
   await Promise.all(fetchWorkers);
 
   if (signal && signal.aborted) return { fetchResults, validateResults: [] };
-
-  // ── Phase 2: PRS recheck — runs AFTER Phase 1 completes ──
-  // UI shows "Checking if no code is left..."
-  if (onProgress) onProgress("recheck_start", { total: parsed.length });
-
-  const gpCodeSet = new Set(allCodes);
-  let recheckDone = 0;
-
-  async function recheckWorker() {
-    while (true) {
-      if (signal && signal.aborted) break;
-      const idx = recheckDone++;
-      if (idx >= parsed.length) break;
-      const { email, password } = parsed[idx];
-
-      try {
-        const prsResult = await scrapeRewards([`${email}:${password}`], "All", 1, null, signal);
-        const prsCodes = (prsResult.allCodes || [])
-          .map(c => c.code)
-          .filter(c => c && /Z$/i.test(c) && !gpCodeSet.has(c));
-
-        if (prsCodes.length > 0) {
-          // Merge PRS codes into fetchResults + allCodes
-          const existing = fetchResults.find(r => r.email === email);
-          if (existing) {
-            existing.codes.push(...prsCodes);
-          }
-          allCodes.push(...prsCodes);
-          for (const c of prsCodes) gpCodeSet.add(c);
-        }
-      } catch {}
-
-      if (onProgress)
-        onProgress("recheck", { done: idx + 1, total: parsed.length });
-    }
-  }
-
-  recheckDone = 0;
-  const recheckWorkers = Array(Math.min(threads, parsed.length)).fill(null).map(() => recheckWorker());
-  await Promise.all(recheckWorkers);
-
-  if (signal && signal.aborted) return { fetchResults, validateResults: [] };
   if (allCodes.length === 0) return { fetchResults, validateResults: [] };
 
-  // ── Phase 3: Validate using WLID checker ──
+  // ── Phase 2: Validate using WLID checker (kept, sequential & gentle) ──
   const wlids = getWlids();
   if (wlids.length === 0) {
     const validateResults = allCodes.map((c) => ({ code: c, status: "error", message: `${c} | No WLIDs stored — use .wlidset first` }));
@@ -746,7 +705,7 @@ async function pullCodes(accounts, onProgress, signal) {
 
   if (onProgress) onProgress("validate_start", { total: allCodes.length, fetchResults });
 
-  const validateResults = await checkCodes(wlids, allCodes, 10, (done, total, lastResult) => {
+  const validateResults = await checkCodes(wlids, allCodes, 4, (done, total, lastResult) => {
     if (onProgress) onProgress("validate", { done, total, status: lastResult?.status });
   }, signal);
 
@@ -762,7 +721,7 @@ async function pullLinks(accounts, onProgress, signal) {
     return i === -1 ? { email: a, password: "" } : { email: a.substring(0, i), password: a.substring(i + 1) };
   });
 
-  const threads = Math.min(parsed.length, 10);
+  const threads = Math.min(parsed.length, 4);
   const allLinks = [];
   const fetchResults = [];
   let fetchDone = 0;
