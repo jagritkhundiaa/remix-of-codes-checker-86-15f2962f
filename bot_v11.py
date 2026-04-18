@@ -66,13 +66,32 @@ def save_json(path, data):
     except Exception:
         pass
 
+def load_savage_file():
+    global savage_lines
+    if not os.path.exists(SAVAGE_FILE):
+        try:
+            with open(SAVAGE_FILE, "w", encoding="utf-8") as f:
+                f.write("# Add custom savage roast lines here, one per line. Lines starting with # are ignored.\n")
+                f.write("# The bot will mix these into its style when roasting.\n")
+                f.write("you talk like your dad pulled out\n")
+                f.write("bro really thinks anyone asked\n")
+                f.write("your existence is a typo god never fixed\n")
+        except Exception: pass
+    try:
+        with open(SAVAGE_FILE, "r", encoding="utf-8") as f:
+            savage_lines = [ln.strip() for ln in f if ln.strip() and not ln.strip().startswith("#")]
+    except Exception:
+        savage_lines = []
+    print(f"[SAVAGE] loaded {len(savage_lines)} custom lines")
+
 def load_state():
     global slaves, savage_global
     mem = load_json(MEMORY_FILE, {})
     for uid, roasts in mem.get("past_roasts", {}).items():
         past_roasts[int(uid)] = deque(roasts, maxlen=3)
-    savage_global = bool(mem.get("savage_global", False))
+    savage_global = bool(mem.get("savage_global", True))  # default ON
     slaves = set(load_json(SLAVES_FILE, []))
+    load_savage_file()
 
 def save_state():
     save_json(MEMORY_FILE, {
