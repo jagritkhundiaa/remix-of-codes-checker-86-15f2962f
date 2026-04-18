@@ -1148,7 +1148,7 @@ async function handleRewards(respond, userId, accountsRaw, accountsFile, threads
 
 // ── Inbox AIO handler ────────────────────────────────────────
 
-async function handleInboxAio(respond, userId, accountsRaw, accountsFile, threads = 5, dmUser = null) {
+async function handleInboxAio(respond, userId, accountsRaw, accountsFile, threads = 3, dmUser = null) {
   if (!canUse(userId)) return respond({ embeds: [errorEmbed(blacklist.isBlacklisted(userId) ? "You are blacklisted." : "You are not authorized to use this bot.")] });
 
   const acquire = limiter.acquire(userId, "inboxaio");
@@ -1607,7 +1607,7 @@ client.on("interactionCreate", async (interaction) => {
       await interaction.deferReply();
       const accounts = interaction.options.getString("accounts");
       const accountsFile = interaction.options.getAttachment("accounts_file");
-      const threads = interaction.options.getInteger("threads") || 5;
+      const threads = interaction.options.getInteger("threads") || 3;
       await handleInboxAio(respond, user.id, accounts, accountsFile, threads, user);
     }
 
