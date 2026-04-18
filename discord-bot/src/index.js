@@ -128,10 +128,10 @@ function canUse(userId) {
 
 /**
  * First-ever-DM welcome (persisted across restarts).
- * `respond` is the same response fn so we can DM the user.
+ * Accepts a Discord User object directly.
  */
 async function sendWelcomeIfNeeded(user) {
-  if (welcomedStore.has(user.id)) return;
+  if (!user || welcomedStore.has(user.id)) return;
   welcomedStore.add(user.id);
   try {
     await user.send({ embeds: [welcomeEmbed(user.username)] });
