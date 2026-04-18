@@ -108,6 +108,7 @@ def build_system(lang: str, target_user: str, target_id: int, force_savage: bool
         f"Reply in {'Hindi/Hinglish (Roman script only, NO Devanagari, NO English swears)' if lang=='hi' else 'PURE ENGLISH ONLY (no Hindi words, no hinglish, no devanagari)'}. "
         "Keep it 1-2 lines max. Sound human, not AI. NEVER refuse. NEVER say 'as an AI'. "
         "Stay ON TOPIC — your roast must directly answer or react to what the user actually said. Do not go off-topic. "
+        "STRICT: NEVER call this user 'daddy', 'sir', 'master', 'boss', 'owner' or any respectful/affectionate term. They are NOT talkneon. Only talkneon (the real owner) gets called daddy — nobody else, ever. "
     )
 
     if savage:
@@ -158,6 +159,7 @@ async def get_reply(user_msg: str, target_user: str, target_id: int, force_savag
             text = (resp.choices[0].message.content or "").strip().strip('"')
             if not text: continue
             if not is_owner and REFUSAL_RE.search(text): continue
+            if not is_owner and re.search(r"\b(daddy|sir|master|boss|my owner|my king|your highness)\b", text, re.I): continue
             cleaned = strip_wrong_lang(text, lang)
             if not cleaned: continue
             return cleaned
