@@ -148,28 +148,45 @@ function displayProxy(p) {
 
 // ── Validation (live test) ───────────────────────────────────
 
+// Use endpoints that don't block datacenter/residential proxies.
+// We accept any 2xx/3xx/4xx response — the goal is "did the TCP+TLS tunnel work",
+// not "is this site reachable". Many proxies return 403/407 on hard-blocked sites
+// but tunnel fine to Microsoft, which is all we care about.
 const TEST_URLS = [
-  "https://api.ipify.org?format=json",
-  "https://httpbin.org/ip",
+  "https://login.live.com/",                  // our actual target host
+  "https://www.microsoft.com/robots.txt",
+  "https://www.google.com/generate_204",
+  "https://cp.cloudflare.com/",
 ];
 
-async function testProxy(p, timeoutMs = 8000) {
+async function testProxy(p, timeoutMs = 10000) {
   const agent = createAgent(p);
+  let lastErr = "no response";
   for (const url of TEST_URLS) {
     try {
       const res = await fetch(url, {
+        method: "GET",
         dispatcher: agent,
         signal: AbortSignal.timeout(timeoutMs),
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+          Accept: "*/*",
+        },
       });
-      if (res.ok) {
-        await res.text().catch(() => {});
-        return { ok: true };
+      // Any HTTP response means the proxy tunnel works.
+      // 407 = proxy auth failed → proxy is dead for us.
+      if (res.status === 407) {
+        lastErr = "proxy auth failed (407)";
+        continue;
       }
+      await res.body?.cancel?.().catch(() => {});
+      return { ok: true };
     } catch (err) {
-      // try next test url
+      lastErr = err?.message || String(err);
     }
   }
-  return { ok: false, error: "no test url responded" };
+  return { ok: false, error: lastErr };
 }
 
 // ── Public CRUD ──────────────────────────────────────────────
