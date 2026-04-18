@@ -16,6 +16,9 @@ BASE_URL = "https://integrate.api.nvidia.com/v1"
 MODEL = "meta/llama-3.3-70b-instruct"
 
 OWNER_ID = 1450727165061496064  # talkneon
+ALLOWED_CHANNEL_IDS = {int(x) for x in os.getenv("ALLOWED_CHANNELS", "0").split(",") if x.strip().isdigit()}  # set ALLOWED_CHANNELS=123,456 env, or edit below
+# ALLOWED_CHANNEL_IDS = {1234567890}  # <-- hardcode channel id(s) here if you prefer
+FORCE_ENGLISH = True  # english-only mode
 PREFIX = "/"
 MEMORY_FILE = "memory.json"
 SLAVES_FILE = "slaves.json"
