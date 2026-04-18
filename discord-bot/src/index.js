@@ -16,12 +16,14 @@ const { pullCodes, pullLinks } = require("./utils/microsoft-puller");
 const { checkRefundAccounts } = require("./utils/microsoft-refund");
 
 const { checkInboxAccounts, getServiceCount } = require("./utils/microsoft-inbox");
-const { searchProducts, getProductDetails, purchaseItems } = require("./utils/microsoft-purchaser");
-const { changePasswords, checkAccounts } = require("./utils/microsoft-changer");
-const { initiateRecovery, submitCaptchaAndContinue, submitNewPassword, downloadCaptchaImage } = require("./utils/microsoft-recover");
 const { loadProxies, isProxyEnabled, getProxyCount, getProxyStats, reloadProxies } = require("./utils/proxy-manager");
 const blacklist = require("./utils/blacklist");
 const { setWlids, getWlids, getWlidCount } = require("./utils/wlid-store");
+const { WelcomeStore } = require("./utils/welcome-store");
+const { AutopilotManager, TEN_DAYS_MS } = require("./utils/autopilot");
+const { AntiLink } = require("./utils/antilink");
+const { GenManager } = require("./utils/gen-manager");
+const { extractCombos } = require("./utils/combo-extract");
 const {
   progressEmbed,
   checkResultsEmbed,
@@ -33,11 +35,6 @@ const {
   promoPullerResultsEmbed,
   inboxAioProgressEmbed,
   inboxAioResultsEmbed,
-  purchaseResultsEmbed,
-  purchaseProgressEmbed,
-  productSearchEmbed,
-  changerResultsEmbed,
-  accountCheckerResultsEmbed,
   rewardsResultsEmbed,
   refundProgressEmbed,
   refundResultsEmbed,
@@ -59,8 +56,9 @@ const {
   adminPanelEmbed,
   detailedStatsEmbed,
   textAttachment,
-  recoverProgressEmbed,
-  recoverResultEmbed,
+  genHelpEmbed,
+  stockListEmbed,
+  unauthorisedEmbed,
 } = require("./utils/embeds");
 const { checkRewardsBalances } = require("./utils/microsoft-rewards");
 const { checkNetflixAccounts } = require("./utils/netflix-checker");
@@ -71,6 +69,7 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.DirectMessages,
   ],
   partials: [Partials.Message, Partials.Channel],
 });
@@ -79,18 +78,14 @@ const auth = new AuthManager();
 const limiter = new ConcurrencyLimiter(config.MAX_CONCURRENT_USERS);
 const otpManager = new OTPManager();
 const statsManager = new StatsManager();
+const welcomeStore = new WelcomeStore();
+const autopilot = new AutopilotManager();
+const antilink = new AntiLink();
+const gen = new GenManager();
 
-// Webhook URL stored in memory (owner sets via /setwebhook)
 let webhookUrl = "";
-
-// Active abort controllers per user
 const activeAborts = new Map();
-
-// Active recovery sessions per user (for multi-step CAPTCHA flow)
-const activeRecoverySessions = new Map();
-
-// Track users who have seen the welcome message
-const welcomedUsers = new Set();
+const activeRecoverySessions = new Map(); // legacy, unused after recovery removal
 
 // ── Helpers ──────────────────────────────────────────────────
 
