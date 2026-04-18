@@ -1997,6 +1997,178 @@ client.on("messageCreate", async (message) => {
     else if (cmd === "botstats") {
       await handleBotStats(respond, message.author.id);
     }
+
+    // ── Owner utility: .say <text> ──
+    else if (cmd === "say") {
+      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".say")] });
+      const text = args.join(" ").trim();
+      if (!text) return respond({ embeds: [infoEmbed("Usage", "`.say <message>` — bot will repeat your message in this channel.")] });
+      try { await message.delete(); } catch {}
+      try { await message.channel.send(text); } catch {}
+    }
+
+    // ── Owner utility: .dm <userId> <text> ──
+    else if (cmd === "dm") {
+      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".dm")] });
+      const targetId = args.shift();
+      const text = args.join(" ").trim();
+      if (!targetId || !text) return respond({ embeds: [infoEmbed("Usage", "`.dm <userId> <message>` — DMs the user as the bot.")] });
+      try {
+        const target = await client.users.fetch(targetId);
+        await target.send(text);
+        return respond({ embeds: [successEmbed(`DM sent to <@${targetId}>.`)] });
+      } catch (e) {
+        return respond({ embeds: [errorEmbed(`Could not DM ${targetId}: ${e.message}`)] });
+      }
+    }
+
+    // ── Autopilot admin ──
+    else if (cmd === "autopilotoff") {
+      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".autopilotoff")] });
+      autopilot.setEnabled(false);
+      return respond({ embeds: [successEmbed("Autopilot system disabled. The 'milk' trigger is OFF.")] });
+    }
+    else if (cmd === "autopiloton") {
+      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".autopiloton")] });
+      autopilot.setEnabled(true);
+      return respond({ embeds: [successEmbed("Autopilot system enabled.")] });
+    }
+    else if (cmd === "autopilotgrants") {
+      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".autopilotgrants")] });
+      const list = autopilot.listGrants();
+      if (list.length === 0) return respond({ embeds: [infoEmbed("Autopilot grants", "No active grants.")] });
+      const lines = list
+        .sort((a, b) => a.expiresAt - b.expiresAt)
+        .map(g => `<@${g.userId}> — expires <t:${Math.floor(g.expiresAt / 1000)}:R>`);
+      return respond({ embeds: [infoEmbed(`Autopilot grants (${list.length})`, lines.join("\n").slice(0, 3900))] });
+    }
+    else if (cmd === "autopilotcheck") {
+      const targetId = args[0] || message.author.id;
+      const exp = autopilot.getExpiry(targetId);
+      if (!exp) return respond({ embeds: [infoEmbed("Autopilot", `<@${targetId}> has no autopilot grant.`)] });
+      return respond({ embeds: [infoEmbed("Autopilot", `<@${targetId}> expires <t:${Math.floor(exp / 1000)}:R>.`)] });
+    }
+
+    // ── Anti-link admin ──
+    else if (cmd === "antilinkadd") {
+      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".antilinkadd")] });
+      const id = (args[0] || "").replace(/[<@!>]/g, "");
+      if (!id) return respond({ embeds: [infoEmbed("Usage", "`.antilinkadd <userId>` — bypass anti-link for this user.")] });
+      antilink.addWhitelist(id);
+      return respond({ embeds: [successEmbed(`Added <@${id}> to anti-link whitelist.`)] });
+    }
+    else if (cmd === "antilinkremove") {
+      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".antilinkremove")] });
+      const id = (args[0] || "").replace(/[<@!>]/g, "");
+      if (!id) return respond({ embeds: [infoEmbed("Usage", "`.antilinkremove <userId>`")] });
+      const had = antilink.removeWhitelist(id);
+      return respond({ embeds: [had ? successEmbed(`Removed <@${id}>.`) : errorEmbed("Not in whitelist.")] });
+    }
+    else if (cmd === "antilinklist") {
+      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".antilinklist")] });
+      const list = antilink.listWhitelist();
+      if (list.length === 0) return respond({ embeds: [infoEmbed("Anti-link whitelist", "Empty.")] });
+      return respond({ embeds: [infoEmbed(`Whitelist (${list.length})`, list.map(id => `<@${id}>`).join("\n"))] });
+    }
+
+    // ── Gen system (mirrors Python gen_manager) ──
+    else if (cmd === "gen") {
+      const category = args[0];
+      if (!category) {
+        const cats = gen.getCategories();
+        const counts = gen.allStockCounts();
+        const list = cats.length === 0
+          ? "No categories yet. Owner can add via `.gencatadd <name>`."
+          : cats.map(c => `**${c}** — ${counts[c] || 0} in stock`).join("\n");
+        return respond({ embeds: [infoEmbed("Gen — pick a category", `Usage: \`.gen <category>\`\n\n${list}`)] });
+      }
+      if (!isAuthorizedAny(message.author.id)) {
+        return respond({ embeds: [errorEmbed("You are not authorized. Reply `milk` in a bot channel for 10-day access.")] });
+      }
+      const result = gen.generate(message.author.id, category);
+      if (result.error === "no_category") return respond({ embeds: [errorEmbed(`Category not found: \`${category}\``)] });
+      if (result.error === "limit") return respond({ embeds: [errorEmbed(`Daily limit reached. Limit: ${result.limit}, used: ${result.used}.`)] });
+      if (result.error === "empty") return respond({ embeds: [errorEmbed(`Stock empty for \`${category}\`. Ask the owner to refill.`)] });
+      try {
+        await message.author.send({
+          embeds: [successEmbed(`**${category}** account:\n\`\`\`\n${result.item}\n\`\`\`\nRemaining today: ${result.left}`)],
+        });
+        return respond({ embeds: [successEmbed(`Sent in DMs. Remaining today: ${result.left}.`)] });
+      } catch {
+        return respond({ embeds: [errorEmbed("Could not DM you. Open your DMs and try again.")] });
+      }
+    }
+
+    else if (cmd === "stock") {
+      const counts = gen.allStockCounts();
+      const cats = gen.getCategories();
+      if (cats.length === 0) return respond({ embeds: [infoEmbed("Stock", "No categories.")] });
+      const lines = cats.map(c => `**${c}** — ${counts[c] || 0}`);
+      return respond({ embeds: [infoEmbed("Stock", lines.join("\n"))] });
+    }
+
+    // ── Owner gen admin ──
+    else if (cmd === "gencatadd") {
+      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".gencatadd")] });
+      const name = args[0];
+      if (!name) return respond({ embeds: [infoEmbed("Usage", "`.gencatadd <name>`")] });
+      const ok = gen.addCategory(name);
+      return respond({ embeds: [ok ? successEmbed(`Category \`${name}\` added.`) : errorEmbed("Category already exists.")] });
+    }
+    else if (cmd === "gencatremove") {
+      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".gencatremove")] });
+      const name = args[0];
+      if (!name) return respond({ embeds: [infoEmbed("Usage", "`.gencatremove <name>`")] });
+      const ok = gen.removeCategory(name);
+      return respond({ embeds: [ok ? successEmbed(`Removed \`${name}\`.`) : errorEmbed("Category not found.")] });
+    }
+    else if (cmd === "stockadd") {
+      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".stockadd")] });
+      const cat = args.shift();
+      if (!cat) return respond({ embeds: [infoEmbed("Usage", "`.stockadd <category>` + attach a `.txt` of accounts (one per line).")] });
+      if (!gen.categoryExists(cat)) return respond({ embeds: [errorEmbed(`Category not found: \`${cat}\``)] });
+      const attachment = message.attachments.first();
+      let lines = args.join(" ").split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+      if (attachment) {
+        const fileLines = await fetchAttachmentLines(attachment);
+        lines = lines.concat(fileLines);
+      }
+      if (lines.length === 0) return respond({ embeds: [errorEmbed("No stock provided. Attach a `.txt` file or paste lines.")] });
+      const added = gen.addStock(cat, lines);
+      return respond({ embeds: [successEmbed(`Added ${added} item(s) to \`${cat}\`. Total now: ${gen.stockCount(cat)}.`)] });
+    }
+    else if (cmd === "stockclear") {
+      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".stockclear")] });
+      const cat = args[0];
+      if (!cat) return respond({ embeds: [infoEmbed("Usage", "`.stockclear <category>`")] });
+      const ok = gen.clearStock(cat);
+      return respond({ embeds: [ok ? successEmbed(`Cleared stock for \`${cat}\`.`) : errorEmbed("Category not found.")] });
+    }
+    else if (cmd === "premiumadd") {
+      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".premiumadd")] });
+      const id = (args[0] || "").replace(/[<@!>]/g, "");
+      if (!id) return respond({ embeds: [infoEmbed("Usage", "`.premiumadd <userId>`")] });
+      gen.addPremium(id);
+      return respond({ embeds: [successEmbed(`<@${id}> is now premium (${gen.premiumLimit}/day).`)] });
+    }
+    else if (cmd === "premiumremove") {
+      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".premiumremove")] });
+      const id = (args[0] || "").replace(/[<@!>]/g, "");
+      if (!id) return respond({ embeds: [infoEmbed("Usage", "`.premiumremove <userId>`")] });
+      gen.removePremium(id);
+      return respond({ embeds: [successEmbed(`<@${id}> removed from premium.`)] });
+    }
+    else if (cmd === "genlimit") {
+      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".genlimit")] });
+      const tier = (args[0] || "").toLowerCase();
+      const n = parseInt(args[1], 10);
+      if (!["free", "premium"].includes(tier) || !Number.isFinite(n) || n < 0) {
+        return respond({ embeds: [infoEmbed("Usage", "`.genlimit free|premium <number>`")] });
+      }
+      if (tier === "free") gen.setFreeLimit(n); else gen.setPremiumLimit(n);
+      return respond({ embeds: [successEmbed(`Set ${tier} daily limit to ${n}.`)] });
+    }
+
   } catch (err) {
     console.error(`Prefix command error [${cmd}]:`, err);
     try { await respond({ embeds: [errorEmbed(err.message)] }); } catch {}
