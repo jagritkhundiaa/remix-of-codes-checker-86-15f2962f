@@ -257,7 +257,7 @@ async def on_ready():
 async def on_message(message: discord.Message):
     if message.author.bot or not message.content: return
     if ALLOWED_CHANNEL_IDS and message.channel.id not in ALLOWED_CHANNEL_IDS: return
-    if not (bot.user.mentioned_in(message) or random.random() < 0.35): return  # respond on mention or 35%
+    # reply to every message in allowed channels
 
     # cooldown
     now = time.time()
