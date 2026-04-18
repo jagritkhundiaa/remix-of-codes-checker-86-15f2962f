@@ -392,20 +392,52 @@ function getRandomProxy() {
 const ipv4Dispatcher = new UndiciAgent({ connect: { family: 4 } });
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+const PROXY_ATTEMPT_TIMEOUT_MS = 15000; // hard cap per proxy attempt
+const DIRECT_ATTEMPT_TIMEOUT_MS = 20000;
+
+// Merge a caller-provided AbortSignal with our own timeout signal so
+// neither one being absent causes a hang. Returns { signal, cleanup }.
+function _composeSignal(userSignal, timeoutMs) {
+  const ctrl = new AbortController();
+  const onAbort = () => ctrl.abort(userSignal?.reason);
+  if (userSignal) {
+    if (userSignal.aborted) ctrl.abort(userSignal.reason);
+    else userSignal.addEventListener("abort", onAbort, { once: true });
+  }
+  const t = setTimeout(() => ctrl.abort(new Error(`request timeout after ${timeoutMs}ms`)), timeoutMs);
+  return {
+    signal: ctrl.signal,
+    cleanup: () => {
+      clearTimeout(t);
+      if (userSignal) userSignal.removeEventListener?.("abort", onAbort);
+    },
+  };
+}
+
+async function _fetchWithTimeout(url, options, dispatcher, timeoutMs) {
+  const { signal, cleanup } = _composeSignal(options.signal, timeoutMs);
+  try {
+    return await fetch(url, { ...options, dispatcher, signal });
+  } finally {
+    cleanup();
+  }
+}
+
 async function directFetchWithFallback(url, options = {}) {
   let lastErr = null;
   for (let a = 1; a <= 2; a++) {
-    try { return await fetch(url, options); }
+    try { return await _fetchWithTimeout(url, options, undefined, DIRECT_ATTEMPT_TIMEOUT_MS); }
     catch (e) { lastErr = e; if (a < 2) await sleep(250 * a); }
   }
-  try { return await fetch(url, { ...options, dispatcher: ipv4Dispatcher }); }
+  try { return await _fetchWithTimeout(url, options, ipv4Dispatcher, DIRECT_ATTEMPT_TIMEOUT_MS); }
   catch (e) { throw new Error(`direct fetch failed (${lastErr?.message || "?"}); ipv4 (${e.message})`); }
 }
 
 async function proxiedFetch(url, options = {}) {
   if (!isProxyEnabled()) return directFetchWithFallback(url, options);
 
-  // Try up to 3 different proxies before falling back to direct
+  // Try up to 3 different proxies before falling back to direct.
+  // Each attempt has a hard timeout so a dead proxy can never wedge a worker.
   let lastProxyErr = null;
   for (let attempt = 0; attempt < Math.min(3, proxies.length); attempt++) {
     const p = getNextProxy();
@@ -413,7 +445,7 @@ async function proxiedFetch(url, options = {}) {
     const agent = createAgent(p);
     proxyStats.total++;
     try {
-      const res = await fetch(url, { ...options, dispatcher: agent });
+      const res = await _fetchWithTimeout(url, options, agent, PROXY_ATTEMPT_TIMEOUT_MS);
       proxyStats.success++;
       p.ok = (p.ok || 0) + 1;
       return res;
