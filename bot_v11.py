@@ -159,6 +159,7 @@ async def get_reply(user_msg: str, target_user: str, target_id: int, force_savag
             text = (resp.choices[0].message.content or "").strip().strip('"')
             if not text: continue
             if not is_owner and REFUSAL_RE.search(text): continue
+            if not is_owner and re.search(r"\b(daddy|sir|master|boss|my owner|my king|your highness)\b", text, re.I): continue
             cleaned = strip_wrong_lang(text, lang)
             if not cleaned: continue
             return cleaned
