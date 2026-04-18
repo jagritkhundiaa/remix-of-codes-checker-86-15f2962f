@@ -19,9 +19,8 @@
 
 const fs = require("fs");
 const path = require("path");
-const { Agent: UndiciAgent } = require("undici");
+const { Agent: UndiciAgent, ProxyAgent } = require("undici");
 const { SocksProxyAgent } = require("socks-proxy-agent");
-const { HttpsProxyAgent } = require("https-proxy-agent");
 const config = require("../config");
 
 const STORE_FILE = path.join(__dirname, "..", "..", "data", "proxies.json");
@@ -130,15 +129,35 @@ function isValidPort(p) {
   return !isNaN(n) && n > 0 && n <= 65535;
 }
 
-function buildProxyUrl(p) {
-  const auth = p.username ? `${encodeURIComponent(p.username)}:${encodeURIComponent(p.password || "")}@` : "";
+function buildProxyUrl(p, { withAuth = true } = {}) {
+  const auth = withAuth && p.username
+    ? `${encodeURIComponent(p.username)}:${encodeURIComponent(p.password || "")}@`
+    : "";
   return `${p.protocol}://${auth}${p.host}:${p.port}`;
 }
 
+// Build a real Undici Dispatcher.
+//   • HTTP/HTTPS proxies → undici ProxyAgent (the only dispatcher
+//     Node's built-in fetch() actually honors).
+//   • SOCKS proxies     → wrap socks-proxy-agent inside an Undici
+//     Agent via the `connect` factory so fetch() can use it.
 function createAgent(p) {
-  const url = buildProxyUrl(p);
-  if (p.protocol.startsWith("socks")) return new SocksProxyAgent(url);
-  return new HttpsProxyAgent(url);
+  if (p.protocol.startsWith("socks")) {
+    const socks = new SocksProxyAgent(buildProxyUrl(p));
+    return new UndiciAgent({
+      connect: (opts, cb) => {
+        try { socks.callback(opts, opts, cb); }
+        catch (e) { cb(e); }
+      },
+    });
+  }
+  // HTTP / HTTPS proxy — auth goes in the URL.
+  const proto = p.protocol === "https" ? "https" : "http";
+  const uri = `${proto}://${p.host}:${p.port}`;
+  const token = p.username
+    ? `Basic ${Buffer.from(`${p.username}:${p.password || ""}`).toString("base64")}`
+    : undefined;
+  return new ProxyAgent(token ? { uri, token } : { uri });
 }
 
 function displayProxy(p) {
