@@ -1736,6 +1736,58 @@ client.on("interactionCreate", async (interaction) => {
 
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
+
+  // ── Anti-link guard (channel-scoped) ──
+  try {
+    if (
+      message.channelId === antilink.ANTI_LINK_CHANNEL_ID &&
+      !isOwner(message.author.id) &&
+      !antilink.isWhitelisted(message.author.id) &&
+      antilink.containsLink(message.content)
+    ) {
+      try { await message.delete(); } catch {}
+      try {
+        const warn = await message.channel.send({
+          embeds: [errorEmbed(`<@${message.author.id}>, links are not allowed in this channel.`)],
+        });
+        setTimeout(() => warn.delete().catch(() => {}), 5000);
+      } catch {}
+      return;
+    }
+  } catch {}
+
+  // ── Autopilot "milk" trigger (bot channels, case-insensitive) ──
+  try {
+    const isBotChannel =
+      message.channelId === config.ALLOWED_CHANNEL_PULLER ||
+      message.channelId === config.ALLOWED_CHANNEL_INBOX;
+    const trimmed = (message.content || "").trim().toLowerCase();
+    if (
+      isBotChannel &&
+      autopilot.isEnabled() &&
+      !message.content.startsWith(config.PREFIX)
+    ) {
+      const uid = message.author.id;
+      const alreadyOk = isOwner(uid) || auth.isAuthorized(uid) || autopilot.isGranted(uid);
+
+      if (trimmed === "milk" && !alreadyOk) {
+        const exp = autopilot.grant(uid);
+        autopilot.clearPrompted(uid);
+        try { await message.author.send({ embeds: [successEmbed(`Access granted for 10 days. Expires <t:${Math.floor(exp / 1000)}:R>.`)] }); } catch {}
+        try { await message.reply({ embeds: [successEmbed("Access granted (10 days). Check your DMs.")] }); } catch {}
+        return;
+      }
+
+      // Prompt unauthorized users once
+      if (!alreadyOk && !autopilot.wasPrompted(uid) && trimmed.length > 0 && trimmed !== "milk") {
+        autopilot.markPrompted(uid);
+        try {
+          await message.reply({ embeds: [infoEmbed("Access required", "Reply with `milk` to unlock 10 days of bot access.")] });
+        } catch {}
+      }
+    }
+  } catch {}
+
   if (!message.content.startsWith(config.PREFIX)) return;
 
 
