@@ -174,7 +174,12 @@ def build_system(lang: str, target_user: str, target_id: int, force_savage: bool
     if reply_ctx:
         ctx = f"They are replying to this earlier message: \"{reply_ctx[:200]}\". Roast in that context."
 
-    return f"{base_rules} {tone} {slave_line} {callback} {ctx}"
+    custom = ""
+    if savage and savage_lines:
+        sample = random.sample(savage_lines, min(5, len(savage_lines)))
+        custom = "STYLE EXAMPLES (match this energy/vibe, do NOT copy verbatim, write your own line in the same flavor): " + " || ".join(sample)
+
+    return f"{base_rules} {tone} {slave_line} {callback} {ctx} {custom}"
 
 # ================= AI CALL =================
 async def get_reply(user_msg: str, target_user: str, target_id: int, force_savage: bool, ch_mood: float, lang: str, recent_roasts: list, is_owner: bool, is_slave: bool, reply_ctx: str | None) -> str:
