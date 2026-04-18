@@ -36,10 +36,11 @@ client = OpenAI(base_url=BASE_URL, api_key=API_KEY)
 savage_global = True  # always on by default
 mood = defaultdict(lambda: 0.0)  # per-channel -1..+1
 last_reply_at = defaultdict(float)  # per-channel cooldown
-past_roasts = defaultdict(lambda: deque(maxlen=3))  # per-user last roasts
+past_roasts = defaultdict(lambda: deque(maxlen=6))  # per-user last roasts
+recent_global = deque(maxlen=20)  # global anti-repeat pool
 slaves = set()  # user IDs marked as owner's slave
 savage_lines = []  # custom roast lines from savage.txt
-COOLDOWN = 1.5
+COOLDOWN = 1.2
 
 def parse_user_id(raw: str) -> int | None:
     if not raw:
