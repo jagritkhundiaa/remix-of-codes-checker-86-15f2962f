@@ -147,46 +147,84 @@ function displayProxy(p) {
 }
 
 // ── Validation (live test) ───────────────────────────────────
+//
+// Multi-stage validator:
+//  1. TCP reach to the proxy host:port itself (kills dead hosts in <2s).
+//  2. Parallel HTTP probe race against 4 endpoints — first OK wins.
+//  3. One retry on transient errors (ECONNRESET / hang up / timeout).
+//
+// Any HTTP status (except 407 proxy-auth-failed) counts as "tunnel works".
+// We deliberately avoid ipify/httpbin — they block most datacenter IPs.
 
-// Use endpoints that don't block datacenter/residential proxies.
-// We accept any 2xx/3xx/4xx response — the goal is "did the TCP+TLS tunnel work",
-// not "is this site reachable". Many proxies return 403/407 on hard-blocked sites
-// but tunnel fine to Microsoft, which is all we care about.
-const TEST_URLS = [
-  "https://login.live.com/",                  // our actual target host
+const net = require("net");
+
+const PROBE_URLS = [
+  "https://login.live.com/",                 // actual target host
   "https://www.microsoft.com/robots.txt",
+  "https://cp.cloudflare.com/",              // 204, never blocks
   "https://www.google.com/generate_204",
-  "https://cp.cloudflare.com/",
 ];
 
-async function testProxy(p, timeoutMs = 10000) {
+const TRANSIENT_RX = /ECONNRESET|socket hang up|ETIMEDOUT|EAI_AGAIN|other side closed|terminated|aborted/i;
+
+function tcpReach(host, port, timeoutMs) {
+  return new Promise((resolve) => {
+    const sock = net.connect({ host, port });
+    const done = (ok) => { try { sock.destroy(); } catch {} resolve(ok); };
+    sock.setTimeout(timeoutMs);
+    sock.once("connect", () => done(true));
+    sock.once("error", () => done(false));
+    sock.once("timeout", () => done(false));
+  });
+}
+
+async function httpProbe(p, url, timeoutMs) {
   const agent = createAgent(p);
-  let lastErr = "no response";
-  for (const url of TEST_URLS) {
-    try {
-      const res = await fetch(url, {
-        method: "GET",
-        dispatcher: agent,
-        signal: AbortSignal.timeout(timeoutMs),
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-          Accept: "*/*",
-        },
-      });
-      // Any HTTP response means the proxy tunnel works.
-      // 407 = proxy auth failed → proxy is dead for us.
-      if (res.status === 407) {
-        lastErr = "proxy auth failed (407)";
-        continue;
-      }
-      await res.body?.cancel?.().catch(() => {});
-      return { ok: true };
-    } catch (err) {
-      lastErr = err?.message || String(err);
-    }
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      dispatcher: agent,
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        Accept: "*/*",
+        Connection: "close",
+      },
+    });
+    res.body?.cancel?.().catch(() => {});
+    if (res.status === 407) return { ok: false, reason: "auth_407" };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: err?.message || String(err) };
   }
-  return { ok: false, error: lastErr };
+}
+
+async function testProxy(p, timeoutMs = 10000) {
+  // Stage 1 — TCP reach to proxy itself.
+  const reachable = await tcpReach(p.host, p.port, Math.min(timeoutMs, 4000));
+  if (!reachable) return { ok: false, error: "tcp_unreachable" };
+
+  // Stage 2 — race HTTP probes.
+  const settled = await Promise.allSettled(PROBE_URLS.map((u) => httpProbe(p, u, timeoutMs)));
+  if (settled.some((s) => s.status === "fulfilled" && s.value?.ok)) return { ok: true };
+
+  const reasons = settled.map((s) =>
+    s.status === "fulfilled" ? s.value?.reason : (s.reason?.message || String(s.reason))
+  ).filter(Boolean);
+
+  if (reasons.some((r) => /auth_407|407/.test(String(r)))) {
+    return { ok: false, error: "auth_failed_407" };
+  }
+
+  // Stage 3 — single retry on transient error.
+  if (reasons.some((r) => TRANSIENT_RX.test(String(r)))) {
+    const retry = await httpProbe(p, PROBE_URLS[0], timeoutMs);
+    if (retry.ok) return { ok: true };
+    return { ok: false, error: `retry_failed:${retry.reason}` };
+  }
+
+  return { ok: false, error: reasons[0] || "no_probe_response" };
 }
 
 // ── Public CRUD ──────────────────────────────────────────────
