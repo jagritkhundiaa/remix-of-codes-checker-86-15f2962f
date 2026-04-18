@@ -1,9 +1,7 @@
 // Gen system — mirrors the Python xbox-checker-bot-py/gen_manager.py layout.
-//   - Per-product stock files at data/gen/stock/<product>.txt
+//   - Per-category stock files at data/gen/stock/<category>.txt
 //   - Config + user state at data/gen/{config.json,users.json}
-//
-// User cooldown: 200s, max 1 per request.
-// Admin: no cooldown, max 50 per request.
+//   - Free vs Premium daily limits, daily reset.
 
 const fs = require("fs");
 const path = require("path");
@@ -13,9 +11,12 @@ const STOCK_DIR = path.join(ROOT, "stock");
 const USERS_FILE = path.join(ROOT, "users.json");
 const CONFIG_FILE = path.join(ROOT, "config.json");
 
-const USER_COOLDOWN_MS = 200 * 1000;
-const USER_MAX_PER_REQUEST = 1;
-const ADMIN_MAX_PER_REQUEST = 50;
+const DEFAULT_CONFIG = {
+  free_limit: 20,
+  premium_limit: 50,
+  categories: [],
+  premium_users: {},
+};
 
 function ensure() {
   if (!fs.existsSync(STOCK_DIR)) fs.mkdirSync(STOCK_DIR, { recursive: true });
@@ -37,121 +38,168 @@ function save(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
 
-let config = load(CONFIG_FILE, { products: [] });
-config.products = config.products || [];
+let config = { ...DEFAULT_CONFIG, ...load(CONFIG_FILE, {}) };
+config.categories = config.categories || [];
+config.premium_users = config.premium_users || {};
 let users = load(USERS_FILE, {});
 
 function persistConfig() { save(CONFIG_FILE, config); }
 function persistUsers() { save(USERS_FILE, users); }
 
-function listProducts() { return [...config.products]; }
+ensure();
 
-function productExists(name) {
-  return config.products.includes(safeKey(name));
+// ── Categories ───────────────────────────────────────────────
+
+function getCategories() { return [...config.categories]; }
+
+function categoryExists(name) {
+  return config.categories.includes(safeKey(name));
 }
 
-function ensureProduct(name) {
-  ensure();
+function addCategory(name) {
   const key = safeKey(name);
-  if (!config.products.includes(key)) {
-    config.products.push(key);
-    persistConfig();
-  }
+  if (!key || config.categories.includes(key)) return false;
+  config.categories.push(key);
+  persistConfig();
   const file = path.join(STOCK_DIR, `${key}.txt`);
   if (!fs.existsSync(file)) fs.writeFileSync(file, "");
-  return key;
+  return true;
 }
 
-function getStock(name) {
+function removeCategory(name) {
   const key = safeKey(name);
-  const file = path.join(STOCK_DIR, `${key}.txt`);
-  if (!fs.existsSync(file)) return [];
-  return fs.readFileSync(file, "utf-8")
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean);
+  const i = config.categories.indexOf(key);
+  if (i === -1) return false;
+  config.categories.splice(i, 1);
+  persistConfig();
+  return true;
 }
 
-function stockCount(name) { return getStock(name).length; }
+// ── Stock ────────────────────────────────────────────────────
 
-function allStockCounts() {
-  const out = {};
-  for (const p of config.products) out[p] = stockCount(p);
-  return out;
-}
-
-function appendStock(name, lines) {
-  const key = ensureProduct(name);
-  const clean = (lines || []).map((l) => String(l).trim()).filter(Boolean);
-  if (clean.length === 0) return 0;
-  const file = path.join(STOCK_DIR, `${key}.txt`);
-  const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf-8") : "";
-  const sep = existing && !existing.endsWith("\n") ? "\n" : "";
-  fs.appendFileSync(file, sep + clean.join("\n") + "\n");
-  return clean.length;
-}
-
-function replaceStock(name, lines) {
-  const key = ensureProduct(name);
-  const clean = (lines || []).map((l) => String(l).trim()).filter(Boolean);
-  const file = path.join(STOCK_DIR, `${key}.txt`);
-  fs.writeFileSync(file, clean.join("\n") + (clean.length ? "\n" : ""));
-  return clean.length;
-}
-
-function pullMany(name, count) {
-  const key = safeKey(name);
-  const file = path.join(STOCK_DIR, `${key}.txt`);
-  if (!fs.existsSync(file)) return [];
-  const lines = fs.readFileSync(file, "utf-8")
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean);
-  if (lines.length === 0) return [];
-  const taken = lines.slice(0, count);
-  const remaining = lines.slice(count);
-  fs.writeFileSync(file, remaining.join("\n") + (remaining.length ? "\n" : ""));
-  return taken;
-}
-
-function getStockFilePath(name) {
+function _stockFile(name) {
   return path.join(STOCK_DIR, `${safeKey(name)}.txt`);
 }
 
-// ── Cooldowns ────────────────────────────────────────────────
+function _readStock(name) {
+  const file = _stockFile(name);
+  if (!fs.existsSync(file)) return [];
+  return fs.readFileSync(file, "utf-8").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+}
+
+function _writeStock(name, lines) {
+  fs.writeFileSync(_stockFile(name), lines.join("\n") + (lines.length ? "\n" : ""));
+}
+
+function stockCount(name) { return _readStock(name).length; }
+
+function allStockCounts() {
+  const out = {};
+  for (const c of config.categories) out[c] = stockCount(c);
+  return out;
+}
+
+function addStock(name, lines) {
+  if (!categoryExists(name)) return 0;
+  const clean = (lines || []).map((l) => String(l).trim()).filter(Boolean);
+  if (clean.length === 0) return 0;
+  const existing = _readStock(name);
+  _writeStock(name, existing.concat(clean));
+  return clean.length;
+}
+
+function clearStock(name) {
+  if (!categoryExists(name)) return false;
+  _writeStock(name, []);
+  return true;
+}
+
+function pullOne(name) {
+  const lines = _readStock(name);
+  if (lines.length === 0) return null;
+  const item = lines.shift();
+  _writeStock(name, lines);
+  return item;
+}
+
+// ── Premium ──────────────────────────────────────────────────
+
+function isPremium(uid) { return !!config.premium_users[String(uid)]; }
+function addPremium(uid) { config.premium_users[String(uid)] = Date.now(); persistConfig(); }
+function removePremium(uid) {
+  if (config.premium_users[String(uid)]) {
+    delete config.premium_users[String(uid)];
+    persistConfig();
+  }
+}
+function premiumList() { return Object.keys(config.premium_users); }
+
+// ── Limits ───────────────────────────────────────────────────
+
+function setFreeLimit(n) { config.free_limit = Math.max(0, n | 0); persistConfig(); }
+function setPremiumLimit(n) { config.premium_limit = Math.max(0, n | 0); persistConfig(); }
+
+function dailyLimit(uid) {
+  return isPremium(uid) ? config.premium_limit : config.free_limit;
+}
+
+// ── User quota / generate ────────────────────────────────────
+
+function _today() {
+  const d = new Date();
+  return `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}`;
+}
 
 function _user(uid) {
   const k = String(uid);
-  if (!users[k]) users[k] = { lastGen: 0, totalPulled: 0 };
+  const today = _today();
+  if (!users[k] || users[k].day !== today) {
+    users[k] = { day: today, used: 0, total: (users[k] && users[k].total) || 0 };
+  }
   return users[k];
 }
 
-function cooldownRemainingMs(uid, isAdmin) {
-  if (isAdmin) return 0;
+function remaining(uid) {
   const u = _user(uid);
-  const elapsed = Date.now() - (u.lastGen || 0);
-  const left = USER_COOLDOWN_MS - elapsed;
-  return left > 0 ? left : 0;
+  return Math.max(0, dailyLimit(uid) - u.used);
 }
 
-function recordGen(uid, count) {
+function record(uid) {
   const u = _user(uid);
-  u.lastGen = Date.now();
-  u.totalPulled = (u.totalPulled || 0) + count;
+  u.used += 1;
+  u.total += 1;
   persistUsers();
 }
 
-function maxPerRequest(isAdmin) {
-  return isAdmin ? ADMIN_MAX_PER_REQUEST : USER_MAX_PER_REQUEST;
+function stats(uid) {
+  const u = _user(uid);
+  return { used: u.used, total: u.total || 0, limit: dailyLimit(uid), remaining: remaining(uid) };
 }
 
-ensure();
+function generate(uid, category) {
+  if (!categoryExists(category)) return { error: "no_category" };
+  if (remaining(uid) <= 0) {
+    const u = _user(uid);
+    return { error: "limit", limit: dailyLimit(uid), used: u.used };
+  }
+  const item = pullOne(category);
+  if (!item) return { error: "empty" };
+  record(uid);
+  return { ok: true, item, left: remaining(uid) };
+}
 
 module.exports = {
-  USER_COOLDOWN_MS, USER_MAX_PER_REQUEST, ADMIN_MAX_PER_REQUEST,
-  listProducts, productExists, ensureProduct,
-  getStock, stockCount, allStockCounts,
-  appendStock, replaceStock, pullMany, getStockFilePath,
-  cooldownRemainingMs, recordGen, maxPerRequest,
-  safeKey,
+  // categories
+  getCategories, categoryExists, addCategory, removeCategory,
+  // stock
+  stockCount, allStockCounts, addStock, clearStock, pullOne,
+  // premium
+  isPremium, addPremium, removePremium, premiumList,
+  // limits
+  setFreeLimit, setPremiumLimit, dailyLimit,
+  get freeLimit() { return config.free_limit; },
+  get premiumLimit() { return config.premium_limit; },
+  // user
+  remaining, record, stats, generate,
 };
+
