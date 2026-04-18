@@ -88,11 +88,9 @@ let webhookUrl = "";
 // Active abort controllers per user
 const activeAborts = new Map();
 
-// Active recovery sessions per user (for multi-step CAPTCHA flow)
-const activeRecoverySessions = new Map();
+// (recovery sessions removed)
 
-// Track users who have seen the welcome message
-const welcomedUsers = new Set();
+// Welcome state is now persisted on disk (welcomedStore)
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -103,12 +101,12 @@ function isOwner(userId) {
 // ── Channel enforcement ──────────────────────────────────────
 
 const PULLER_CHECKER_CMDS = new Set(["pull", "promopuller", "check", "checker", "claim"]);
-const INBOX_NORMAL_CMDS = new Set(["inboxaio", "rewards", "recover", "captcha", "help", "stats", "search", "purchase", "changer", "wlidset", "refund", "netflix", "steam"]);
+const INBOX_NORMAL_CMDS = new Set(["inboxaio", "rewards", "help", "stats", "search", "purchase", "wlidset", "refund", "netflix", "steam"]);
 
 function getRequiredChannel(cmd) {
   if (PULLER_CHECKER_CMDS.has(cmd)) return config.ALLOWED_CHANNEL_PULLER;
   if (INBOX_NORMAL_CMDS.has(cmd)) return config.ALLOWED_CHANNEL_INBOX;
-  return null; // admin commands (auth, deauth, admin, etc.) work in either channel
+  return null; // admin commands work anywhere
 }
 
 function checkChannelAccess(channelId, cmd) {
@@ -118,27 +116,33 @@ function checkChannelAccess(channelId, cmd) {
   return { allowed: false, requiredChannel: required };
 }
 
+function isAuthorizedAny(userId) {
+  return isOwner(userId) || auth.isAuthorized(userId) || autopilot.isGranted(userId);
+}
+
 function canUse(userId) {
   if (blacklist.isBlacklisted(userId)) return false;
-  const allowed = isOwner(userId) || auth.isAuthorized(userId);
-  if (allowed) otpManager.ensureAuthenticated(userId); // auto-session
+  const allowed = isAuthorizedAny(userId);
+  if (allowed) otpManager.ensureAuthenticated(userId);
   return allowed;
 }
 
 /**
- * Send welcome embed on first command use (per session).
- * Returns true if welcome was sent (caller should continue normally).
+ * First-ever-DM welcome (persisted across restarts).
+ * `respond` is the same response fn so we can DM the user.
  */
-async function sendWelcomeIfNeeded(respond, userId, username) {
-  if (welcomedUsers.has(userId)) return;
-  welcomedUsers.add(userId);
+async function sendWelcomeIfNeeded(user) {
+  if (welcomedStore.has(user.id)) return;
+  welcomedStore.add(user.id);
   try {
-    await respond({ embeds: [welcomeEmbed(username)] });
+    await user.send({ embeds: [welcomeEmbed(user.username)] });
   } catch {}
 }
 
 const MAX_COMBO_LINES = 4000;
 
+// Smart combo input: extracts email:pass from raw or "dirty" lines.
+// Falls back to plain split for non-combo data (codes, WLIDs).
 function splitInput(raw) {
   if (!raw) return [];
   return raw
@@ -147,11 +151,21 @@ function splitInput(raw) {
     .filter(Boolean);
 }
 
+function extractCombosFromText(text) {
+  return extractCombos(text, { max: MAX_COMBO_LINES });
+}
+
 async function fetchAttachmentLines(attachment) {
   if (!attachment) return [];
   const res = await fetch(attachment.url);
   const text = await res.text();
   return text.split("\n").map((l) => l.trim()).filter(Boolean);
+}
+
+async function fetchAttachmentText(attachment) {
+  if (!attachment) return "";
+  const res = await fetch(attachment.url);
+  return await res.text();
 }
 
 function stopButton(userId) {
