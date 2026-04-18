@@ -294,7 +294,9 @@ def build_system(lang: str, target_user: str, target_id: int, force_savage: bool
 async def get_reply(user_msg: str, target_user: str, target_id: int, force_savage: bool, ch_mood: float, lang: str, recent_roasts: list, is_owner: bool, is_slave: bool, reply_ctx: str | None, mentioned_info: str | None, is_question: bool, target_roast_user: str | None = None) -> str:
     sys_prompt = build_system(lang, target_user, target_id, force_savage, ch_mood, recent_roasts, is_owner, is_slave, reply_ctx, mentioned_info, is_question, target_roast_user)
 
-    for attempt in range(3):
+    LEAK_RE = re.compile(r"\b(api|endpoint|http|https|\.py|\.js|\.ts|axios|fetch\(|requests\.|library|module|playwright|selenium|puppeteer|header|payload|token logic|source code|github)\b", re.I)
+
+    for attempt in range(4):
         try:
             resp = await asyncio.to_thread(
                 client.chat.completions.create,
@@ -303,35 +305,35 @@ async def get_reply(user_msg: str, target_user: str, target_id: int, force_savag
                     {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": f"{target_user} said: {user_msg}"},
                 ],
-                temperature=1.35,
-                max_tokens=50,
+                temperature=1.4,
+                max_tokens=55,
                 top_p=0.95,
-                frequency_penalty=0.9,
-                presence_penalty=0.8,
+                frequency_penalty=1.1,
+                presence_penalty=0.9,
             )
             text = (resp.choices[0].message.content or "").strip().strip('"').strip("'")
             if not text: continue
             if not is_owner and REFUSAL_RE.search(text): continue
+            # block internal leaks (only deflect for non-owners; owner can see anything)
+            if not is_owner and LEAK_RE.search(text): continue
             cleaned = strip_wrong_lang(text, lang)
             if not cleaned: continue
             cleaned = cleaned.replace(" — ", ", ").replace(" – ", ", ").replace("—", ",").replace("–", ",").replace(" - ", ", ")
-            # strip stray hyphens but keep words readable
             cleaned = re.sub(r"\s-\s", ", ", cleaned).replace(" -", ",").replace("- ", "")
             words = cleaned.split()
             cap = 16 if (is_owner and not target_roast_user) else 12
             if len(words) > cap:
                 cleaned = " ".join(words[:cap])
-            # anti-repeat check vs recent global pool
+            # anti-repeat check vs recent global pool (60% token overlap = dup)
             low = cleaned.lower().strip(".,!? ")
             dup = False
             for r in recent_global:
                 rl = r.lower().strip(".,!? ")
                 if low == rl: dup = True; break
-                # token overlap > 70%
                 a, b = set(low.split()), set(rl.split())
-                if a and b and len(a & b) / max(len(a), len(b)) > 0.7:
+                if a and b and len(a & b) / max(len(a), len(b)) >= 0.6:
                     dup = True; break
-            if dup and attempt < 2: continue
+            if dup and attempt < 3: continue
             return cleaned
         except Exception as e:
             print(f"[AI ERR] {e}")
