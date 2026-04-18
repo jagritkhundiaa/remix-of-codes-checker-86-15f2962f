@@ -215,10 +215,11 @@ def build_system(lang: str, target_user: str, target_id: int, force_savage: bool
     return f"{base_rules} {tone} {qa_line} {mention_line} {slave_line} {callback} {ctx} {custom}\n\n{KNOWLEDGE}"
 
 # ================= AI CALL =================
-async def get_reply(user_msg: str, target_user: str, target_id: int, force_savage: bool, ch_mood: float, lang: str, recent_roasts: list, is_owner: bool, is_slave: bool, reply_ctx: str | None) -> str:
-    sys_prompt = build_system(lang, target_user, target_id, force_savage, ch_mood, recent_roasts, is_owner, is_slave, reply_ctx)
+# ================= AI CALL =================
+async def get_reply(user_msg: str, target_user: str, target_id: int, force_savage: bool, ch_mood: float, lang: str, recent_roasts: list, is_owner: bool, is_slave: bool, reply_ctx: str | None, mentioned_info: str | None, is_question: bool) -> str:
+    sys_prompt = build_system(lang, target_user, target_id, force_savage, ch_mood, recent_roasts, is_owner, is_slave, reply_ctx, mentioned_info, is_question)
 
-    for attempt in range(4):
+    for attempt in range(3):
         try:
             resp = await asyncio.to_thread(
                 client.chat.completions.create,
@@ -228,18 +229,21 @@ async def get_reply(user_msg: str, target_user: str, target_id: int, force_savag
                     {"role": "user", "content": f"{target_user} said: {user_msg}"},
                 ],
                 temperature=1.1,
-                max_tokens=35,
+                max_tokens=45,
                 top_p=0.9,
             )
-            text = (resp.choices[0].message.content or "").strip().strip('"')
+            text = (resp.choices[0].message.content or "").strip().strip('"').strip("'")
             if not text: continue
             if not is_owner and REFUSAL_RE.search(text): continue
             cleaned = strip_wrong_lang(text, lang)
             if not cleaned: continue
+            words = cleaned.split()
+            if len(words) > 18:
+                cleaned = " ".join(words[:18])
             return cleaned
         except Exception as e:
             print(f"[AI ERR] {e}")
-            await asyncio.sleep(0.4)
+            await asyncio.sleep(0.3)
     return ""
 
 # ================= MOOD DRIFT =================
@@ -323,9 +327,7 @@ async def on_ready():
 async def on_message(message: discord.Message):
     if message.author.bot or not message.content: return
     if ALLOWED_CHANNEL_IDS and message.channel.id not in ALLOWED_CHANNEL_IDS: return
-    # reply to every message in allowed channels
 
-    # cooldown
     now = time.time()
     if now - last_reply_at[message.channel.id] < COOLDOWN: return
     last_reply_at[message.channel.id] = now
@@ -333,19 +335,27 @@ async def on_message(message: discord.Message):
     user_msg = re.sub(rf"<@!?{bot.user.id}>", "", message.content).strip()
     if not user_msg: return
 
-    # mood drift
     drift_mood(message.channel.id, user_msg)
-
-    # english-only mode
     lang = "en" if FORCE_ENGLISH else detect_lang(user_msg)
 
-    # reply context
     reply_ctx = None
     if message.reference and message.reference.message_id:
         try:
             ref = await message.channel.fetch_message(message.reference.message_id)
             reply_ctx = f"{ref.author.display_name}: {ref.content}"
         except Exception: pass
+
+    # mentioned users (other than bot + author)
+    mentioned_info = None
+    others = [u for u in message.mentions if u.id != bot.user.id and u.id != message.author.id]
+    if others:
+        parts = []
+        for u in others[:3]:
+            tag = "owner/daddy talkneon" if u.id == OWNER_ID else ("talkneon's slave" if u.id in slaves else "regular user")
+            parts.append(f"{u.display_name} ({tag})")
+        mentioned_info = ", ".join(parts)
+
+    is_question = "?" in user_msg or bool(re.search(r"\b(what|who|why|how|when|where|which|tell me|explain|kya|kaise|kyu|kaun)\b", user_msg.lower()))
 
     is_owner = message.author.id == OWNER_ID
     is_slave = message.author.id in slaves
@@ -354,11 +364,10 @@ async def on_message(message: discord.Message):
     recent = list(past_roasts[message.author.id])
 
     async with message.channel.typing():
-        await asyncio.sleep(min(2.5, 0.4 + len(user_msg) * 0.015))
         reply = await get_reply(
             user_msg, message.author.display_name, message.author.id,
             force_savage, mood[message.channel.id], lang, recent,
-            is_owner, is_slave, reply_ctx,
+            is_owner, is_slave, reply_ctx, mentioned_info, is_question,
         )
 
     if not reply: return
