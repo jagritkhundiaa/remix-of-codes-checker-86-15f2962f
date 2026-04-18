@@ -1,61 +1,21 @@
 // ============================================================
 //  Proxy Manager — supports ALL proxy formats
 //  HTTP, HTTPS, SOCKS4, SOCKS5, with/without auth
-//  Round-robin rotation, persistent JSON storage, validation,
-//  health checks, mass add/clear, full stats.
-//
-//  Supported formats (any of these):
-//    host:port
-//    host:port:user:pass            ← purevpn-style (must work)
-//    user:pass@host:port
-//    user:pass:host:port
-//    http(s)://host:port
-//    http(s)://user:pass@host:port
-//    socks4://host:port
-//    socks5://host:port
-//    socks5://user:pass@host:port
-//    socks5h://...
+//  Formats: protocol://user:pass@host:port, host:port,
+//           user:pass@host:port, host:port:user:pass, etc.
 // ============================================================
 
 const fs = require("fs");
 const path = require("path");
-const { Agent: UndiciAgent, ProxyAgent } = require("undici");
+const { Agent: UndiciAgent } = require("undici");
 const { SocksProxyAgent } = require("socks-proxy-agent");
+const { HttpsProxyAgent } = require("https-proxy-agent");
+const { HttpProxyAgent } = require("http-proxy-agent");
 const config = require("../config");
 
-const STORE_FILE = path.join(__dirname, "..", "..", "data", "proxies.json");
-const TXT_FILE = path.join(__dirname, "..", "..", "proxies.txt");
-
-let proxies = [];        // [{ raw, protocol, host, port, username, password, fail, ok }]
+let proxies = [];
 let currentIndex = 0;
 let proxyStats = { total: 0, success: 0, failed: 0 };
-
-// ── Persistence ──────────────────────────────────────────────
-
-function ensureDir() {
-  const dir = path.dirname(STORE_FILE);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-}
-
-function persist() {
-  ensureDir();
-  try {
-    fs.writeFileSync(STORE_FILE, JSON.stringify(proxies, null, 2));
-  } catch {}
-}
-
-function loadFromStore() {
-  ensureDir();
-  if (!fs.existsSync(STORE_FILE)) return [];
-  try {
-    const data = JSON.parse(fs.readFileSync(STORE_FILE, "utf-8"));
-    return Array.isArray(data) ? data : [];
-  } catch {
-    return [];
-  }
-}
-
-// ── Stats ────────────────────────────────────────────────────
 
 function resetProxyStats() {
   proxyStats = { total: 0, success: 0, failed: 0 };
@@ -66,421 +26,261 @@ function getProxyStats() {
   return { ...proxyStats, successRate: rate };
 }
 
-// ── Parsing ──────────────────────────────────────────────────
-
+/**
+ * Parse any proxy format into a normalized { protocol, host, port, username, password } object.
+ * Supports:
+ *   - http://host:port
+ *   - https://host:port
+ *   - socks4://host:port
+ *   - socks5://host:port
+ *   - http://user:pass@host:port
+ *   - socks5://user:pass@host:port
+ *   - host:port (defaults to http)
+ *   - host:port:user:pass
+ *   - user:pass@host:port
+ *   - user:pass:host:port
+ *   - ip:port (defaults to http)
+ */
 function parseProxy(raw) {
-  const line = String(raw || "").trim();
+  const line = raw.trim();
   if (!line || line.startsWith("#")) return null;
 
-  const protoMatch = line.match(/^(https?|socks[45]?h?|socks4a?):\/\/(.+)$/i);
-  if (protoMatch) {
-    const protocol = protoMatch[1].toLowerCase().replace(/h$|a$/, m => m === "h" ? "h" : "");
-    return parseHostPart(protoMatch[2], protoMatch[1].toLowerCase(), line);
+  // Has protocol prefix
+  const protocolMatch = line.match(/^(https?|socks[45]?|socks5h?):\/\/(.+)$/i);
+  if (protocolMatch) {
+    const protocol = protocolMatch[1].toLowerCase();
+    const rest = protocolMatch[2];
+    return parseHostPart(rest, protocol);
   }
-  return parseHostPart(line, "http", line);
+
+  // No protocol — try to detect format
+  return parseHostPart(line, "http");
 }
 
-function parseHostPart(rest, protocol, raw) {
+function parseHostPart(rest, protocol) {
   // user:pass@host:port
-  const at = rest.indexOf("@");
-  if (at !== -1) {
-    const authPart = rest.substring(0, at);
-    const hostPart = rest.substring(at + 1);
+  const atMatch = rest.match(/^([^@]+)@(.+)$/);
+  if (atMatch) {
+    const authPart = atMatch[1];
+    const hostPart = atMatch[2];
     const [host, port] = splitHostPort(hostPart);
-    const colon = authPart.indexOf(":");
-    const username = colon > -1 ? authPart.substring(0, colon) : authPart;
-    const password = colon > -1 ? authPart.substring(colon + 1) : "";
-    if (!host || !isValidPort(port)) return null;
-    return { raw, protocol, host, port: +port, username, password, fail: 0, ok: 0 };
+    const colonIdx = authPart.indexOf(":");
+    if (colonIdx > -1) {
+      return {
+        protocol,
+        host,
+        port: parseInt(port) || 80,
+        username: authPart.substring(0, colonIdx),
+        password: authPart.substring(colonIdx + 1),
+      };
+    }
+    return { protocol, host, port: parseInt(port) || 80, username: authPart, password: "" };
   }
 
+  // Count colons to determine format
   const parts = rest.split(":");
+  
   if (parts.length === 2) {
-    if (!parts[0] || !isValidPort(parts[1])) return null;
-    return { raw, protocol, host: parts[0], port: +parts[1], username: "", password: "", fail: 0, ok: 0 };
+    // host:port
+    return { protocol, host: parts[0], port: parseInt(parts[1]) || 80, username: null, password: null };
   }
+
   if (parts.length === 4) {
-    // host:port:user:pass  OR  user:pass:host:port
-    if (isValidPort(parts[1])) {
-      return { raw, protocol, host: parts[0], port: +parts[1], username: parts[2], password: parts[3], fail: 0, ok: 0 };
+    // Could be host:port:user:pass OR user:pass:host:port
+    // Heuristic: if second part is a valid port number, it's host:port:user:pass
+    const secondNum = parseInt(parts[1]);
+    const fourthNum = parseInt(parts[3]);
+
+    if (!isNaN(secondNum) && secondNum > 0 && secondNum <= 65535) {
+      // host:port:user:pass
+      return { protocol, host: parts[0], port: secondNum, username: parts[2], password: parts[3] };
     }
-    if (isValidPort(parts[3])) {
-      return { raw, protocol, host: parts[2], port: +parts[3], username: parts[0], password: parts[1], fail: 0, ok: 0 };
+    if (!isNaN(fourthNum) && fourthNum > 0 && fourthNum <= 65535) {
+      // user:pass:host:port
+      return { protocol, host: parts[2], port: fourthNum, username: parts[0], password: parts[1] };
     }
-    return null;
+    // Default: host:port:user:pass
+    return { protocol, host: parts[0], port: parseInt(parts[1]) || 80, username: parts[2], password: parts[3] };
   }
+
   if (parts.length === 3) {
-    if (!isValidPort(parts[1])) return null;
-    return { raw, protocol, host: parts[0], port: +parts[1], username: parts[2], password: "", fail: 0, ok: 0 };
+    // host:port:user (rare) — treat as host:port with partial auth
+    return { protocol, host: parts[0], port: parseInt(parts[1]) || 80, username: parts[2], password: null };
   }
-  return null;
+
+  // Fallback: treat whole thing as host with default port
+  return { protocol, host: rest, port: 80, username: null, password: null };
 }
 
 function splitHostPort(str) {
-  const ipv6 = str.match(/^\[(.+)\]:(\d+)$/);
-  if (ipv6) return [ipv6[1], ipv6[2]];
-  const last = str.lastIndexOf(":");
-  if (last === -1) return [str, ""];
-  return [str.substring(0, last), str.substring(last + 1)];
+  // Handle IPv6 [::1]:port
+  const ipv6Match = str.match(/^\[(.+)\]:(\d+)$/);
+  if (ipv6Match) return [ipv6Match[1], ipv6Match[2]];
+  
+  const lastColon = str.lastIndexOf(":");
+  if (lastColon === -1) return [str, "80"];
+  return [str.substring(0, lastColon), str.substring(lastColon + 1)];
 }
 
-function isValidPort(p) {
-  const n = parseInt(p, 10);
-  return !isNaN(n) && n > 0 && n <= 65535;
+/**
+ * Build a proxy URL string from parsed proxy object.
+ */
+function buildProxyUrl(proxy) {
+  const auth = proxy.username ? `${encodeURIComponent(proxy.username)}:${encodeURIComponent(proxy.password || "")}@` : "";
+  return `${proxy.protocol}://${auth}${proxy.host}:${proxy.port}`;
 }
 
-function buildProxyUrl(p, { withAuth = true } = {}) {
-  const auth = withAuth && p.username
-    ? `${encodeURIComponent(p.username)}:${encodeURIComponent(p.password || "")}@`
-    : "";
-  return `${p.protocol}://${auth}${p.host}:${p.port}`;
-}
+/**
+ * Create a Node.js agent for the given proxy.
+ */
+function createAgent(proxy) {
+  const url = buildProxyUrl(proxy);
 
-// Build a real Undici Dispatcher.
-//   • HTTP/HTTPS proxies → undici ProxyAgent (the only dispatcher
-//     Node's built-in fetch() actually honors).
-//   • SOCKS proxies     → wrap socks-proxy-agent inside an Undici
-//     Agent via the `connect` factory so fetch() can use it.
-function createAgent(p) {
-  if (p.protocol.startsWith("socks")) {
-    const socks = new SocksProxyAgent(buildProxyUrl(p));
-    return new UndiciAgent({
-      connect: (opts, cb) => {
-        try { socks.callback(opts, opts, cb); }
-        catch (e) { cb(e); }
-      },
-    });
+  if (proxy.protocol.startsWith("socks")) {
+    return new SocksProxyAgent(url);
   }
-  // HTTP / HTTPS proxy — auth goes in the URL.
-  const proto = p.protocol === "https" ? "https" : "http";
-  const uri = `${proto}://${p.host}:${p.port}`;
-  const token = p.username
-    ? `Basic ${Buffer.from(`${p.username}:${p.password || ""}`).toString("base64")}`
-    : undefined;
-  return new ProxyAgent(token ? { uri, token } : { uri });
+  // For HTTP/HTTPS targets through HTTP/HTTPS proxies
+  return new HttpsProxyAgent(url);
 }
 
-function displayProxy(p) {
-  const auth = p.username ? `${p.username}:***@` : "";
-  return `${p.protocol}://${auth}${p.host}:${p.port}`;
-}
-
-// ── Validation (live test) ───────────────────────────────────
-//
-// Python-style philosophy (mirrors xbox-checker-bot-py):
-// don't pre-validate aggressively — trust the proxy, let the real
-// flow filter dead ones via runtime fallback. Many premium proxies
-// (PureVPN, residential pools) reject raw TCP probes and only honor
-// CONNECT from authenticated requests, so a TCP-reach test produces
-// massive false negatives.
-//
-// Strategy:
-//  • Skip TCP probe entirely.
-//  • Race 5 HTTP probes through the proxy.
-//  • Accept on ANY tunnel response except hard-fail 407 (bad auth).
-//  • Retry once on transient/network noise before declaring dead.
-
-const PROBE_URLS = [
-  "http://www.gstatic.com/generate_204",     // plain HTTP, hardest to block
-  "https://www.gstatic.com/generate_204",
-  "https://cp.cloudflare.com/",
-  "https://www.google.com/generate_204",
-  "https://login.live.com/",
-];
-
-const TRANSIENT_RX = /ECONNRESET|socket hang up|ETIMEDOUT|EAI_AGAIN|other side closed|terminated|aborted|network|fetch failed/i;
-
-async function httpProbe(p, url, timeoutMs) {
-  const agent = createAgent(p);
-  try {
-    const res = await fetch(url, {
-      method: "GET",
-      dispatcher: agent,
-      redirect: "manual",
-      signal: AbortSignal.timeout(timeoutMs),
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        Accept: "*/*",
-        Connection: "close",
-      },
-    });
-    res.body?.cancel?.().catch(() => {});
-    // 407 = proxy auth failure → genuinely unusable.
-    if (res.status === 407) return { ok: false, reason: "auth_407" };
-    // Any other status (200, 204, 301, 403, 404, 503, …) means
-    // the tunnel was established and the proxy forwarded our request.
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, reason: err?.message || String(err) };
-  }
-}
-
-async function testProxy(p, timeoutMs = 12000) {
-  // Race all probes — first tunnel success wins.
-  const settled = await Promise.allSettled(PROBE_URLS.map((u) => httpProbe(p, u, timeoutMs)));
-  if (settled.some((s) => s.status === "fulfilled" && s.value?.ok)) return { ok: true };
-
-  const reasons = settled.map((s) =>
-    s.status === "fulfilled" ? s.value?.reason : (s.reason?.message || String(s.reason))
-  ).filter(Boolean);
-
-  // Hard fail only on real auth rejection.
-  if (reasons.every((r) => /auth_407|407/.test(String(r)))) {
-    return { ok: false, error: "auth_failed_407" };
-  }
-
-  // Retry once on transient noise — premium proxies often need a warm-up.
-  if (reasons.some((r) => TRANSIENT_RX.test(String(r)) || /timeout|aborted/i.test(String(r)))) {
-    for (const url of [PROBE_URLS[0], PROBE_URLS[2]]) {
-      const retry = await httpProbe(p, url, timeoutMs + 3000);
-      if (retry.ok) return { ok: true };
-      if (retry.reason && /auth_407|407/.test(retry.reason)) {
-        return { ok: false, error: "auth_failed_407" };
-      }
-    }
-  }
-
-  return { ok: false, error: reasons[0] || "no_probe_response" };
-}
-
-// ── Public CRUD ──────────────────────────────────────────────
-
+/**
+ * Load proxies from proxies.txt file.
+ * Call this on bot startup.
+ */
 function loadProxies() {
-  // Load from JSON store first; if empty, fall back to legacy proxies.txt
-  proxies = loadFromStore();
-  if (proxies.length === 0 && fs.existsSync(TXT_FILE)) {
-    const lines = fs.readFileSync(TXT_FILE, "utf-8")
-      .split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("#"));
-    for (const l of lines) {
-      const p = parseProxy(l);
-      if (p) proxies.push(p);
-    }
-    if (proxies.length) persist();
+  const filePath = path.join(__dirname, "..", "..", "proxies.txt");
+  
+  if (!fs.existsSync(filePath)) {
+    console.log("[Proxy] No proxies.txt found. Proxy support disabled.");
+    proxies = [];
+    return 0;
   }
+
+  const lines = fs.readFileSync(filePath, "utf-8")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith("#"));
+
+  proxies = lines.map(parseProxy).filter(Boolean);
   currentIndex = 0;
-  console.log(`[Proxy] Loaded ${proxies.length} proxies`);
+
+  console.log(`[Proxy] Loaded ${proxies.length} proxies from proxies.txt`);
   return proxies.length;
 }
 
-function reloadProxies() { return loadProxies(); }
-
-function clearProxies() {
-  const n = proxies.length;
-  proxies = [];
-  currentIndex = 0;
-  persist();
-  return n;
-}
-
-function getProxyCount() { return proxies.length; }
-
-function isProxyEnabled() {
-  return config.USE_PROXIES === true && proxies.length > 0;
-}
-
-function listProxies() {
-  return proxies.map((p, i) => ({
-    i,
-    display: displayProxy(p),
-    protocol: p.protocol,
-    fail: p.fail || 0,
-    ok: p.ok || 0,
-  }));
-}
-
 /**
- * Validate and add a batch of raw proxy lines.
- * Returns { added, invalid, dead, total }.
+ * Get the next proxy in round-robin rotation.
  */
-async function addAndValidate(rawLines, { concurrency = 20, timeoutMs = 8000 } = {}) {
-  const lines = rawLines.map(l => String(l || "").trim()).filter(Boolean);
-  const parsed = [];
-  let invalid = 0;
-  for (const l of lines) {
-    const p = parseProxy(l);
-    if (!p) { invalid++; continue; }
-    parsed.push(p);
-  }
-
-  // Dedupe against existing
-  const existing = new Set(proxies.map(p => `${p.protocol}://${p.host}:${p.port}`));
-  const fresh = [];
-  for (const p of parsed) {
-    const key = `${p.protocol}://${p.host}:${p.port}`;
-    if (existing.has(key)) continue;
-    existing.add(key);
-    fresh.push(p);
-  }
-
-  // Test in parallel batches
-  const alive = [];
-  let dead = 0;
-  let i = 0;
-  async function worker() {
-    while (i < fresh.length) {
-      const idx = i++;
-      const p = fresh[idx];
-      const r = await testProxy(p, timeoutMs);
-      if (r.ok) alive.push(p);
-      else dead++;
-    }
-  }
-  const workers = Array.from({ length: Math.min(concurrency, Math.max(1, fresh.length)) }, worker);
-  await Promise.all(workers);
-
-  for (const p of alive) proxies.push(p);
-  if (alive.length) persist();
-
-  return { added: alive.length, invalid, dead, total: lines.length };
-}
-
-/**
- * Remove a proxy by index (matches listProxies() ordering).
- */
-function removeProxy(idx) {
-  if (idx < 0 || idx >= proxies.length) return false;
-  proxies.splice(idx, 1);
-  if (currentIndex >= proxies.length) currentIndex = 0;
-  persist();
-  return true;
-}
-
-/**
- * Re-test all stored proxies and drop the dead ones.
- * Returns { kept, removed }.
- */
-async function healthCheck({ concurrency = 20, timeoutMs = 8000 } = {}) {
-  const snapshot = proxies.slice();
-  const alive = [];
-  let i = 0;
-  async function worker() {
-    while (i < snapshot.length) {
-      const idx = i++;
-      const p = snapshot[idx];
-      const r = await testProxy(p, timeoutMs);
-      if (r.ok) { p.ok = (p.ok || 0) + 1; p.fail = 0; alive.push(p); }
-      else { p.fail = (p.fail || 0) + 1; }
-    }
-  }
-  const workers = Array.from({ length: Math.min(concurrency, Math.max(1, snapshot.length)) }, worker);
-  await Promise.all(workers);
-
-  const removed = proxies.length - alive.length;
-  proxies = alive;
-  currentIndex = 0;
-  persist();
-  return { kept: alive.length, removed };
-}
-
-// ── Rotation ─────────────────────────────────────────────────
-
 function getNextProxy() {
   if (proxies.length === 0) return null;
-  const p = proxies[currentIndex % proxies.length];
+  const proxy = proxies[currentIndex % proxies.length];
   currentIndex++;
-  return p;
+  return proxy;
 }
 
+/**
+ * Get a random proxy.
+ */
 function getRandomProxy() {
   if (proxies.length === 0) return null;
   return proxies[Math.floor(Math.random() * proxies.length)];
 }
 
-// ── Fetch with fallback ──────────────────────────────────────
+/**
+ * Check if proxies are enabled and available.
+ */
+function isProxyEnabled() {
+  return config.USE_PROXIES === true && proxies.length > 0;
+}
 
+/**
+ * Get proxy count.
+ */
+function getProxyCount() {
+  return proxies.length;
+}
+
+/**
+ * Direct fetch with retry + IPv4 fallback.
+ */
 const ipv4Dispatcher = new UndiciAgent({ connect: { family: 4 } });
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-const PROXY_ATTEMPT_TIMEOUT_MS = 15000; // hard cap per proxy attempt
-const DIRECT_ATTEMPT_TIMEOUT_MS = 20000;
-
-// Merge a caller-provided AbortSignal with our own timeout signal so
-// neither one being absent causes a hang. Returns { signal, cleanup }.
-function _composeSignal(userSignal, timeoutMs) {
-  const ctrl = new AbortController();
-  const onAbort = () => ctrl.abort(userSignal?.reason);
-  if (userSignal) {
-    if (userSignal.aborted) ctrl.abort(userSignal.reason);
-    else userSignal.addEventListener("abort", onAbort, { once: true });
-  }
-  const t = setTimeout(() => ctrl.abort(new Error(`request timeout after ${timeoutMs}ms`)), timeoutMs);
-  return {
-    signal: ctrl.signal,
-    cleanup: () => {
-      clearTimeout(t);
-      if (userSignal) userSignal.removeEventListener?.("abort", onAbort);
-    },
-  };
-}
-
-async function _fetchWithTimeout(url, options, dispatcher, timeoutMs) {
-  const { signal, cleanup } = _composeSignal(options.signal, timeoutMs);
-  try {
-    return await fetch(url, { ...options, dispatcher, signal });
-  } finally {
-    cleanup();
-  }
-}
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function directFetchWithFallback(url, options = {}) {
-  let lastErr = null;
-  for (let a = 1; a <= 2; a++) {
-    try { return await _fetchWithTimeout(url, options, undefined, DIRECT_ATTEMPT_TIMEOUT_MS); }
-    catch (e) { lastErr = e; if (a < 2) await sleep(250 * a); }
-  }
-  try { return await _fetchWithTimeout(url, options, ipv4Dispatcher, DIRECT_ATTEMPT_TIMEOUT_MS); }
-  catch (e) { throw new Error(`direct fetch failed (${lastErr?.message || "?"}); ipv4 (${e.message})`); }
-}
+  let lastError = null;
 
-async function proxiedFetch(url, options = {}) {
-  if (!isProxyEnabled()) return directFetchWithFallback(url, options);
-
-  // Try up to 3 different proxies before falling back to direct.
-  // Each attempt has a hard timeout so a dead proxy can never wedge a worker.
-  let lastProxyErr = null;
-  for (let attempt = 0; attempt < Math.min(3, proxies.length); attempt++) {
-    const p = getNextProxy();
-    if (!p) break;
-    const agent = createAgent(p);
-    proxyStats.total++;
+  for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const res = await _fetchWithTimeout(url, options, agent, PROXY_ATTEMPT_TIMEOUT_MS);
-      proxyStats.success++;
-      p.ok = (p.ok || 0) + 1;
-      return res;
-    } catch (e) {
-      proxyStats.failed++;
-      p.fail = (p.fail || 0) + 1;
-      lastProxyErr = e;
-      // If a proxy fails repeatedly, drop it silently
-      if ((p.fail || 0) >= 10) {
-        const idx = proxies.indexOf(p);
-        if (idx !== -1) proxies.splice(idx, 1);
-      }
+      return await fetch(url, options);
+    } catch (err) {
+      lastError = err;
+      if (attempt < 2) await sleep(250 * attempt);
     }
   }
 
-  try { return await directFetchWithFallback(url, options); }
-  catch (e) { throw new Error(`all proxies failed (${lastProxyErr?.message || "?"}); direct (${e.message})`); }
+  try {
+    return await fetch(url, { ...options, dispatcher: ipv4Dispatcher });
+  } catch (ipv4Err) {
+    const first = lastError?.message || "unknown";
+    throw new Error(`direct fetch failed (${first}); ipv4 fallback failed (${ipv4Err.message})`);
+  }
+}
+
+/**
+ * Proxied fetch — drop-in replacement for global fetch.
+ * Uses a rotating proxy when proxies are enabled.
+ * Falls back to direct fetch with retries when proxy fails.
+ */
+async function proxiedFetch(url, options = {}) {
+  if (!isProxyEnabled()) {
+    return directFetchWithFallback(url, options);
+  }
+
+  const proxy = getNextProxy();
+  if (!proxy) {
+    return directFetchWithFallback(url, options);
+  }
+
+  const agent = createAgent(proxy);
+  proxyStats.total++;
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      agent,
+      dispatcher: agent,
+    });
+    proxyStats.success++;
+    return response;
+  } catch (proxyErr) {
+    proxyStats.failed++;
+    console.warn(`[Proxy] Failed via ${proxy.host}:${proxy.port}: ${proxyErr.message}`);
+
+    try {
+      return await directFetchWithFallback(url, options);
+    } catch (directErr) {
+      throw new Error(`proxy fetch failed (${proxyErr.message}); direct fallback failed (${directErr.message})`);
+    }
+  }
+}
+
+/**
+ * Reload proxies from file (can be called at runtime).
+ */
+function reloadProxies() {
+  return loadProxies();
 }
 
 module.exports = {
   loadProxies,
   reloadProxies,
-  clearProxies,
-  getProxyCount,
-  isProxyEnabled,
   getNextProxy,
   getRandomProxy,
+  isProxyEnabled,
+  getProxyCount,
   getProxyStats,
   resetProxyStats,
   proxiedFetch,
   parseProxy,
-  addAndValidate,
-  removeProxy,
-  healthCheck,
-  listProxies,
-  testProxy,
-  displayProxy,
 };

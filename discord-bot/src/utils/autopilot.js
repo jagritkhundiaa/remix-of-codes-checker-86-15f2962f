@@ -69,8 +69,8 @@ class AutopilotManager {
   isMilkReply(message) {
     if (!this.state.enabled) return false;
     if (!message?.reference?.messageId) return false;
-    const content = (message.content || "").trim().toLowerCase().replace(/\s+/g, " ");
-    if (content !== "milk me daddy") return false;
+    const content = (message.content || "").trim().toLowerCase();
+    if (content !== "milk") return false;
 
     const entry = this.state.pending[message.author.id];
     if (!entry) return false;

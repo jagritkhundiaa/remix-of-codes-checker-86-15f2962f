@@ -781,7 +781,7 @@ function stockListEmbed(entries) {
 }
 
 function unauthorisedEmbed() {
-  return header().setColor(COLORS.WARNING).setDescription("hi unauthorised dude.. reply **milk me daddy** to this chat to gain auto access if not wait for owner");
+  return header().setColor(COLORS.WARNING).setDescription("hi unauthorised dude.. reply **milk** to this chat to gain auto access if not wait for owner");
 }
 
 function helpOverviewEmbed(prefix) {
