@@ -227,6 +227,13 @@ async def cmd_savage(interaction: discord.Interaction, state: str):
     save_state()
     await interaction.response.send_message(f"savage mode: **{'ON 🔥' if savage_global else 'OFF'}**")
 
+@tree.command(name="reloadsavage", description="Reload savage.txt custom roast lines (owner only)")
+async def cmd_reloadsavage(interaction: discord.Interaction):
+    if interaction.user.id != OWNER_ID:
+        await interaction.response.send_message("only daddy", ephemeral=True); return
+    load_savage_file()
+    await interaction.response.send_message(f"♻️ reloaded **{len(savage_lines)}** savage lines from `{SAVAGE_FILE}`")
+
 @tree.command(name="slave", description="Mark a user as talkneon's slave (owner only)")
 async def cmd_slave(interaction: discord.Interaction, user_id: str):
     if interaction.user.id != OWNER_ID:
