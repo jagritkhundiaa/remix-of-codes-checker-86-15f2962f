@@ -1408,4 +1408,7 @@ module.exports = {
   steamProgressEmbed,
   steamResultsEmbed,
   steamHitEmbed,
+  genHelpEmbed,
+  stockListEmbed,
+  unauthorisedEmbed,
 };
