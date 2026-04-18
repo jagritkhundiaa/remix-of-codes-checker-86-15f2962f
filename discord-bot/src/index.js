@@ -1877,15 +1877,8 @@ client.on("messageCreate", async (message) => {
       await handleSearch(respond, query);
     }
 
-    else if (cmd === "changer") {
-      const newPassword = args.pop();
-      const accountsRaw = args.join(" ");
-      const attachment = message.attachments.first();
-      if (!newPassword && !attachment) {
-        return respond({ embeds: [infoEmbed("Usage", "`.changer <accounts> <new_password>`\nProvide email:password accounts and the new password.\nResults are always sent to your DMs.")] });
-      }
-      await handleChanger(respond, message.author.id, accountsRaw, attachment, newPassword, 5, message.author);
-    }
+    // .changer removed
+
 
     else if (cmd === "checker") {
       const accountsRaw = args.join(" ");
