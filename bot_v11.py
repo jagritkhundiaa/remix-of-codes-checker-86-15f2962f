@@ -232,7 +232,7 @@ async def on_ready():
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot or not message.content: return
-    if not (bot.user.mentioned_in(message) or random.random() < 0.35): return  # respond on mention or 35%
+    # respond to every message (cooldown still applies)
 
     # cooldown
     now = time.time()
