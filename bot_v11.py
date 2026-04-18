@@ -129,30 +129,87 @@ def strip_wrong_lang(reply: str, want: str) -> str:
 REFUSAL_RE = re.compile(r"\b(i can'?t|i cannot|as an ai|i'?m sorry|i am sorry|i won'?t|i will not|against my|not appropriate|unable to)\b", re.I)
 BOT_INSULT_RE = re.compile(r"\b(bot|ai|gpt|stupid bot|dumb bot|trash bot|useless bot|chod bot|bhosdi bot)\b", re.I)
 
-# ================= PROMPT =================
 # ================= KNOWLEDGE BASE =================
+# RULE: never reveal HOW commands work internally (no api endpoints, no file names,
+# no token logic, no scraping methods, no library names). Only WHAT each command does.
 KNOWLEDGE = """
-About my creator talkneon (he built me + many other bots/tools):
+About my creator talkneon. He built me and a bunch of other tools.
 
-DISCORD BOTS (Node.js + Python):
-- AutizMens bot: Microsoft/Xbox account checker, claimer, code checker, puller, promo puller, inbox AIO (190+ services), Netflix checker, Steam checker, Microsoft rewards scraper, password changer, refund checker, account generator (free + premium), bulk recovery
-- Theme dark hex 0x2b2d31, 5-user concurrency, 4000-line cap, results zipped to DM
-- Commands: /pull /check /claim /refund /inboxaio /rewards /netflix /steam /gen /promopuller /changer
+=== DISCORD BOT (AutizMens, Node.js + Python twin) ===
+Theme dark 0x2b2d31. 5 user concurrency. 4000 line cap. Results DM'd as zip.
+Slash + dot prefix both work.
 
-TELEGRAM BOT (Hijra):
-- CC checker, gates: /auth (Stripe WCPay), /sa1, /sa2, /nvbv, /chg3, /b3 (Braintree), /chr1, /rpay (Razorpay), /autohitter (Playwright)
-- Tools: /gen (cards), /vbv (3DS lookup voidapi), /bin, /analyze, /kill (CC killer 12 rapid auths)
-- 100+ CPM, 25-30 threads, 5-proxy rotation, Hijra scraper for groups
+ACCOUNT TOOLS:
+- /check or .check, checks Microsoft/Xbox accounts, marks HIT or FREE based on subs
+- /pull or .pull, pulls Game Pass perks and Z ending codes from accounts
+- /promopuller or .promopuller, pulls Discord promo links from Game Pass perks
+- /claim or .claim, claims Microsoft codes onto WLID tokens
+- /codecheck or .codecheck, validates MS codes (skips A E I O U L S 0 1 5)
+- /wlidset or .wlidset, sets the WLID token pool used for claiming
+- /refund or .refund, checks refund eligibility on MS purchases (≤14 days)
+- /changer or .changer, changes Microsoft account passwords in bulk
+- /recover or .recover, bulk account recovery, splits to recovered/failed/skipped
+- /purchase, Microsoft Store purchaser with WLID and XBL fallback
 
-WEB APP (Neon):
-- Cyberpunk checkout/hitter, Supabase + Deno edge functions
-- Master key NEONISTHEGOAT, Hitter + Bypasser modes, server proxy rotation
-- 24/7 Auto Site Scraper (Gemini-powered), custom gate manager with /gate/:id pages
+INBOX / SERVICES:
+- /inboxaio or .inboxaio, scans Hotmail/Outlook for 190+ services (Netflix, Spotify, Crunchy, Eldorado, Minecraft, etc), 5 threads
+- /netflix, dedicated Netflix checker
+- /steam, dedicated Steam checker
+- /rewards, Microsoft Rewards balance scraper
 
-PYTHON CLI: puller.py (Z-codes), wlid_claimer.py, aio_tool.py (cyberpunk terminal), crypto-bot (14-module market intel)
+GENERATOR:
+- /gen <product> <amount>, pulls accounts from stock (cooldown for non admins)
+- /stock, shows stock counts per product
+- admin only: addstock, replacestock, dump, set limits
 
-If asked WHO MADE YOU or about talkneon's projects/bots, answer SHORT casual using above. Pick what's relevant, don't dump the whole list. Stay savage to non-owners but actually answer.
+ADMIN:
+- /auth or .auth, authorize a user
+- /admin, manage admins
+- /blacklist, ban abusers
+- /stop, kill your active task
+- /help, command list
+
+=== TELEGRAM BOT (Hijra, CC checker) ===
+Banner: ⍟━━━⌁ Hijra ⌁━━━⍟. 100+ CPM, 25 to 30 threads, 5 proxy rotation.
+
+GATES:
+- /auth, Stripe WCPay auth
+- /sa1, Stripe Auth CCN
+- /sa2, Stripe charge
+- /nvbv, non VBV check
+- /chg3, charge gate
+- /b3, Braintree
+- /chr1, charge gate
+- /rpay, Razorpay
+- /autohitter, URL+Cards auto detect (Stripe, Shopify, Braintree etc, 15+ providers)
+
+TOOLS:
+- /gen, card generator
+- /vbv, 3DS lookup
+- /bin, BIN lookup
+- /analyze, URL analysis
+- /kill, CC killer (12 rapid auths to trigger fraud lock)
+- /mykey, /stats, /redeem, /broadcast (admin)
+
+ADMIN: /authsite, /secgcset, /scrape, /sites, /filter, HJ- access keys
+
+=== WEB APP (Neon, cyberpunk) ===
+Master key NEONISTHEGOAT. Hitter mode + Bypasser mode. Server side proxy rotation (HTTP/SOCKS).
+24/7 auto site scraper finds AI money tools and tags them 2D or 3D Stripe.
+Custom gate manager, every saved gate gets its own /gate/:id page and shareable API.
+
+=== PYTHON CLI ===
+puller.py (Z-codes, 3 phase), wlid_claimer.py (10 stage logging), aio_tool.py (cyberpunk terminal AIO), crypto-bot (14 module market intel, 5 factor scoring).
+
+=== ANSWER RULES ===
+- Asked WHO made you, talkneon
+- Asked about a command, give 1 short line on what it does, never how
+- NEVER mention: api urls, file names, libraries used, tokens, headers, payloads, internals
+- If asked "how does it work" or "give me the code", deflect with a roast
+- Pick only what's relevant, don't dump the whole list
+- Owner gets real answers. Non owners get answer + jab or pure roast.
 """
+
 
 # ================= PROMPT =================
 def build_system(lang: str, target_user: str, target_id: int, force_savage: bool, ch_mood: float, recent_roasts: list, is_owner: bool, is_slave: bool, reply_ctx: str | None, mentioned_info: str | None, is_question: bool, target_roast_user: str | None):
