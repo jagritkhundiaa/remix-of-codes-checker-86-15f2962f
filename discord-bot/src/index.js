@@ -1930,26 +1930,8 @@ client.on("messageCreate", async (message) => {
     }
 
 
-    else if (cmd === "recover") {
-      const newPassword = args.pop();
-      const emailsRaw = args.join(" ");
-      const attachment = message.attachments.first();
-      if (!emailsRaw && !attachment) {
-        return respond({ embeds: [infoEmbed("Usage", "`.recover <email(s)> <new_password>`\nProvide email(s) or attach a `.txt` file.\nResults are always sent to your DMs.")] });
-      }
-      if (!newPassword) {
-        return respond({ embeds: [errorEmbed("Provide the new password as the last argument.")] });
-      }
-      await handleRecover(respond, message.author.id, emailsRaw, attachment, newPassword, 1, message.author, null, message);
-    }
+    // .recover and .captcha removed
 
-    else if (cmd === "captcha") {
-      const solution = args.join(" ");
-      if (!solution) {
-        return respond({ embeds: [infoEmbed("Usage", "`.captcha <solution>`\n\nSubmit the CAPTCHA solution for an active recovery session.")] });
-      }
-      await handleCaptchaSolve(respond, message.author.id, solution);
-    }
 
     // ── Admin commands (prefix) ──
     else if (cmd === "admin") {
