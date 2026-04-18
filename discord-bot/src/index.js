@@ -14,7 +14,7 @@ const { claimWlids } = require("./utils/microsoft-claimer");
 const { pullCodes, pullLinks } = require("./utils/microsoft-puller");
 const { checkRefundAccounts } = require("./utils/microsoft-refund");
 const { checkInboxAccounts, getServiceCount } = require("./utils/microsoft-inbox");
-const { loadProxies, isProxyEnabled, getProxyCount, getProxyStats } = require("./utils/proxy-manager");
+const { loadProxies, isProxyEnabled, getProxyCount, getProxyStats, addAndValidate, listProxies, removeProxy, healthCheck, clearProxies, displayProxy } = require("./utils/proxy-manager");
 const blacklist = require("./utils/blacklist");
 const { setWlids, getWlids, getWlidCount } = require("./utils/wlid-store");
 const { WelcomeStore } = require("./utils/welcome-store");
@@ -1053,6 +1053,7 @@ async function handleStock(respond) {
 }
 
 async function handleAddStock(respond, userId, product, attachment, inlineText) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Only the bot owner can add stock.")] });
   if (!product) return respond({ embeds: [errorEmbed(`Usage: \`${config.PREFIX}addstock <product>\` + attach .txt OR inline lines.`)] });
   let text = inlineText || "";
   if (attachment) text += "\n" + (await fetchAttachmentLines(attachment));
@@ -1085,6 +1086,86 @@ async function handleDownloadStock(respond, userId) {
   } catch {
     return respond({ files: [file] });
   }
+}
+
+// ── Proxy Panel (owner-only) ───────────────────────────────
+
+async function handleProxyAdd(respond, userId, attachment, inlineText) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Owner only.")] });
+  let text = inlineText || "";
+  if (attachment) text += "\n" + (await fetchAttachmentLines(attachment));
+  const lines = text.split(/[\r\n,]+/).map(l => l.trim()).filter(Boolean);
+  if (lines.length === 0) return respond({ embeds: [errorEmbed(`Usage: \`${config.PREFIX}proxyadd <proxies>\` or attach .txt`)] });
+
+  const msg = await respond({ embeds: [infoEmbed("Proxy Validation", `Testing **${lines.length}** proxies… this may take a bit.`)] });
+  const r = await addAndValidate(lines, { concurrency: 25, timeoutMs: 8000 });
+  const body = [
+    `Total submitted: \`${r.total}\``,
+    `Invalid format: \`${r.invalid}\``,
+    `Dead / unreachable: \`${r.dead}\``,
+    `**Added (alive): \`${r.added}\`**`,
+    `Live pool: \`${getProxyCount()}\``,
+  ].join("\n");
+  try { await msg.edit({ embeds: [successEmbed(body)] }); } catch { await respond({ embeds: [successEmbed(body)] }); }
+}
+
+async function handleProxyList(respond, userId) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Owner only.")] });
+  const list = listProxies();
+  if (list.length === 0) return respond({ embeds: [infoEmbed("Proxies", "No proxies loaded.")] });
+  const lines = list.slice(0, 30).map(p => `\`${p.i}\` ${p.display} — ok:${p.ok} fail:${p.fail}`);
+  const more = list.length > 30 ? `\n…and **${list.length - 30}** more` : "";
+  return respond({ embeds: [infoEmbed(`Proxies (${list.length})`, lines.join("\n") + more)] });
+}
+
+async function handleProxyClear(respond, userId) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Owner only.")] });
+  const n = clearProxies();
+  return respond({ embeds: [successEmbed(`Cleared **${n}** proxies.`)] });
+}
+
+async function handleProxyHealth(respond, userId) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Owner only.")] });
+  if (getProxyCount() === 0) return respond({ embeds: [infoEmbed("Proxies", "No proxies to check.")] });
+  const msg = await respond({ embeds: [infoEmbed("Proxy Health", `Re-testing **${getProxyCount()}** proxies…`)] });
+  const r = await healthCheck({ concurrency: 25, timeoutMs: 8000 });
+  const body = `Kept alive: \`${r.kept}\`\nRemoved dead: \`${r.removed}\``;
+  try { await msg.edit({ embeds: [successEmbed(body)] }); } catch { await respond({ embeds: [successEmbed(body)] }); }
+}
+
+async function handleProxyExport(respond, userId) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Owner only.")] });
+  const list = listProxies();
+  if (list.length === 0) return respond({ embeds: [infoEmbed("Proxies", "No proxies to export.")] });
+  const dump = list.map(p => p.display).join("\n");
+  const file = new AttachmentBuilder(Buffer.from(dump, "utf-8"), { name: "proxies_export.txt" });
+  try {
+    const u = await client.users.fetch(userId);
+    await u.send({ content: `Live proxy pool (${list.length}):`, files: [file] });
+    return respond({ embeds: [infoEmbed("Sent", "Proxy list sent to your DMs.")] });
+  } catch {
+    return respond({ files: [file] });
+  }
+}
+
+async function handleProxyRemove(respond, userId, idxRaw) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Owner only.")] });
+  const idx = parseInt(idxRaw, 10);
+  if (isNaN(idx)) return respond({ embeds: [errorEmbed(`Usage: \`${config.PREFIX}proxyremove <index>\` (see \`${config.PREFIX}proxylist\`)`)] });
+  const ok = removeProxy(idx);
+  return respond({ embeds: [ok ? successEmbed(`Removed proxy at index ${idx}.`) : errorEmbed("Invalid index.")] });
+}
+
+async function handleProxyStats(respond, userId) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Owner only.")] });
+  const s = getProxyStats();
+  const body = [
+    `Loaded: \`${getProxyCount()}\``,
+    `Enabled: \`${isProxyEnabled() ? "yes" : "no"}\``,
+    `Requests: \`${s.total}\` (success ${s.success} / failed ${s.failed})`,
+    `Success rate: \`${s.successRate}%\``,
+  ].join("\n");
+  return respond({ embeds: [infoEmbed("Proxy Stats", body)] });
 }
 
 // ── Anti-Link + Autopilot helpers ───────────────────────────
@@ -1329,7 +1410,7 @@ client.on("messageCreate", async (message) => {
     return message.reply({ embeds: [removed ? successEmbed(`<@${targetId}> removed from anti-link whitelist.`) : errorEmbed("That user wasn't whitelisted.")] });
   }
 
-  // ── Gen system (hidden — works in any channel) ──
+  // ── Gen system: only .gen and .stock are public; rest = owner only ──
   if (cmd === "gen") return handleGen((opts) => message.reply(opts), message.author.id, args, message.attachments.first());
   if (cmd === "stock") return handleStock((opts) => message.reply(opts));
   if (cmd === "addstock") {
@@ -1342,6 +1423,34 @@ client.on("messageCreate", async (message) => {
   }
   if (cmd === "downloadgenstock") {
     return handleDownloadStock((opts) => message.reply(opts), message.author.id);
+  }
+
+  // ── Proxy panel (owner only) ──
+  if (cmd === "proxyadd" || cmd === "addproxy") {
+    return handleProxyAdd((opts) => message.reply(opts), message.author.id, message.attachments.first(), args.join("\n"));
+  }
+  if (cmd === "proxylist" || cmd === "proxies") {
+    return handleProxyList((opts) => message.reply(opts), message.author.id);
+  }
+  if (cmd === "proxyclear" || cmd === "clearproxies") {
+    return handleProxyClear((opts) => message.reply(opts), message.author.id);
+  }
+  if (cmd === "proxyhealth" || cmd === "checkproxies") {
+    return handleProxyHealth((opts) => message.reply(opts), message.author.id);
+  }
+  if (cmd === "proxyexport" || cmd === "exportproxies") {
+    return handleProxyExport((opts) => message.reply(opts), message.author.id);
+  }
+  if (cmd === "proxyremove" || cmd === "removeproxy") {
+    return handleProxyRemove((opts) => message.reply(opts), message.author.id, args[0]);
+  }
+  if (cmd === "proxystats") {
+    return handleProxyStats((opts) => message.reply(opts), message.author.id);
+  }
+  if (cmd === "proxyreload" || cmd === "reloadproxies") {
+    if (!isOwner(message.author.id)) return;
+    const n = loadProxies();
+    return message.reply({ embeds: [successEmbed(`Reloaded **${n}** proxies.`)] });
   }
 
   // ── Channel enforcement for normal commands ──

