@@ -466,7 +466,10 @@ async function handlePull(respond, userId, accountsRaw, accountsFile, dmUser = n
     const invalid = validateResults.filter((r) => r.status === "invalid" || r.status === "error");
 
     if (valid.length > 0)
-      files.push(textAttachment(valid.map((r) => (r.title ? `${r.code} | ${r.title}` : r.code)), "valid.txt"));
+      files.push(textAttachment(valid.map((r) => {
+        const base = r.title ? `${r.code} | ${r.title}` : r.code;
+        return r.source ? `${base} | from ${r.source}` : base;
+      }), "valid.txt"));
     if (used.length > 0)
       files.push(textAttachment(used.map((r) => r.code), "used.txt"));
     if (expired.length > 0)
