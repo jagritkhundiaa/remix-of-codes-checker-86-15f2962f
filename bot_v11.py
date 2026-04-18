@@ -195,23 +195,30 @@ async def cmd_savage(interaction: discord.Interaction, state: str):
         await interaction.response.send_message("only daddy talkneon can use this", ephemeral=True); return
     global savage_global
     savage_global = state.lower() in ("on","true","1","yes")
+    save_state()
     await interaction.response.send_message(f"savage mode: **{'ON 🔥' if savage_global else 'OFF'}**")
 
 @tree.command(name="slave", description="Mark a user as talkneon's slave (owner only)")
-async def cmd_slave(interaction: discord.Interaction, user: discord.User):
+async def cmd_slave(interaction: discord.Interaction, user_id: str):
     if interaction.user.id != OWNER_ID:
         await interaction.response.send_message("only daddy can assign slaves", ephemeral=True); return
-    if user.id == OWNER_ID:
+    uid = parse_user_id(user_id)
+    if not uid:
+        await interaction.response.send_message("send a valid user id or mention", ephemeral=True); return
+    if uid == OWNER_ID:
         await interaction.response.send_message("you can't enslave yourself daddy 💀", ephemeral=True); return
-    slaves.add(user.id); save_state()
-    await interaction.response.send_message(f"✅ {user.mention} is now **talkneon's slave** 🔗")
+    slaves.add(uid); save_state()
+    await interaction.response.send_message(f"✅ <@{uid}> is now **talkneon's slave** 🔗")
 
 @tree.command(name="unslave", description="Free a slave (owner only)")
-async def cmd_unslave(interaction: discord.Interaction, user: discord.User):
+async def cmd_unslave(interaction: discord.Interaction, user_id: str):
     if interaction.user.id != OWNER_ID:
         await interaction.response.send_message("only daddy", ephemeral=True); return
-    slaves.discard(user.id); save_state()
-    await interaction.response.send_message(f"⛓️ {user.mention} freed from slavery")
+    uid = parse_user_id(user_id)
+    if not uid:
+        await interaction.response.send_message("send a valid user id or mention", ephemeral=True); return
+    slaves.discard(uid); save_state()
+    await interaction.response.send_message(f"⛓️ <@{uid}> freed from slavery")
 
 @tree.command(name="slaves", description="List all slaves")
 async def cmd_slaves(interaction: discord.Interaction):
