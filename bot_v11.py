@@ -231,65 +231,9 @@ async def on_ready():
     await tree.sync()
     print(f"[READY] {bot.user} | savage={savage_global} | slaves={len(slaves)}")
 
-DOT_RE = re.compile(r"^\.(slave|unslave|slaves|savage|mood|reset)\b\s*(.*)$", re.I)
-
-def extract_user_id(arg: str) -> int | None:
-    m = re.search(r"(\d{15,21})", arg or "")
-    return int(m.group(1)) if m else None
-
-async def handle_dot_command(message: discord.Message) -> bool:
-    m = DOT_RE.match(message.content.strip())
-    if not m: return False
-    cmd, arg = m.group(1).lower(), m.group(2).strip()
-    is_owner = message.author.id == OWNER_ID
-
-    if cmd == "slave":
-        if not is_owner: await message.reply("only daddy can assign slaves", mention_author=False); return True
-        uid = extract_user_id(arg)
-        if not uid: await message.reply("usage: `.slave <user_id or @mention>`", mention_author=False); return True
-        if uid == OWNER_ID: await message.reply("you can't enslave yourself daddy 💀", mention_author=False); return True
-        slaves.add(uid); save_state()
-        await message.reply(f"✅ <@{uid}> is now **talkneon's slave** 🔗", mention_author=False); return True
-
-    if cmd == "unslave":
-        if not is_owner: await message.reply("only daddy", mention_author=False); return True
-        uid = extract_user_id(arg)
-        if not uid: await message.reply("usage: `.unslave <user_id or @mention>`", mention_author=False); return True
-        slaves.discard(uid); save_state()
-        await message.reply(f"⛓️ <@{uid}> freed", mention_author=False); return True
-
-    if cmd == "slaves":
-        if not slaves: await message.reply("no slaves yet", mention_author=False); return True
-        txt = "\n".join(f"• <@{u}>" for u in slaves)
-        await message.reply(f"**talkneon's slaves:**\n{txt}", mention_author=False); return True
-
-    if cmd == "savage":
-        if not is_owner: await message.reply("only daddy", mention_author=False); return True
-        global savage_global
-        savage_global = arg.lower() in ("on","true","1","yes")
-        await message.reply(f"savage mode: **{'ON 🔥' if savage_global else 'OFF'}**", mention_author=False); return True
-
-    if cmd == "mood":
-        v = mood[message.channel.id]
-        label = "grumpy 😠" if v < -0.3 else ("chill 😎" if v > 0.3 else "neutral 😐")
-        await message.reply(f"mood: **{label}** ({v:+.2f})", mention_author=False); return True
-
-    if cmd == "reset":
-        if not is_owner: await message.reply("only daddy", mention_author=False); return True
-        uid = extract_user_id(arg)
-        if uid: past_roasts.pop(uid, None); await message.reply(f"wiped memory for <@{uid}>", mention_author=False)
-        else: past_roasts.clear(); await message.reply("wiped all memory", mention_author=False)
-        save_state(); return True
-
-    return False
-
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot or not message.content: return
-
-    # dot commands first (no cooldown, owner-control)
-    if await handle_dot_command(message): return
-
     # respond to every message (cooldown still applies)
 
     # cooldown
