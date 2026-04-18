@@ -22,6 +22,7 @@ FORCE_ENGLISH = True  # english-only mode
 PREFIX = "/"
 MEMORY_FILE = "memory.json"
 SLAVES_FILE = "slaves.json"
+SAVAGE_FILE = "savage.txt"
 
 intents = discord.Intents.default()
 intents.message_content = True
