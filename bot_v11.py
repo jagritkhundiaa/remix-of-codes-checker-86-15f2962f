@@ -280,8 +280,10 @@ def build_system(lang: str, target_user: str, target_id: int, force_savage: bool
         global_avoid = f"Recent global lines (avoid copying): {' || '.join(list(recent_global)[-8:])}"
 
     ctx = ""
-    if reply_ctx:
-        ctx = f"They're replying to: \"{reply_ctx[:150]}\". Roast in that context."
+    if reply_ctx and not is_question:
+        ctx = f"They're replying to: \"{reply_ctx[:150]}\". Use as flavor only, still react to what THEY just said, not the quoted person."
+    elif reply_ctx and is_question:
+        ctx = f"(They're quoting \"{reply_ctx[:80]}\" but IGNORE that, ANSWER their actual question directly.)"
 
     custom = ""
     if savage and savage_lines:
