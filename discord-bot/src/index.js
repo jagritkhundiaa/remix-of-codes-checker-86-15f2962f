@@ -1565,9 +1565,8 @@ client.on("interactionCreate", async (interaction) => {
   };
 
   // Send welcome on first use (to DMs)
-  await sendWelcomeIfNeeded(async (opts) => {
-    try { await user.send(opts); } catch {}
-  }, user.id, user.username);
+  await sendWelcomeIfNeeded(user);
+
 
   try {
     if (commandName === "check") {
