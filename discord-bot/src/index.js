@@ -1088,6 +1088,86 @@ async function handleDownloadStock(respond, userId) {
   }
 }
 
+// ── Proxy Panel (owner-only) ───────────────────────────────
+
+async function handleProxyAdd(respond, userId, attachment, inlineText) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Owner only.")] });
+  let text = inlineText || "";
+  if (attachment) text += "\n" + (await fetchAttachmentLines(attachment));
+  const lines = text.split(/[\r\n,]+/).map(l => l.trim()).filter(Boolean);
+  if (lines.length === 0) return respond({ embeds: [errorEmbed(`Usage: \`${config.PREFIX}proxyadd <proxies>\` or attach .txt`)] });
+
+  const msg = await respond({ embeds: [infoEmbed("Proxy Validation", `Testing **${lines.length}** proxies… this may take a bit.`)] });
+  const r = await addAndValidate(lines, { concurrency: 25, timeoutMs: 8000 });
+  const body = [
+    `Total submitted: \`${r.total}\``,
+    `Invalid format: \`${r.invalid}\``,
+    `Dead / unreachable: \`${r.dead}\``,
+    `**Added (alive): \`${r.added}\`**`,
+    `Live pool: \`${getProxyCount()}\``,
+  ].join("\n");
+  try { await msg.edit({ embeds: [successEmbed(body)] }); } catch { await respond({ embeds: [successEmbed(body)] }); }
+}
+
+async function handleProxyList(respond, userId) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Owner only.")] });
+  const list = listProxies();
+  if (list.length === 0) return respond({ embeds: [infoEmbed("Proxies", "No proxies loaded.")] });
+  const lines = list.slice(0, 30).map(p => `\`${p.i}\` ${p.display} — ok:${p.ok} fail:${p.fail}`);
+  const more = list.length > 30 ? `\n…and **${list.length - 30}** more` : "";
+  return respond({ embeds: [infoEmbed(`Proxies (${list.length})`, lines.join("\n") + more)] });
+}
+
+async function handleProxyClear(respond, userId) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Owner only.")] });
+  const n = clearProxies();
+  return respond({ embeds: [successEmbed(`Cleared **${n}** proxies.`)] });
+}
+
+async function handleProxyHealth(respond, userId) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Owner only.")] });
+  if (getProxyCount() === 0) return respond({ embeds: [infoEmbed("Proxies", "No proxies to check.")] });
+  const msg = await respond({ embeds: [infoEmbed("Proxy Health", `Re-testing **${getProxyCount()}** proxies…`)] });
+  const r = await healthCheck({ concurrency: 25, timeoutMs: 8000 });
+  const body = `Kept alive: \`${r.kept}\`\nRemoved dead: \`${r.removed}\``;
+  try { await msg.edit({ embeds: [successEmbed(body)] }); } catch { await respond({ embeds: [successEmbed(body)] }); }
+}
+
+async function handleProxyExport(respond, userId) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Owner only.")] });
+  const list = listProxies();
+  if (list.length === 0) return respond({ embeds: [infoEmbed("Proxies", "No proxies to export.")] });
+  const dump = list.map(p => p.display).join("\n");
+  const file = new AttachmentBuilder(Buffer.from(dump, "utf-8"), { name: "proxies_export.txt" });
+  try {
+    const u = await client.users.fetch(userId);
+    await u.send({ content: `Live proxy pool (${list.length}):`, files: [file] });
+    return respond({ embeds: [infoEmbed("Sent", "Proxy list sent to your DMs.")] });
+  } catch {
+    return respond({ files: [file] });
+  }
+}
+
+async function handleProxyRemove(respond, userId, idxRaw) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Owner only.")] });
+  const idx = parseInt(idxRaw, 10);
+  if (isNaN(idx)) return respond({ embeds: [errorEmbed(`Usage: \`${config.PREFIX}proxyremove <index>\` (see \`${config.PREFIX}proxylist\`)`)] });
+  const ok = removeProxy(idx);
+  return respond({ embeds: [ok ? successEmbed(`Removed proxy at index ${idx}.`) : errorEmbed("Invalid index.")] });
+}
+
+async function handleProxyStats(respond, userId) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Owner only.")] });
+  const s = getProxyStats();
+  const body = [
+    `Loaded: \`${getProxyCount()}\``,
+    `Enabled: \`${isProxyEnabled() ? "yes" : "no"}\``,
+    `Requests: \`${s.total}\` (success ${s.success} / failed ${s.failed})`,
+    `Success rate: \`${s.successRate}%\``,
+  ].join("\n");
+  return respond({ embeds: [infoEmbed("Proxy Stats", body)] });
+}
+
 // ── Anti-Link + Autopilot helpers ───────────────────────────
 
 async function maybeHandleAntiLink(message) {
