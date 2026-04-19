@@ -341,7 +341,7 @@ async function checkXboxAccounts(accounts, threads = 30, onProgress, signal) {
   const results = await runPool({
     items: accounts,
     concurrency: threads,
-    maxRetries: 2,
+    maxRetries: 3,
     signal,
     scope: "xboxchk",
     runner: async (cred, ctx) => {
