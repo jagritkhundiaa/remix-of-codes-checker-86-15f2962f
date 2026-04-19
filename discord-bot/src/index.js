@@ -1128,8 +1128,8 @@ async function handleXboxChk(respond, userId, accountsRaw, accountsFile, threads
   if (!limiter.acquire(userId)) return respond({ embeds: [errorEmbed("You already have an active process.")] });
 
   try {
-    const { combos } = await gatherCombos(accountsRaw, accountsFile);
-    if (!combos.length) return respond({ embeds: [errorEmbed("No valid email:pass combos found.")] });
+    const combos = await gatherCombos(accountsRaw, accountsFile);
+    if (!combos || !combos.length) return respond({ embeds: [errorEmbed("No valid email:pass combos found.")] });
     if (combos.length > MAX_COMBO_LINES) return respond({ embeds: [errorEmbed(`Max ${MAX_COMBO_LINES} lines.`)] });
 
     const tc = Math.min(Math.max(threads, 1), 50);
