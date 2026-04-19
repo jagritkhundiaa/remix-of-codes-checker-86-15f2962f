@@ -1367,6 +1367,59 @@ function steamHitEmbed(result) {
     .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
 }
 
+// ── Xbox Full Capture Checker ────────────────────────────────
+
+function xboxChkProgressEmbed(checked, total, stats = {}) {
+  const pct = total === 0 ? 0 : Math.round((checked / total) * 100);
+  const barLen = 20;
+  const filled = Math.round((pct / 100) * barLen);
+  const bar = "#".repeat(filled) + "-".repeat(barLen - filled);
+
+  const hits = stats.hits || 0;
+  const free = stats.free || 0;
+  const locked = stats.locked || 0;
+  const fails = stats.fails || 0;
+  const cpm = stats.cpm || 0;
+
+  const block = [
+    "Xbox Full Capture",
+    "----------------------------",
+    "",
+    `  [${bar}] ${pct}%`,
+    `  ${checked.toLocaleString()} / ${total.toLocaleString()}`,
+    "",
+    `  ${pad("Hits")}${hits}`,
+    `  ${pad("Free")}${free}`,
+    `  ${pad("Locked")}${locked}`,
+    `  ${pad("Fails")}${fails}`,
+    `  ${pad("CPM")}${cpm}`,
+  ];
+
+  return header({ thumbnail: false })
+    .setColor(COLORS.INFO)
+    .setDescription("```\n" + block.join("\n") + "\n```");
+}
+
+function xboxChkResultsEmbed(stats) {
+  const block = [
+    "Xbox Full Capture — Results",
+    "----------------------------",
+    "",
+    `  ${pad("Checked")}${stats.checked}`,
+    `  ${pad("Hits (Active)")}${stats.hits}`,
+    `  ${pad("Free (Expired)")}${stats.free}`,
+    `  ${pad("Locked")}${stats.locked}`,
+    `  ${pad("Fails")}${stats.fails}`,
+    "",
+    `  ${pad("CPM")}${stats.cpm}`,
+    `  ${pad("Time")}${stats.elapsed}`,
+  ];
+
+  return header()
+    .setColor(stats.hits > 0 ? COLORS.SUCCESS : COLORS.INFO)
+    .setDescription("```\n" + block.join("\n") + "\n```");
+}
+
 module.exports = {
   progressEmbed,
   checkResultsEmbed,
