@@ -1411,4 +1411,6 @@ module.exports = {
   genHelpEmbed,
   stockListEmbed,
   unauthorisedEmbed,
+  xboxChkProgressEmbed,
+  xboxChkResultsEmbed,
 };
