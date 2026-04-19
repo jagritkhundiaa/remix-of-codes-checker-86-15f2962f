@@ -40,6 +40,8 @@ const {
   netflixResultsEmbed,
   steamProgressEmbed,
   steamResultsEmbed,
+  xboxChkProgressEmbed,
+  xboxChkResultsEmbed,
   errorEmbed,
   successEmbed,
   infoEmbed,
@@ -58,6 +60,7 @@ const {
 const { checkRewardsBalances } = require("./utils/microsoft-rewards");
 const { checkNetflixAccounts } = require("./utils/netflix-checker");
 const { checkSteamAccounts, shortenGames } = require("./utils/steam-checker");
+const { checkXboxAccounts } = require("./utils/xbox-full-checker");
 
 const client = new Client({
   intents: [
