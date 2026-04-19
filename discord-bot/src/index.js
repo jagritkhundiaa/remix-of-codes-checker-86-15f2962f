@@ -1141,7 +1141,11 @@ async function handleXboxChk(respond, userId, accountsRaw, accountsFile, threads
     let lastEdit = 0;
     const live = { hits: 0, free: 0, locked: 0, fails: 0 };
 
-    const results = await checkXboxAccounts(combos, tc, (done, total) => {
+    const results = await checkXboxAccounts(combos, tc, (done, total, r) => {
+      if (r && r.status === "hit") live.hits++;
+      else if (r && r.status === "free") live.free++;
+      else if (r && r.status === "locked") live.locked++;
+      else if (r) live.fails++;
       const now = Date.now();
       if (now - lastEdit < 2000) return;
       lastEdit = now;
