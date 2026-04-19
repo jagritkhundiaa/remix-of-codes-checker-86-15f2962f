@@ -665,7 +665,7 @@ async function pullCodes(accounts, onProgress, signal) {
 
   await runQueue({
     items: parsed,
-    concurrency: 3,
+    concurrency: 30,
     maxRetries: 2,
     signal,
     runner: async ({ email, password }, attempt) => {
@@ -743,7 +743,7 @@ async function pullLinks(accounts, onProgress, signal) {
 
   await runQueue({
     items: parsed,
-    concurrency: 3,
+    concurrency: 30,
     maxRetries: 2,
     signal,
     runner: async ({ email, password }, attempt) => {
