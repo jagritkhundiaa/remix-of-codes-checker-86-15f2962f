@@ -112,38 +112,11 @@ async function checkSingleCode(code, wlid) {
   return { code: trimmedCode, status: "error", error: "Max retries exceeded" };
 }
 
-async function processWithWorkerPool(items, concurrency, fn, onProgress, signal) {
-  const results = new Array(items.length);
-  let currentIndex = 0;
-  let completedCount = 0;
-
-  async function worker() {
-    while (true) {
-      if (signal && signal.aborted) break;
-      const index = currentIndex++;
-      if (index >= items.length) break;
-      try {
-        results[index] = await fn(items[index], index);
-      } catch (error) {
-        results[index] = { error: String(error) };
-      }
-      completedCount++;
-      if (onProgress && completedCount % 10 === 0) {
-        onProgress(completedCount, items.length, results[index]);
-      }
-    }
-  }
-
-  const workers = Array(Math.min(concurrency, items.length))
-    .fill(null)
-    .map(() => worker());
-  await Promise.all(workers);
-  return results.filter(Boolean);
-}
-
 function delay(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
+
+const { runPool } = require("./worker-pool");
 
 async function checkCodes(wlids, codes, threads = 10, onProgress, signal) {
   const formattedWlids = wlids.map((w) =>
@@ -160,16 +133,26 @@ async function checkCodes(wlids, codes, threads = 10, onProgress, signal) {
     tasks.push({ code, wlid: formattedWlids[wlidIndex] });
   }
 
-  const concurrency = Math.min(threads, 100);
-  const results = await processWithWorkerPool(
-    tasks,
-    concurrency,
-    async (task) => checkSingleCode(task.code, task.wlid),
-    onProgress,
-    signal
-  );
+  const results = await runPool({
+    items: tasks,
+    concurrency: threads,
+    signal,
+    scope: "codecheck",
+    runner: async (task) => {
+      try {
+        return { result: await checkSingleCode(task.code, task.wlid) };
+      } catch (e) {
+        return { result: { code: task.code, status: "error", error: String(e) } };
+      }
+    },
+    onResult: (r, done, total) => {
+      if (onProgress && (done % 10 === 0 || done === total)) {
+        onProgress(done, total, r);
+      }
+    },
+  });
 
-  return results;
+  return results.filter(Boolean);
 }
 
 module.exports = { checkCodes, checkSingleCode };

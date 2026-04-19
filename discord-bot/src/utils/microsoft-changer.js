@@ -734,35 +734,33 @@ async function checkAccount(email, password) {
 
 // ── Bulk utilities with throttling ────────────────────────────
 
+const { runPool } = require("./worker-pool");
+
 async function changePasswords(accounts, newPassword, threads = 3, onProgress, signal) {
   const parsed = accounts.map((a) => {
     const i = a.indexOf(":");
     return i === -1 ? { email: a, password: "" } : { email: a.substring(0, i), password: a.substring(i + 1) };
   });
 
-  const results = [];
-  let currentIndex = 0;
-
-  async function worker() {
-    while (true) {
-      if (signal && signal.aborted) break;
-      const idx = currentIndex++;
-      if (idx >= parsed.length) break;
+  // Cap at 3 to avoid Microsoft rate-limiting
+  const results = await runPool({
+    items: parsed,
+    concurrency: Math.min(threads, 3),
+    signal,
+    scope: "changer",
+    runner: async ({ email, password }) => {
       await randomDelay(2000, 6000);
-
-      const { email, password } = parsed[idx];
-      const result = await changePassword(email, password, newPassword);
-      results.push(result);
-
-      if (onProgress) onProgress(results.length, parsed.length);
-    }
-  }
-
-  const workerCount = Math.min(threads, parsed.length, 3);
-  const workers = Array(workerCount).fill(null).map(() => worker());
-  await Promise.all(workers);
-
-  return results;
+      try {
+        return { result: await changePassword(email, password, newPassword) };
+      } catch (err) {
+        return { result: { email, success: false, error: err?.message || String(err) } };
+      }
+    },
+    onResult: (_r, done, total) => {
+      if (onProgress) onProgress(done, total);
+    },
+  });
+  return results.filter(Boolean);
 }
 
 async function checkAccounts(accounts, threads = 3, onProgress, signal) {
@@ -771,29 +769,24 @@ async function checkAccounts(accounts, threads = 3, onProgress, signal) {
     return i === -1 ? { email: a, password: "" } : { email: a.substring(0, i), password: a.substring(i + 1) };
   });
 
-  const results = [];
-  let currentIndex = 0;
-
-  async function worker() {
-    while (true) {
-      if (signal && signal.aborted) break;
-      const idx = currentIndex++;
-      if (idx >= parsed.length) break;
+  const results = await runPool({
+    items: parsed,
+    concurrency: Math.min(threads, 5),
+    signal,
+    scope: "changer-check",
+    runner: async ({ email, password }) => {
       await randomDelay(1000, 3000);
-
-      const { email, password } = parsed[idx];
-      const result = await checkAccount(email, password);
-      results.push(result);
-
-      if (onProgress) onProgress(results.length, parsed.length);
-    }
-  }
-
-  const workerCount = Math.min(threads, parsed.length, 5);
-  const workers = Array(workerCount).fill(null).map(() => worker());
-  await Promise.all(workers);
-
-  return results;
+      try {
+        return { result: await checkAccount(email, password) };
+      } catch (err) {
+        return { result: { email, success: false, error: err?.message || String(err) } };
+      }
+    },
+    onResult: (_r, done, total) => {
+      if (onProgress) onProgress(done, total);
+    },
+  });
+  return results.filter(Boolean);
 }
 
 module.exports = { changePassword, changePasswords, checkAccount, checkAccounts };

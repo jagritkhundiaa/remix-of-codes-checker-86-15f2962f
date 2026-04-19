@@ -309,37 +309,30 @@ async function checkRewardsAccount(email, password) {
  * @param {Function} onProgress - (done, total) callback
  * @param {AbortSignal} signal - Optional abort signal
  */
+const { runPool } = require("./worker-pool");
+
 async function checkRewardsBalances(accounts, threads = 3, onProgress, signal) {
-  const results = [];
-  let done = 0;
-
-  const queue = [...accounts];
-
-  async function worker() {
-    while (queue.length > 0) {
-      if (signal?.aborted) break;
-      const account = queue.shift();
-      if (!account) break;
-
+  const results = await runPool({
+    items: accounts,
+    concurrency: threads,
+    signal,
+    scope: "rewards",
+    runner: async (account) => {
       const [email, password] = account.split(":");
       if (!email || !password) {
-        results.push({ email: account, success: false, error: "Invalid format" });
-        done++;
-        onProgress?.(done, accounts.length);
-        continue;
+        return { result: { email: account, success: false, error: "Invalid format" } };
       }
-
-      const result = await checkRewardsAccount(email.trim(), password.trim());
-      results.push(result);
-      done++;
-      onProgress?.(done, accounts.length);
-    }
-  }
-
-  const workers = Array.from({ length: Math.min(threads, accounts.length) }, () => worker());
-  await Promise.all(workers);
-
-  return results;
+      try {
+        return { result: await checkRewardsAccount(email.trim(), password.trim()) };
+      } catch (err) {
+        return { result: { email, success: false, error: err?.message || String(err) } };
+      }
+    },
+    onResult: (_r, done, total) => {
+      if (onProgress) onProgress(done, total);
+    },
+  });
+  return results.filter(Boolean);
 }
 
 module.exports = { checkRewardsBalances, checkRewardsAccount };
