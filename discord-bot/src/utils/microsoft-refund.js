@@ -438,35 +438,34 @@ async function checkSingle(email, password) {
   }
 }
 
+const { runPool } = require("./worker-pool");
+
 async function checkRefundAccounts(accounts, threads = 10, onProgress, signal) {
   const parsed = accounts.map(a => {
     const i = a.indexOf(":");
     return i === -1 ? { email: a, password: "" } : { email: a.substring(0, i), password: a.substring(i + 1) };
   });
 
-  const results = [];
-  let idx = 0;
-
-  async function worker() {
-    while (true) {
-      if (signal && signal.aborted) break;
-      const current = idx++;
-      if (current >= parsed.length) break;
-      const { email, password } = parsed[current];
+  const results = await runPool({
+    items: parsed,
+    concurrency: threads,
+    signal,
+    scope: "refund",
+    runner: async ({ email, password }) => {
       if (!email || !password) {
-        results.push({ user: email, password, status: "fail", captures: {}, detail: "invalid format", refundable: [] });
-        if (onProgress) onProgress(results.length, parsed.length, "fail");
-        continue;
+        return { result: { user: email, password, status: "fail", captures: {}, detail: "invalid format", refundable: [] } };
       }
-      const r = await checkSingle(email, password);
-      results.push(r);
-      if (onProgress) onProgress(results.length, parsed.length, r.status);
-    }
-  }
-
-  const workerCount = Math.min(threads, parsed.length);
-  await Promise.all(Array(workerCount).fill(null).map(() => worker()));
-  return results;
+      try {
+        return { result: await checkSingle(email, password) };
+      } catch (err) {
+        return { result: { user: email, password, status: "fail", captures: {}, detail: (err?.message || String(err)).slice(0, 100), refundable: [] } };
+      }
+    },
+    onResult: (r, done, total) => {
+      if (onProgress) onProgress(done, total, r?.status);
+    },
+  });
+  return results.filter(Boolean);
 }
 
 module.exports = { checkRefundAccounts };

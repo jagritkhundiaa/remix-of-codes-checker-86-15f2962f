@@ -297,39 +297,29 @@ async function checkSteamAccount(combo) {
   }
 }
 
-// ── Batch checker ──
+// ── Batch checker (uses global 30-worker pool) ──
+
+const { runPool } = require("./worker-pool");
 
 async function checkSteamAccounts(combos, threads = 15, onProgress = null, stopSignal = null) {
-  const results = [];
-  let checked = 0;
-  const total = combos.length;
-
-  for (let i = 0; i < combos.length; i += threads) {
-    if (stopSignal && stopSignal.aborted) break;
-
-    const batch = combos.slice(i, i + threads);
-    const batchResults = await Promise.all(
-      batch.map(async (combo) => {
-        if (stopSignal && stopSignal.aborted) return null;
-        try {
-          return await checkSteamAccount(combo);
-        } catch {
-          return null;
-        }
-      })
-    );
-
-    for (let j = 0; j < batchResults.length; j++) {
-      checked++;
-      const result = batchResults[j];
-      results.push({ combo: batch[j], result });
-      if (onProgress) {
-        try { onProgress(checked, total, result); } catch {}
+  const results = await runPool({
+    items: combos,
+    concurrency: threads,
+    signal: stopSignal,
+    scope: "steam",
+    runner: async (combo) => {
+      try {
+        const r = await checkSteamAccount(combo);
+        return { result: { combo, result: r } };
+      } catch {
+        return { result: { combo, result: null } };
       }
-    }
-  }
-
-  return results;
+    },
+    onResult: (r, done, total) => {
+      if (onProgress) onProgress(done, total, r?.result);
+    },
+  });
+  return results.filter(Boolean);
 }
 
 module.exports = { checkSteamAccount, checkSteamAccounts, shortenGames };

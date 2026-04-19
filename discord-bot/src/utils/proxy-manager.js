@@ -1,5 +1,5 @@
 // ============================================================
-//  Proxy Manager — round-robin rotation + parallel-safe
+//  Proxy Manager — round-robin, timeout-hardened, freeze-proof
 //  Supports HTTP/HTTPS/SOCKS4/SOCKS5 with auth.
 //  Formats:
 //    ip:port          host:port
@@ -15,28 +15,37 @@ const { Agent: UndiciAgent, ProxyAgent } = require("undici");
 const { SocksProxyAgent } = require("socks-proxy-agent");
 const { HttpsProxyAgent } = require("https-proxy-agent");
 const config = require("../config");
+const { logger } = require("./logger");
+
+const log = logger.child("proxy");
 
 let proxies = [];
 let rrIndex = 0;
-let proxyStats = { total: 0, success: 0, failed: 0 };
-const deadProxies = new Set(); // host:port keys with too many fails
+let proxyStats = { total: 0, success: 0, failed: 0, timeout: 0 };
+const deadProxies = new Set();
 const failCounts = new Map();
 
-// Timeouts (ms)
+// ── Hard timeouts (ms) ───────────────────────────────────
+// Wall-clock cap per request. NOTHING is allowed to exceed this.
+const REQUEST_TIMEOUT = 15000;
 const CONNECT_TIMEOUT = 8000;
-const REQUEST_TIMEOUT = 20000;
-const MAX_PROXY_RETRIES = 3; // try N different proxies before giving up
-const MAX_FAILS_BEFORE_DEAD = 5;
+const MAX_PROXY_RETRIES = 3;
+const MAX_FAILS_BEFORE_DEAD = 3;
 
 function resetProxyStats() {
-  proxyStats = { total: 0, success: 0, failed: 0 };
+  proxyStats = { total: 0, success: 0, failed: 0, timeout: 0 };
   deadProxies.clear();
   failCounts.clear();
 }
 
 function getProxyStats() {
   const rate = proxyStats.total > 0 ? Math.round((proxyStats.success / proxyStats.total) * 100) : 0;
-  return { ...proxyStats, successRate: rate, dead: deadProxies.size, alive: proxies.length - deadProxies.size };
+  return {
+    ...proxyStats,
+    successRate: rate,
+    dead: deadProxies.size,
+    alive: proxies.length - deadProxies.size,
+  };
 }
 
 // ── Parsing ──────────────────────────────────────────────
@@ -117,16 +126,15 @@ function createAgent(proxy) {
   if (proxy.protocol.startsWith("socks")) {
     agent = new SocksProxyAgent(url, { timeout: CONNECT_TIMEOUT });
   } else {
-    agent = new HttpsProxyAgent(url, { timeout: CONNECT_TIMEOUT, keepAlive: true });
+    agent = new HttpsProxyAgent(url, { timeout: CONNECT_TIMEOUT, keepAlive: false });
   }
   agentCache.set(key, agent);
   return agent;
 }
 
-// Undici dispatcher (for native fetch on Node 18+)
 const dispatcherCache = new Map();
 function createDispatcher(proxy) {
-  if (proxy.protocol.startsWith("socks")) return null; // undici has no socks support
+  if (proxy.protocol.startsWith("socks")) return null;
   const url = buildProxyUrl(proxy);
   if (dispatcherCache.has(url)) return dispatcherCache.get(url);
   const d = new ProxyAgent({
@@ -143,7 +151,7 @@ function createDispatcher(proxy) {
 function loadProxies() {
   const filePath = path.join(__dirname, "..", "..", "proxies.txt");
   if (!fs.existsSync(filePath)) {
-    console.log("[Proxy] No proxies.txt found. Proxy support disabled.");
+    log.info("no proxies.txt found — proxy support disabled");
     proxies = [];
     return 0;
   }
@@ -155,7 +163,7 @@ function loadProxies() {
   failCounts.clear();
   agentCache.clear();
   dispatcherCache.clear();
-  console.log(`[Proxy] Loaded ${proxies.length} proxies (round-robin enabled)`);
+  log.info(`loaded ${proxies.length} proxies (round-robin)`);
   return proxies.length;
 }
 
@@ -173,7 +181,8 @@ function getNextProxy() {
       return p;
     }
   }
-  // All dead — reset and try again
+  // All dead — soft reset to give them another chance later
+  log.warn(`all ${proxies.length} proxies marked dead — resetting`);
   deadProxies.clear();
   failCounts.clear();
   rrIndex = (rrIndex + 1) % proxies.length;
@@ -195,23 +204,48 @@ function getProxyCount() {
   return proxies.length;
 }
 
-function markFail(proxy) {
+function markFail(proxy, reason) {
   const k = proxyKey(proxy);
   const n = (failCounts.get(k) || 0) + 1;
   failCounts.set(k, n);
-  if (n >= MAX_FAILS_BEFORE_DEAD) deadProxies.add(k);
+  if (n >= MAX_FAILS_BEFORE_DEAD) {
+    deadProxies.add(k);
+    log.warn(`proxy dead after ${n} fails`, { proxy: k, reason });
+  }
 }
 
 function markSuccess(proxy) {
   failCounts.delete(proxyKey(proxy));
 }
 
-// ── Fetch with timeout ───────────────────────────────────
+// ── Hard wall-clock timeout (Promise.race) ───────────────
+//
+// CRITICAL FIX: Node fetch with `agent`/`dispatcher` does not always honor
+// AbortController on hung sockets. We wrap with Promise.race on a wall-clock
+// timer to GUARANTEE the request resolves within REQUEST_TIMEOUT.
+function withHardTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timeout after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 function fetchWithTimeout(url, options, timeoutMs) {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(new Error("timeout")), timeoutMs);
-  const opts = { ...options, signal: options.signal || ctrl.signal };
-  return fetch(url, opts).finally(() => clearTimeout(timer));
+  const userSignal = options.signal;
+  if (userSignal) {
+    if (userSignal.aborted) ctrl.abort();
+    else userSignal.addEventListener("abort", () => ctrl.abort(), { once: true });
+  }
+  const timer = setTimeout(() => {
+    try { ctrl.abort(); } catch {}
+  }, timeoutMs);
+
+  const opts = { ...options, signal: ctrl.signal };
+  // Wrap in hard timeout race — abort might not work on hung proxy sockets.
+  const fetchP = fetch(url, opts).finally(() => clearTimeout(timer));
+  return withHardTimeout(fetchP, timeoutMs + 500, "fetch");
 }
 
 const ipv4Dispatcher = new UndiciAgent({
@@ -229,7 +263,7 @@ async function directFetchWithFallback(url, options = {}) {
       return await fetchWithTimeout(url, options, REQUEST_TIMEOUT);
     } catch (err) {
       lastErr = err;
-      if (attempt < 2) await sleep(200);
+      if (attempt < 2) await sleep(150);
     }
   }
   try {
@@ -241,7 +275,9 @@ async function directFetchWithFallback(url, options = {}) {
 
 /**
  * Proxied fetch with auto-rotation on failure.
- * Tries up to MAX_PROXY_RETRIES different proxies before falling back to direct.
+ * - Tries up to MAX_PROXY_RETRIES different proxies.
+ * - Falls back to direct connection if all proxies fail.
+ * - HARD GUARANTEED to resolve within ~ (MAX_PROXY_RETRIES+2) * REQUEST_TIMEOUT.
  */
 async function proxiedFetch(url, options = {}) {
   if (!isProxyEnabled()) return directFetchWithFallback(url, options);
@@ -250,6 +286,8 @@ async function proxiedFetch(url, options = {}) {
   let lastErr;
 
   for (let attempt = 0; attempt < MAX_PROXY_RETRIES; attempt++) {
+    if (options.signal?.aborted) throw new Error("aborted");
+
     const proxy = getNextProxy();
     if (!proxy) break;
     const key = proxyKey(proxy);
@@ -269,13 +307,20 @@ async function proxiedFetch(url, options = {}) {
       return res;
     } catch (err) {
       proxyStats.failed++;
-      markFail(proxy);
+      const msg = err?.message || String(err);
+      const isTimeout = /timeout|timed out|aborted/i.test(msg);
+      const isAuth = /407|auth/i.test(msg);
+      const isConn = /ECONN|ENOTFOUND|EHOSTUNREACH|EAI_AGAIN|socket hang up/i.test(msg);
+      if (isTimeout) proxyStats.timeout++;
+      // Mark fail for any of these — we want bad proxies out fast.
+      if (isTimeout || isAuth || isConn || true) markFail(proxy, msg.slice(0, 60));
       lastErr = err;
-      // Quick rotation, no sleep — keeps parallel workers moving
+      // No sleep — keep parallel workers moving
     }
   }
 
-  // All proxy attempts failed — try direct as last resort
+  // All proxy attempts failed — fall back to direct (per user's choice)
+  log.warn(`all proxy attempts failed → fallback direct`, { url: url.slice(0, 80), err: lastErr?.message });
   try {
     return await directFetchWithFallback(url, options);
   } catch (directErr) {
@@ -295,4 +340,6 @@ module.exports = {
   proxiedFetch,
   parseProxy,
   buildProxyUrl,
+  REQUEST_TIMEOUT,
+  CONNECT_TIMEOUT,
 };

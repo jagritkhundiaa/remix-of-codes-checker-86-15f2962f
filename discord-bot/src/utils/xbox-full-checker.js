@@ -232,43 +232,25 @@ async function checkSingleAccount(credential, signal) {
   }
 }
 
-async function processWithPool(items, concurrency, fn, onProgress, signal) {
-  const results = [];
-  let idx = 0;
-  let completed = 0;
-
-  async function worker() {
-    while (idx < items.length) {
-      if (signal?.aborted) break;
-      const i = idx++;
-      if (i >= items.length) break;
-      const result = await fn(items[i], signal);
-      results[i] = result;
-      completed++;
-      if (onProgress) onProgress(completed, items.length);
-    }
-  }
-
-  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
-  await Promise.all(workers);
-  return results.filter(Boolean);
-}
+const { runPool } = require("./worker-pool");
 
 async function checkXboxAccounts(accounts, threads = 30, onProgress, signal) {
-  return processWithPool(
-    accounts,
-    threads,
-    async (cred, sig) => {
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const result = await checkSingleAccount(cred, sig);
-        if (result.status !== "retry") return result;
-        await new Promise((r) => setTimeout(r, 1000 + Math.random() * 2000));
-      }
-      return { status: "fail", user: cred.split(":")[0] || cred, password: cred.split(":")[1] || "", detail: "Max retries" };
+  const results = await runPool({
+    items: accounts,
+    concurrency: threads,
+    maxRetries: 2,
+    signal,
+    scope: "xboxchk",
+    runner: async (cred, ctx) => {
+      const r = await checkSingleAccount(cred, ctx.signal);
+      if (r.status === "retry") return { retry: true };
+      return { result: r };
     },
-    onProgress,
-    signal
-  );
+    onResult: (r, done, total) => {
+      if (onProgress) onProgress(done, total, r);
+    },
+  });
+  return results.filter(Boolean);
 }
 
 module.exports = { checkXboxAccounts, checkSingleAccount };

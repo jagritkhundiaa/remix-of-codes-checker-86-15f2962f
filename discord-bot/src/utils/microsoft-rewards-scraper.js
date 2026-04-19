@@ -664,41 +664,35 @@ async function checkSingleAccount(email, password, category) {
  * @returns {{ results: Array, allCodes: Array }}
  */
 async function scrapeRewards(accounts, category = "All", threads = 10, onProgress, signal) {
+  const { runPool } = require("./worker-pool");
   const results = [];
   const allCodes = [];
-  let done = 0;
 
-  const queue = [...accounts];
-
-  async function worker() {
-    while (queue.length > 0) {
-      if (signal?.aborted) break;
-      const account = queue.shift();
-      if (!account) break;
-
+  await runPool({
+    items: accounts,
+    concurrency: threads,
+    signal,
+    scope: "rewards-scraper",
+    runner: async (account) => {
       const [email, password] = account.split(":");
       if (!email || !password) {
-        results.push({ email: account, status: "invalid", codes: [] });
-        done++;
-        onProgress?.(done, accounts.length, null);
-        continue;
+        return { result: { email: account, status: "invalid", codes: [] } };
       }
-
       try {
-        const result = await checkSingleAccount(email.trim(), password.trim(), category);
-        results.push(result);
-        if (result.codes.length > 0) allCodes.push(...result.codes.map(c => ({ ...c, email, password })));
+        const r = await checkSingleAccount(email.trim(), password.trim(), category);
+        if (r.codes && r.codes.length > 0) {
+          allCodes.push(...r.codes.map(c => ({ ...c, email, password })));
+        }
+        return { result: r };
       } catch {
-        results.push({ email, status: "error", codes: [] });
+        return { result: { email, status: "error", codes: [] } };
       }
-
-      done++;
-      onProgress?.(done, accounts.length, results[results.length - 1]);
-    }
-  }
-
-  const workers = Array.from({ length: Math.min(threads, accounts.length) }, () => worker());
-  await Promise.all(workers);
+    },
+    onResult: (r, done, total) => {
+      results.push(r);
+      onProgress?.(done, total, r);
+    },
+  });
 
   return { results, allCodes };
 }

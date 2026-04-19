@@ -251,30 +251,30 @@ async function authenticateAccount(email, password) {
   }
 }
 
+const { runPool } = require("./worker-pool");
+
 async function claimWlids(accounts, threads = 5, onProgress, signal) {
   const parsedAccounts = accounts.map((acc) => {
     const i = acc.indexOf(":");
     return i === -1 ? { email: acc, password: "" } : { email: acc.substring(0, i), password: acc.substring(i + 1) };
   });
 
-  const results = new Array(parsedAccounts.length);
-  let currentIndex = 0;
-  let completed = 0;
-
-  async function worker() {
-    while (true) {
-      if (signal && signal.aborted) break;
-      const idx = currentIndex++;
-      if (idx >= parsedAccounts.length) break;
-      const { email, password } = parsedAccounts[idx];
-      results[idx] = await authenticateAccount(email, password);
-      completed++;
-      if (onProgress) onProgress(completed, parsedAccounts.length);
-    }
-  }
-
-  const workers = Array(Math.min(threads, parsedAccounts.length)).fill(null).map(() => worker());
-  await Promise.all(workers);
+  const results = await runPool({
+    items: parsedAccounts,
+    concurrency: threads,
+    signal,
+    scope: "claim",
+    runner: async ({ email, password }) => {
+      try {
+        return { result: await authenticateAccount(email, password) };
+      } catch (err) {
+        return { result: { email, success: false, error: err?.message || String(err) } };
+      }
+    },
+    onResult: (_r, done, total) => {
+      if (onProgress) onProgress(done, total);
+    },
+  });
   return results.filter(Boolean);
 }
 

