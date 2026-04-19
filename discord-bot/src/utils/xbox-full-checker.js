@@ -299,12 +299,26 @@ async function checkSingleAccount(credential, signal) {
       Points: points,
     };
 
+    // Hit if ANY of these are true: future renewal, autoRenew=true, or a known subscription title is present
     let isActive = false;
-    if (subscription && subscription !== "N/A" && nextRenewal && nextRenewal !== "N/A") {
-      try {
-        const renewalDate = new Date(nextRenewal);
-        isActive = renewalDate >= new Date();
-      } catch {}
+    if (subscription && subscription !== "N/A") {
+      if (nextRenewal && nextRenewal !== "N/A") {
+        try {
+          const renewalDate = new Date(nextRenewal);
+          if (!isNaN(renewalDate.getTime()) && renewalDate >= new Date()) isActive = true;
+        } catch {}
+      }
+      if (!isActive && (autoRenew === "true" || autoRenew === true)) isActive = true;
+      if (!isActive) {
+        const sub = String(subscription).toLowerCase();
+        if (
+          sub.includes("game pass") ||
+          sub.includes("xbox live") ||
+          sub.includes("ultimate") ||
+          sub.includes("microsoft 365") ||
+          sub.includes("office 365")
+        ) isActive = true;
+      }
     }
 
     return {
