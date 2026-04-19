@@ -108,7 +108,17 @@ async function runPool({
 
   // Fire all tasks — pool gates them. We do NOT cap here; the semaphore does.
   log.info(`run start`, { items: total, globalMax: GLOBAL_MAX });
-  await Promise.all(tasks.map(fn => fn()));
+
+  // Heartbeat: prove the cap is real. Logs active/waiting every 2s.
+  const hb = setInterval(() => {
+    log.info(`heartbeat`, { active, waiting: waiters.length, completed, total, cap: GLOBAL_MAX });
+  }, 2000);
+
+  try {
+    await Promise.all(tasks.map(fn => fn()));
+  } finally {
+    clearInterval(hb);
+  }
   log.info(`run done`, { completed, total });
   return results;
 }
