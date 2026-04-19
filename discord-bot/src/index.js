@@ -1561,6 +1561,11 @@ client.once("ready", () => {
   const proxyCount = loadProxies();
   console.log(`Proxies: ${config.USE_PROXIES ? `Enabled (${proxyCount} loaded)` : "Disabled"}`);
 
+  const { GLOBAL_MAX } = require("./utils/worker-pool");
+  const { logger } = require("./utils/logger");
+  console.log(`Worker pool: hard cap ${GLOBAL_MAX} concurrent (global)`);
+  logger.event("bot", `online as ${client.user.tag} | pool=${GLOBAL_MAX} | proxies=${config.USE_PROXIES ? proxyCount : "off"}`);
+
   const presenceMessages = [
     () => ({ name: ".gg/autizmens", type: 3 }),
     () => ({ name: `${getWlidCount()} WLIDs stored`, type: 3 }),
