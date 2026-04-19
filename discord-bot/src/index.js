@@ -1142,12 +1142,15 @@ async function handleXboxChk(respond, userId, accountsRaw, accountsFile, threads
     const live = { hits: 0, free: 0, locked: 0, fails: 0 };
 
     const results = await checkXboxAccounts(combos, tc, (done, total, r) => {
-      if (r && r.status === "hit") live.hits++;
-      else if (r && r.status === "free") live.free++;
-      else if (r && r.status === "locked") live.locked++;
-      else if (r) live.fails++;
+      // Count every result into the correct bucket — never skip
+      const st = r && r.status;
+      if (st === "hit") live.hits++;
+      else if (st === "free") live.free++;
+      else if (st === "locked") live.locked++;
+      else live.fails++; // fail, skipped, retry-exhausted, null — all count as fails
+
       const now = Date.now();
-      if (now - lastEdit < 2000) return;
+      if (now - lastEdit < 1500) return; // update every 1.5s for snappier UI
       lastEdit = now;
       const sec = (now - t0) / 1000;
       const cpm = sec > 0 ? Math.round(done / (sec / 60)) : 0;
