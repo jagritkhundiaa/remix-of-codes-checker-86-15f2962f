@@ -1466,4 +1466,143 @@ module.exports = {
   unauthorisedEmbed,
   xboxChkProgressEmbed,
   xboxChkResultsEmbed,
+  betaPriceResultsEmbed,
+  betaGhostResultsEmbed,
+  betaReceiptProgressEmbed,
+  betaReceiptResultsEmbed,
+  betaPaymentProgressEmbed,
+  betaPaymentResultsEmbed,
+  betaEntitleProgressEmbed,
+  betaEntitleResultsEmbed,
 };
+
+// ════════════════════════════════════════════════════════════
+//  BETA FUNCTION EMBEDS — Owner-locked experimental tools
+// ════════════════════════════════════════════════════════════
+
+function betaPriceResultsEmbed({ productTitle, productId, prices }) {
+  const e = header().setColor(COLORS.PRIMARY).setTitle("BETA | Regional Price Sniper");
+  let desc = `\`\`\`\nProduct: ${productTitle}\nID:      ${productId}\n${"─".repeat(42)}\n`;
+  if (prices.length === 0) {
+    desc += "No pricing data found.\n";
+  } else {
+    desc += pad("Market", 8) + pad("Price", 14) + "Currency\n";
+    desc += "─".repeat(42) + "\n";
+    for (const p of prices) {
+      desc += pad(p.market, 8) + pad(String(p.listPrice), 14) + p.currency + "\n";
+    }
+    desc += "─".repeat(42) + "\n";
+    desc += `Total Markets: ${prices.length}\n`;
+  }
+  desc += "```";
+  return e.setDescription(desc);
+}
+
+function betaGhostResultsEmbed(results) {
+  const e = header().setColor(COLORS.PRIMARY).setTitle("BETA | Ghost Redeem");
+  const ghosted = results.filter(r => r.ghosted);
+  const used = results.filter(r => r.status === "redeemed");
+  const expired = results.filter(r => r.status === "expired");
+  const invalid = results.filter(r => r.status === "invalid");
+  const errors = results.filter(r => r.status === "error");
+
+  let desc = "```\n";
+  desc += pad("Total") + results.length + "\n";
+  desc += pad("Ghost Held") + ghosted.length + "\n";
+  desc += pad("Already Used") + used.length + "\n";
+  desc += pad("Expired") + expired.length + "\n";
+  desc += pad("Invalid") + invalid.length + "\n";
+  desc += pad("Errors") + errors.length + "\n";
+  desc += "─".repeat(36) + "\n";
+  if (ghosted.length > 0) {
+    desc += "\nActive (Ghost Held):\n";
+    for (const g of ghosted.slice(0, 15)) {
+      desc += `  ${g.code.slice(0, 8)}... → ${g.title}\n`;
+    }
+  }
+  desc += "```";
+  return e.setDescription(desc);
+}
+
+function betaReceiptProgressEmbed(checked, total, stats = {}) {
+  const pct = total > 0 ? Math.round((checked / total) * 100) : 0;
+  const bar = "█".repeat(Math.floor(pct / 5)) + "░".repeat(20 - Math.floor(pct / 5));
+  const e = header().setColor(COLORS.PRIMARY).setTitle("BETA | Receipt Miner");
+  let desc = "```\n";
+  desc += `[${bar}] ${pct}%\n`;
+  desc += pad("Progress") + `${checked}/${total}\n`;
+  desc += pad("Hits") + (stats.hits || 0) + "\n";
+  desc += pad("Empty") + (stats.empty || 0) + "\n";
+  desc += pad("Failed") + (stats.fails || 0) + "\n";
+  desc += "```";
+  return e.setDescription(desc);
+}
+
+function betaReceiptResultsEmbed(stats) {
+  const e = header().setColor(COLORS.PRIMARY).setTitle("BETA | Receipt Miner — Results");
+  let desc = "```\n";
+  desc += pad("Total") + stats.total + "\n";
+  desc += pad("Hits") + stats.hits + "\n";
+  desc += pad("Empty") + stats.empty + "\n";
+  desc += pad("Failed") + stats.fails + "\n";
+  desc += pad("Total Receipts") + stats.totalReceipts + "\n";
+  if (stats.elapsed) desc += pad("Time") + stats.elapsed + "\n";
+  desc += "```";
+  return e.setDescription(desc);
+}
+
+function betaPaymentProgressEmbed(checked, total, stats = {}) {
+  const pct = total > 0 ? Math.round((checked / total) * 100) : 0;
+  const bar = "█".repeat(Math.floor(pct / 5)) + "░".repeat(20 - Math.floor(pct / 5));
+  const e = header().setColor(COLORS.PRIMARY).setTitle("BETA | Payment Arsenal");
+  let desc = "```\n";
+  desc += `[${bar}] ${pct}%\n`;
+  desc += pad("Progress") + `${checked}/${total}\n`;
+  desc += pad("Hits") + (stats.hits || 0) + "\n";
+  desc += pad("Empty") + (stats.empty || 0) + "\n";
+  desc += pad("Failed") + (stats.fails || 0) + "\n";
+  desc += "```";
+  return e.setDescription(desc);
+}
+
+function betaPaymentResultsEmbed(stats) {
+  const e = header().setColor(COLORS.PRIMARY).setTitle("BETA | Payment Arsenal — Results");
+  let desc = "```\n";
+  desc += pad("Total") + stats.total + "\n";
+  desc += pad("With Payment") + stats.hits + "\n";
+  desc += pad("Empty") + stats.empty + "\n";
+  desc += pad("Failed") + stats.fails + "\n";
+  desc += pad("Total Cards") + stats.totalCards + "\n";
+  desc += pad("Total Subs") + stats.totalSubs + "\n";
+  if (stats.elapsed) desc += pad("Time") + stats.elapsed + "\n";
+  desc += "```";
+  return e.setDescription(desc);
+}
+
+function betaEntitleProgressEmbed(checked, total, stats = {}) {
+  const pct = total > 0 ? Math.round((checked / total) * 100) : 0;
+  const bar = "█".repeat(Math.floor(pct / 5)) + "░".repeat(20 - Math.floor(pct / 5));
+  const e = header().setColor(COLORS.PRIMARY).setTitle("BETA | Entitlement Scanner");
+  let desc = "```\n";
+  desc += `[${bar}] ${pct}%\n`;
+  desc += pad("Progress") + `${checked}/${total}\n`;
+  desc += pad("Hits") + (stats.hits || 0) + "\n";
+  desc += pad("Empty") + (stats.empty || 0) + "\n";
+  desc += pad("Failed") + (stats.fails || 0) + "\n";
+  desc += "```";
+  return e.setDescription(desc);
+}
+
+function betaEntitleResultsEmbed(stats) {
+  const e = header().setColor(COLORS.PRIMARY).setTitle("BETA | Entitlement Scanner — Results");
+  let desc = "```\n";
+  desc += pad("Total") + stats.total + "\n";
+  desc += pad("With Content") + stats.hits + "\n";
+  desc += pad("Empty") + stats.empty + "\n";
+  desc += pad("Failed") + stats.fails + "\n";
+  desc += pad("Total Items") + stats.totalItems + "\n";
+  desc += pad("Total Value") + "$" + stats.totalValue + "\n";
+  if (stats.elapsed) desc += pad("Time") + stats.elapsed + "\n";
+  desc += "```";
+  return e.setDescription(desc);
+}
