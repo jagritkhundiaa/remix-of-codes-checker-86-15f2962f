@@ -149,6 +149,20 @@ const commands = [
     .addAttachmentOption((o) => o.setName("accounts_file").setDescription("Text file with email:password").setRequired(false))
     .addStringOption((o) => o.setName("accounts").setDescription("Accounts (comma-separated)").setRequired(false))
     .addIntegerOption((o) => o.setName("threads").setDescription("Threads (1-30, default 10)").setMinValue(1).setMaxValue(30)),
+
+  new SlashCommandBuilder()
+    .setName("beta-farm")
+    .setDescription("[BETA] Rewards Auto-Farmer — automated Bing searches for points")
+    .addAttachmentOption((o) => o.setName("accounts_file").setDescription("Text file with email:password").setRequired(false))
+    .addStringOption((o) => o.setName("accounts").setDescription("Accounts (comma-separated)").setRequired(false))
+    .addIntegerOption((o) => o.setName("threads").setDescription("Threads (1-5, default 3)").setMinValue(1).setMaxValue(5)),
+
+  new SlashCommandBuilder()
+    .setName("beta-bridge")
+    .setDescription("[BETA] Cross-Service Bridge — check linked Xbox/Minecraft/EA/Rewards")
+    .addAttachmentOption((o) => o.setName("accounts_file").setDescription("Text file with email:password").setRequired(false))
+    .addStringOption((o) => o.setName("accounts").setDescription("Accounts (comma-separated)").setRequired(false))
+    .addIntegerOption((o) => o.setName("threads").setDescription("Threads (1-20, default 10)").setMinValue(1).setMaxValue(20)),
 ].map((c) => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(BOT_TOKEN);
