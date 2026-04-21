@@ -1699,7 +1699,7 @@ function betaAioResultsEmbed(stats) {
   desc += pad("Receipts") + stats.totalReceipts + "\n";
   desc += pad("Total Spent") + "$" + stats.totalSpent + "\n";
   desc += pad("Cards Found") + stats.totalCards + "\n";
-  desc += pad("Game Pass") + stats.totalGamePass + "\n";
+  desc += pad("Xbox Subs") + stats.totalGamePass + "\n";
   desc += pad("Subscriptions") + stats.totalSubs + "\n";
   desc += pad("Entitlements") + stats.totalEntitlements + "\n";
   desc += pad("Content Value") + "$" + stats.totalValue + "\n";
