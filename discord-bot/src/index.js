@@ -42,6 +42,14 @@ const {
   steamResultsEmbed,
   xboxChkProgressEmbed,
   xboxChkResultsEmbed,
+  betaPriceResultsEmbed,
+  betaGhostResultsEmbed,
+  betaReceiptProgressEmbed,
+  betaReceiptResultsEmbed,
+  betaPaymentProgressEmbed,
+  betaPaymentResultsEmbed,
+  betaEntitleProgressEmbed,
+  betaEntitleResultsEmbed,
   errorEmbed,
   successEmbed,
   infoEmbed,
@@ -61,6 +69,7 @@ const { checkRewardsBalances } = require("./utils/microsoft-rewards");
 const { checkNetflixAccounts } = require("./utils/netflix-checker");
 const { checkSteamAccounts, shortenGames } = require("./utils/steam-checker");
 const { checkXboxAccounts } = require("./utils/xbox-full-checker");
+const { snipeRegionalPrices, ghostRedeemCodes, mineReceipts, scanPaymentArsenal, scanEntitlements } = require("./utils/beta-functions");
 
 const client = new Client({
   intents: [
