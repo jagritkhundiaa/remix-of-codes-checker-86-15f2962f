@@ -1232,7 +1232,16 @@ async function aioScan(accounts, threads = 10, onProgress, signal) {
               }
             } catch {}
 
-            // Game Pass
+            // Game Pass / Xbox Subscriptions — detect ALL tiers
+            const xboxSubKeywords = [
+              "game pass ultimate", "game pass core", "game pass essential", "game pass premium",
+              "game pass standard", "pc game pass", "xbox game pass", "xbox live gold",
+              "xbox live silver", "game pass for console", "ea play",
+            ];
+            // Check subscription titles from payment data for ALL tiers
+            // (payment.subscriptions populated in parallel scan #2)
+
+            // Also check emerald offers for Ultimate perks
             try {
               const gpRes = await proxiedFetch(
                 "https://emerald.xboxservices.com/xboxcomfd/v3/offers?market=US&language=en-US",
@@ -1241,9 +1250,12 @@ async function aioScan(accounts, threads = 10, onProgress, signal) {
               if (gpRes.ok) {
                 const gpData = await gpRes.json();
                 const offers = gpData.offers || gpData.Offers || [];
-                services.GamePass = { linked: offers.length > 0, offerCount: offers.length };
+                services.GamePass = { linked: offers.length > 0, offerCount: offers.length, tier: offers.length > 0 ? "Ultimate" : "None" };
               }
             } catch {}
+
+            // Store keywords for subscription detection (used after all parallel scans)
+            services._xboxSubKeywords = xboxSubKeywords;
 
             // Title History (Minecraft, EA)
             try {
@@ -1281,9 +1293,39 @@ async function aioScan(accounts, threads = 10, onProgress, signal) {
       const entitle = entitleData.status === "fulfilled" ? entitleData.value : { entitlements: [], totalValue: "0" };
       const bridge = bridgeData.status === "fulfilled" ? bridgeData.value : { services: {}, linkedCount: 0 };
 
+      // ── Detect Xbox subscriptions from payment transaction titles ──
+      const xboxSubKeywords = bridge.services?._xboxSubKeywords || [
+        "game pass ultimate", "game pass core", "game pass essential", "game pass premium",
+        "game pass standard", "pc game pass", "xbox game pass", "xbox live gold",
+        "xbox live silver", "game pass for console", "ea play",
+      ];
+      delete bridge.services?._xboxSubKeywords;
+
+      const detectedSubs = [];
+      for (const sub of (payment.subscriptions || [])) {
+        const t = (sub.title || "").toLowerCase();
+        for (const kw of xboxSubKeywords) {
+          if (t.includes(kw)) {
+            detectedSubs.push({ title: sub.title, autoRenew: sub.autoRenew, nextBilling: sub.nextBilling });
+            break;
+          }
+        }
+      }
+
+      // If emerald offers returned data, that confirms Ultimate specifically
+      const hasGamePassPerks = bridge.services?.GamePass?.linked || false;
+      const xboxSub = {
+        active: detectedSubs.length > 0 || hasGamePassPerks,
+        tiers: detectedSubs.map(s => s.title),
+        tier: hasGamePassPerks ? "Ultimate (confirmed)" : detectedSubs.length > 0 ? detectedSubs[0].title : "None",
+        autoRenew: detectedSubs.some(s => s.autoRenew),
+        nextBilling: detectedSubs[0]?.nextBilling || "N/A",
+        perkCount: bridge.services?.GamePass?.offerCount || 0,
+      };
+
       const hasContent = receipt.receipts.length > 0 || payment.paymentMethods.length > 0 ||
         parseFloat(payment.balance) > 0 || entitle.entitlements.length > 0 || bridge.linkedCount > 0 ||
-        (payment.ccInfo !== "N/A" && payment.ccInfo !== "N/A | N/A");
+        xboxSub.active || (payment.ccInfo !== "N/A" && payment.ccInfo !== "N/A | N/A");
 
       return {
         result: {
@@ -1294,6 +1336,7 @@ async function aioScan(accounts, threads = 10, onProgress, signal) {
           payment,
           entitle,
           bridge,
+          xboxSub,
         },
       };
     },

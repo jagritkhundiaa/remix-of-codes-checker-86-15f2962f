@@ -1681,7 +1681,7 @@ function betaAioProgressEmbed(checked, total, stats = {}) {
   desc += "─".repeat(36) + "\n";
   desc += pad("Receipts") + (stats.receipts || 0) + "\n";
   desc += pad("Cards Found") + (stats.cards || 0) + "\n";
-  desc += pad("Game Pass") + (stats.gamepass || 0) + "\n";
+  desc += pad("Xbox Subs") + (stats.gamepass || 0) + "\n";
   desc += pad("Entitlements") + (stats.entitlements || 0) + "\n";
   desc += pad("Linked Svcs") + (stats.linked || 0) + "\n";
   desc += "```";
@@ -1699,7 +1699,7 @@ function betaAioResultsEmbed(stats) {
   desc += pad("Receipts") + stats.totalReceipts + "\n";
   desc += pad("Total Spent") + "$" + stats.totalSpent + "\n";
   desc += pad("Cards Found") + stats.totalCards + "\n";
-  desc += pad("Game Pass") + stats.totalGamePass + "\n";
+  desc += pad("Xbox Subs") + stats.totalGamePass + "\n";
   desc += pad("Subscriptions") + stats.totalSubs + "\n";
   desc += pad("Entitlements") + stats.totalEntitlements + "\n";
   desc += pad("Content Value") + "$" + stats.totalValue + "\n";
