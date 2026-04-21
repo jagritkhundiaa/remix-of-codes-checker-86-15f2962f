@@ -1474,6 +1474,10 @@ module.exports = {
   betaPaymentResultsEmbed,
   betaEntitleProgressEmbed,
   betaEntitleResultsEmbed,
+  betaFarmProgressEmbed,
+  betaFarmResultsEmbed,
+  betaBridgeProgressEmbed,
+  betaBridgeResultsEmbed,
 };
 
 // ════════════════════════════════════════════════════════════
