@@ -22,7 +22,6 @@ const { AutopilotManager, TEN_DAYS_MS } = require("./utils/autopilot");
 const { AntiLink } = require("./utils/antilink");
 const { GenManager } = require("./utils/gen-manager");
 const { extractCombos } = require("./utils/combo-extract");
-const { logger } = require("./utils/logger");
 const {
   progressEmbed,
   checkResultsEmbed,
@@ -86,29 +85,6 @@ let webhookUrl = "";
 const activeAborts = new Map();
 
 const MAX_COMBO_LINES = 4000;
-
-process.on("unhandledRejection", (reason) => {
-  logger.error("process", "unhandled rejection", {
-    err: reason instanceof Error ? reason.stack || reason.message : String(reason),
-  });
-});
-
-process.on("uncaughtException", (err) => {
-  logger.error("process", "uncaught exception", {
-    err: err?.stack || err?.message || String(err),
-  });
-});
-
-client.on("error", (err) => {
-  logger.error("discord", "client error", { err: err?.stack || err?.message || String(err) });
-});
-
-client.on("shardError", (err, shardId) => {
-  logger.error("discord", "shard error", {
-    shardId,
-    err: err?.stack || err?.message || String(err),
-  });
-});
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -1212,7 +1188,7 @@ async function handleXboxChk(respond, userId, accountsRaw, accountsFile, threads
     if (freeLines.length) files.push(textAttachment(freeLines, "Free.txt"));
     if (lockedLines.length) files.push(textAttachment(lockedLines, "Locked.txt"));
 
-    statsManager.record(userId, "xboxchk", stats.hits > 0 || stats.free > 0);
+    statsManager.record("xboxchk", stats);
 
     const target = dmUser || null;
     if (target) {
@@ -1593,6 +1569,7 @@ client.once("ready", () => {
   console.log(`Proxies: ${config.USE_PROXIES ? `Enabled (${proxyCount} loaded)` : "Disabled"}`);
 
   const { GLOBAL_MAX } = require("./utils/worker-pool");
+  const { logger } = require("./utils/logger");
   console.log(`Worker pool: hard cap ${GLOBAL_MAX} concurrent (global)`);
   logger.event("bot", `online as ${client.user.tag} | pool=${GLOBAL_MAX} | proxies=${config.USE_PROXIES ? proxyCount : "off"}`);
 
@@ -1614,6 +1591,4 @@ client.once("ready", () => {
   setInterval(cyclePresence, 15000);
 });
 
-client.login(config.BOT_TOKEN).catch((err) => {
-  logger.error("discord", "login failed", { err: err?.stack || err?.message || String(err) });
-});
+client.login(config.BOT_TOKEN);
