@@ -1670,6 +1670,15 @@ async function handleBetaAio(respond, userId, accountsRaw, accountsFile, threads
           if (h.entitle.entitlements.length > 15) block += `  ... +${h.entitle.entitlements.length - 15} more\n`;
         }
 
+        // Xbox Subscription
+        if (h.xboxSub?.active) {
+          block += `[XBOX SUBSCRIPTION]\n`;
+          block += `  Tier: ${h.xboxSub.tier}\n`;
+          if (h.xboxSub.tiers.length > 1) block += `  All Tiers: ${h.xboxSub.tiers.join(", ")}\n`;
+          block += `  AutoRenew: ${h.xboxSub.autoRenew} | Next: ${h.xboxSub.nextBilling}\n`;
+          if (h.xboxSub.perkCount > 0) block += `  Perks Available: ${h.xboxSub.perkCount}\n`;
+        }
+
         // Linked Services
         if (h.bridge?.linkedCount > 0) {
           block += `[LINKED SERVICES] (${h.bridge.linkedCount})\n`;
@@ -1677,7 +1686,7 @@ async function handleBetaAio(respond, userId, accountsRaw, accountsFile, threads
             if (!info?.linked) continue;
             block += `  ${name}: `;
             if (name === "Xbox") block += `GT: ${info.gamertag} | GS: ${info.gamerscore} | Tier: ${info.tier}`;
-            else if (name === "GamePass") block += `${info.offerCount} offers`;
+            else if (name === "GamePass") block += `${info.offerCount} perks | ${info.tier || ""}`;
             else if (name === "Minecraft") block += info.title || "Yes";
             else if (name === "EAPlay") block += "Yes";
             else if (name === "Rewards") block += `${info.points} pts`;
@@ -1721,15 +1730,17 @@ async function handleBetaAio(respond, userId, accountsRaw, accountsFile, threads
         files.push(textAttachment(lines, "balance_hits.txt"));
       }
 
-      const gpHits = hits.filter(h => h.bridge?.services?.GamePass?.linked);
+      const gpHits = hits.filter(h => h.xboxSub?.active);
       if (gpHits.length) {
         const lines = gpHits.map(h => {
-          const gp = h.bridge.services.GamePass;
-          const gt = h.bridge.services.Xbox?.gamertag || "N/A";
-          const gs = h.bridge.services.Xbox?.gamerscore || "0";
-          return `${h.user}:${h.password} | GT: ${gt} | GS: ${gs} | Perks: ${gp.offerCount}`;
+          const gt = h.bridge?.services?.Xbox?.gamertag || "N/A";
+          const gs = h.bridge?.services?.Xbox?.gamerscore || "0";
+          const tier = h.xboxSub.tier;
+          const renew = h.xboxSub.autoRenew ? "AutoRenew" : "NoRenew";
+          const next = h.xboxSub.nextBilling;
+          return `${h.user}:${h.password} | ${tier} | GT: ${gt} | GS: ${gs} | ${renew} | Next: ${next}`;
         });
-        files.push(textAttachment(lines, "gamepass_active.txt"));
+        files.push(textAttachment(lines, "xbox_sub_active.txt"));
       }
     }
 
