@@ -1961,6 +1961,16 @@ client.on("messageCreate", async (message) => {
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.beta-entitle <accounts>` or attach .txt")] });
       await handleBetaEntitle(respond, message.author.id, accountsRaw, attachment, 10, message.author);
+    } else if (cmd === "beta-farm" || cmd === "betafarm") {
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.beta-farm <accounts>` or attach .txt")] });
+      await handleBetaFarm(respond, message.author.id, accountsRaw, attachment, 3, message.author);
+    } else if (cmd === "beta-bridge" || cmd === "betabridge") {
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.beta-bridge <accounts>` or attach .txt")] });
+      await handleBetaBridge(respond, message.author.id, accountsRaw, attachment, 10, message.author);
     }
   } catch (err) {
     console.error(`Prefix command error [${cmd}]:`, err);
