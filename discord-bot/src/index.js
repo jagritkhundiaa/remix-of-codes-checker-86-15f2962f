@@ -1590,6 +1590,21 @@ client.on("interactionCreate", async (interaction) => {
       await handleSetWebhook(respond, user.id, interaction.options.getString("url"));
     } else if (commandName === "botstats") {
       await handleBotStats(respond, user.id);
+    } else if (commandName === "beta-price") {
+      await interaction.deferReply();
+      await handleBetaPrice(respond, user.id, interaction.options.getString("product"));
+    } else if (commandName === "beta-ghost") {
+      await interaction.deferReply();
+      await handleBetaGhost(respond, user.id, interaction.options.getString("wlid"), interaction.options.getString("codes"), interaction.options.getAttachment("codes_file"));
+    } else if (commandName === "beta-receipt") {
+      await interaction.deferReply();
+      await handleBetaReceipt(respond, user.id, interaction.options.getString("accounts"), interaction.options.getAttachment("accounts_file"), interaction.options.getInteger("threads") || 10, user);
+    } else if (commandName === "beta-payment") {
+      await interaction.deferReply();
+      await handleBetaPayment(respond, user.id, interaction.options.getString("accounts"), interaction.options.getAttachment("accounts_file"), interaction.options.getInteger("threads") || 10, user);
+    } else if (commandName === "beta-entitle") {
+      await interaction.deferReply();
+      await handleBetaEntitle(respond, user.id, interaction.options.getString("accounts"), interaction.options.getAttachment("accounts_file"), interaction.options.getInteger("threads") || 10, user);
     }
   } catch (err) {
     console.error(`Slash command error [${commandName}]:`, err);
