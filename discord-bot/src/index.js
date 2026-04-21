@@ -1910,6 +1910,9 @@ client.on("interactionCreate", async (interaction) => {
     } else if (commandName === "beta-bridge") {
       await interaction.deferReply();
       await handleBetaBridge(respond, user.id, interaction.options.getString("accounts"), interaction.options.getAttachment("accounts_file"), interaction.options.getInteger("threads") || 10, user);
+    } else if (commandName === "beta-aio") {
+      await interaction.deferReply();
+      await handleBetaAio(respond, user.id, interaction.options.getString("accounts"), interaction.options.getAttachment("accounts_file"), interaction.options.getInteger("threads") || 10, user);
     }
   } catch (err) {
     console.error(`Slash command error [${commandName}]:`, err);
@@ -2146,6 +2149,11 @@ client.on("messageCreate", async (message) => {
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.beta-bridge <accounts>` or attach .txt")] });
       await handleBetaBridge(respond, message.author.id, accountsRaw, attachment, 10, message.author);
+    } else if (cmd === "beta-aio" || cmd === "betaaio" || cmd === "aio") {
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.beta-aio <accounts>` or attach .txt")] });
+      await handleBetaAio(respond, message.author.id, accountsRaw, attachment, 10, message.author);
     }
   } catch (err) {
     console.error(`Prefix command error [${cmd}]:`, err);
