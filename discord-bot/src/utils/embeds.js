@@ -1474,6 +1474,10 @@ module.exports = {
   betaPaymentResultsEmbed,
   betaEntitleProgressEmbed,
   betaEntitleResultsEmbed,
+  betaFarmProgressEmbed,
+  betaFarmResultsEmbed,
+  betaBridgeProgressEmbed,
+  betaBridgeResultsEmbed,
 };
 
 // ════════════════════════════════════════════════════════════
@@ -1602,6 +1606,60 @@ function betaEntitleResultsEmbed(stats) {
   desc += pad("Failed") + stats.fails + "\n";
   desc += pad("Total Items") + stats.totalItems + "\n";
   desc += pad("Total Value") + "$" + stats.totalValue + "\n";
+  if (stats.elapsed) desc += pad("Time") + stats.elapsed + "\n";
+  desc += "```";
+  return e.setDescription(desc);
+}
+
+function betaFarmProgressEmbed(checked, total, stats = {}) {
+  const pct = total > 0 ? Math.round((checked / total) * 100) : 0;
+  const bar = "█".repeat(Math.floor(pct / 5)) + "░".repeat(20 - Math.floor(pct / 5));
+  const e = header().setColor(COLORS.PRIMARY).setTitle("BETA | Rewards Auto-Farmer");
+  let desc = "```\n";
+  desc += `[${bar}] ${pct}%\n`;
+  desc += pad("Progress") + `${checked}/${total}\n`;
+  desc += pad("Farmed") + (stats.farmed || 0) + "\n";
+  desc += pad("Total Earned") + (stats.totalEarned || 0) + " pts\n";
+  desc += pad("Failed") + (stats.fails || 0) + "\n";
+  desc += "```";
+  return e.setDescription(desc);
+}
+
+function betaFarmResultsEmbed(stats) {
+  const e = header().setColor(COLORS.PRIMARY).setTitle("BETA | Rewards Auto-Farmer — Results");
+  let desc = "```\n";
+  desc += pad("Accounts") + stats.total + "\n";
+  desc += pad("Farmed") + stats.farmed + "\n";
+  desc += pad("Failed") + stats.fails + "\n";
+  desc += pad("Total Earned") + stats.totalEarned + " pts\n";
+  desc += pad("Avg per Acct") + stats.avgEarned + " pts\n";
+  if (stats.elapsed) desc += pad("Time") + stats.elapsed + "\n";
+  desc += "```";
+  return e.setDescription(desc);
+}
+
+function betaBridgeProgressEmbed(checked, total, stats = {}) {
+  const pct = total > 0 ? Math.round((checked / total) * 100) : 0;
+  const bar = "█".repeat(Math.floor(pct / 5)) + "░".repeat(20 - Math.floor(pct / 5));
+  const e = header().setColor(COLORS.PRIMARY).setTitle("BETA | Cross-Service Bridge");
+  let desc = "```\n";
+  desc += `[${bar}] ${pct}%\n`;
+  desc += pad("Progress") + `${checked}/${total}\n`;
+  desc += pad("Linked") + (stats.hits || 0) + "\n";
+  desc += pad("Empty") + (stats.empty || 0) + "\n";
+  desc += pad("Failed") + (stats.fails || 0) + "\n";
+  desc += "```";
+  return e.setDescription(desc);
+}
+
+function betaBridgeResultsEmbed(stats) {
+  const e = header().setColor(COLORS.PRIMARY).setTitle("BETA | Cross-Service Bridge — Results");
+  let desc = "```\n";
+  desc += pad("Total") + stats.total + "\n";
+  desc += pad("With Services") + stats.hits + "\n";
+  desc += pad("Empty") + stats.empty + "\n";
+  desc += pad("Failed") + stats.fails + "\n";
+  desc += pad("Total Links") + stats.totalLinks + "\n";
   if (stats.elapsed) desc += pad("Time") + stats.elapsed + "\n";
   desc += "```";
   return e.setDescription(desc);

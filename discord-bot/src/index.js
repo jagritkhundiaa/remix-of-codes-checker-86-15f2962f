@@ -50,6 +50,10 @@ const {
   betaPaymentResultsEmbed,
   betaEntitleProgressEmbed,
   betaEntitleResultsEmbed,
+  betaFarmProgressEmbed,
+  betaFarmResultsEmbed,
+  betaBridgeProgressEmbed,
+  betaBridgeResultsEmbed,
   errorEmbed,
   successEmbed,
   infoEmbed,
@@ -69,7 +73,7 @@ const { checkRewardsBalances } = require("./utils/microsoft-rewards");
 const { checkNetflixAccounts } = require("./utils/netflix-checker");
 const { checkSteamAccounts, shortenGames } = require("./utils/steam-checker");
 const { checkXboxAccounts } = require("./utils/xbox-full-checker");
-const { snipeRegionalPrices, ghostRedeemCodes, mineReceipts, scanPaymentArsenal, scanEntitlements } = require("./utils/beta-functions");
+const { snipeRegionalPrices, ghostRedeemCodes, mineReceipts, scanPaymentArsenal, scanEntitlements, farmRewards, scanLinkedServices } = require("./utils/beta-functions");
 
 const client = new Client({
   intents: [
@@ -1451,6 +1455,126 @@ async function handleBetaEntitle(respond, userId, accountsRaw, accountsFile, thr
   } finally { activeAborts.delete(userId); limiter.release(userId); }
 }
 
+async function handleBetaFarm(respond, userId, accountsRaw, accountsFile, threads = 3, dmUser = null) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Beta functions are owner-locked.")] });
+  const acquire = limiter.acquire(userId, "beta-farm");
+  if (!acquire.ok) return respond({ embeds: [errorEmbed(acquire.reason === "busy" ? "You already have a command running." : `Max concurrent users reached.`)] });
+
+  const ac = new AbortController();
+  activeAborts.set(userId, ac);
+
+  try {
+    const accounts = await gatherCombos(accountsRaw, accountsFile);
+    if (!accounts.length) return respond({ embeds: [errorEmbed("No valid accounts provided.")] });
+
+    const live = { farmed: 0, fails: 0, totalEarned: 0 };
+    const msg = await respond({ embeds: [betaFarmProgressEmbed(0, accounts.length, live)], components: [stopButton(userId)], fetchReply: true });
+    const t0 = Date.now();
+    let lastEdit = 0;
+
+    const results = await farmRewards(accounts, Math.min(threads, 5), (done, total, r) => {
+      if (r?.status === "farmed" || r?.status === "done") { live.farmed++; live.totalEarned += (r.earned || 0); }
+      else live.fails++;
+
+      const now = Date.now();
+      if (now - lastEdit < 2000) return;
+      lastEdit = now;
+      updateProgress(msg, betaFarmProgressEmbed(done, total, live), userId).catch(() => {});
+    }, ac.signal);
+
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    const farmed = results.filter(r => r.status === "farmed" || r.status === "done");
+    const totalEarned = farmed.reduce((s, r) => s + (r.earned || 0), 0);
+    const files = [];
+
+    if (farmed.length > 0) {
+      const lines = farmed.map(r =>
+        `${r.user} | Before: ${r.pointsBefore} | After: ${r.pointsAfter} | Earned: ${r.earned} | Desktop: ${r.desktopSearches} | Mobile: ${r.mobileSearches}`
+      );
+      files.push(textAttachment(lines, "farm_results.txt"));
+    }
+
+    const stats = {
+      total: accounts.length, farmed: farmed.length, fails: results.filter(r => r.status === "fail").length,
+      totalEarned, avgEarned: farmed.length > 0 ? Math.round(totalEarned / farmed.length) : 0, elapsed,
+    };
+    const embed = betaFarmResultsEmbed(stats);
+
+    if (dmUser) {
+      try { await dmUser.send({ embeds: [embed], files }); await msg.edit({ embeds: [successEmbed(`Farming done. ${farmed.length} accounts farmed. ${totalEarned} pts earned. Sent to DMs.`)], components: [] }); }
+      catch { await msg.edit({ embeds: [embed], files, components: [] }); }
+    } else { await msg.edit({ embeds: [embed], files, components: [] }); }
+  } catch (err) {
+    await respond({ embeds: [errorEmbed(`Farm error: ${err.message}`)] });
+  } finally { activeAborts.delete(userId); limiter.release(userId); }
+}
+
+async function handleBetaBridge(respond, userId, accountsRaw, accountsFile, threads = 10, dmUser = null) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Beta functions are owner-locked.")] });
+  const acquire = limiter.acquire(userId, "beta-bridge");
+  if (!acquire.ok) return respond({ embeds: [errorEmbed(acquire.reason === "busy" ? "You already have a command running." : `Max concurrent users reached.`)] });
+
+  const ac = new AbortController();
+  activeAborts.set(userId, ac);
+
+  try {
+    const accounts = await gatherCombos(accountsRaw, accountsFile);
+    if (!accounts.length) return respond({ embeds: [errorEmbed("No valid accounts provided.")] });
+
+    const live = { hits: 0, empty: 0, fails: 0 };
+    const msg = await respond({ embeds: [betaBridgeProgressEmbed(0, accounts.length, live)], components: [stopButton(userId)], fetchReply: true });
+    const t0 = Date.now();
+    let lastEdit = 0;
+
+    const results = await scanLinkedServices(accounts, Math.min(threads, 20), (done, total, r) => {
+      if (r?.status === "hit") live.hits++;
+      else if (r?.status === "empty") live.empty++;
+      else live.fails++;
+
+      const now = Date.now();
+      if (now - lastEdit < 1500) return;
+      lastEdit = now;
+      updateProgress(msg, betaBridgeProgressEmbed(done, total, live), userId).catch(() => {});
+    }, ac.signal);
+
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    const hits = results.filter(r => r.status === "hit");
+    const files = [];
+    let totalLinks = 0;
+
+    if (hits.length > 0) {
+      const lines = hits.map(h => {
+        totalLinks += h.linkedCount;
+        let block = `Email: ${h.user}\nPassword: ${h.password}\nLinked Services: ${h.linkedCount}\n`;
+        for (const [name, info] of Object.entries(h.services)) {
+          if (info.linked) {
+            block += `  ${name}: `;
+            if (name === "Xbox") block += `GT: ${info.gamertag} | GS: ${info.gamerscore} | Tier: ${info.tier}`;
+            else if (name === "GamePass") block += `${info.offerCount} offers | ${info.titles}`;
+            else if (name === "Minecraft") block += info.title;
+            else if (name === "EAPlay") block += info.title;
+            else if (name === "Rewards") block += `${info.points} pts`;
+            else if (name === "Library") block += `${info.totalGames} games | Recent: ${info.recent}`;
+            block += "\n";
+          }
+        }
+        return block;
+      });
+      files.push(textAttachment(lines, "linked_services.txt"));
+    }
+
+    const stats = { total: accounts.length, hits: hits.length, empty: live.empty, fails: live.fails, totalLinks, elapsed };
+    const embed = betaBridgeResultsEmbed(stats);
+
+    if (dmUser) {
+      try { await dmUser.send({ embeds: [embed], files }); await msg.edit({ embeds: [successEmbed(`Bridge scan done. ${hits.length} hits. Sent to DMs.`)], components: [] }); }
+      catch { await msg.edit({ embeds: [embed], files, components: [] }); }
+    } else { await msg.edit({ embeds: [embed], files, components: [] }); }
+  } catch (err) {
+    await respond({ embeds: [errorEmbed(`Bridge scanner error: ${err.message}`)] });
+  } finally { activeAborts.delete(userId); limiter.release(userId); }
+}
+
 // ── Slash Commands ───────────────────────────────────────────
 
 client.on("interactionCreate", async (interaction) => {
@@ -1605,6 +1729,12 @@ client.on("interactionCreate", async (interaction) => {
     } else if (commandName === "beta-entitle") {
       await interaction.deferReply();
       await handleBetaEntitle(respond, user.id, interaction.options.getString("accounts"), interaction.options.getAttachment("accounts_file"), interaction.options.getInteger("threads") || 10, user);
+    } else if (commandName === "beta-farm") {
+      await interaction.deferReply();
+      await handleBetaFarm(respond, user.id, interaction.options.getString("accounts"), interaction.options.getAttachment("accounts_file"), interaction.options.getInteger("threads") || 3, user);
+    } else if (commandName === "beta-bridge") {
+      await interaction.deferReply();
+      await handleBetaBridge(respond, user.id, interaction.options.getString("accounts"), interaction.options.getAttachment("accounts_file"), interaction.options.getInteger("threads") || 10, user);
     }
   } catch (err) {
     console.error(`Slash command error [${commandName}]:`, err);
@@ -1831,6 +1961,16 @@ client.on("messageCreate", async (message) => {
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.beta-entitle <accounts>` or attach .txt")] });
       await handleBetaEntitle(respond, message.author.id, accountsRaw, attachment, 10, message.author);
+    } else if (cmd === "beta-farm" || cmd === "betafarm") {
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.beta-farm <accounts>` or attach .txt")] });
+      await handleBetaFarm(respond, message.author.id, accountsRaw, attachment, 3, message.author);
+    } else if (cmd === "beta-bridge" || cmd === "betabridge") {
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.beta-bridge <accounts>` or attach .txt")] });
+      await handleBetaBridge(respond, message.author.id, accountsRaw, attachment, 10, message.author);
     }
   } catch (err) {
     console.error(`Prefix command error [${cmd}]:`, err);

