@@ -1589,7 +1589,7 @@ async function handleBetaAio(respond, userId, accountsRaw, accountsFile, threads
     const accounts = await gatherCombos(accountsRaw, accountsFile);
     if (!accounts.length) return respond({ embeds: [errorEmbed("No valid accounts provided.")] });
 
-    const live = { hits: 0, empty: 0, fails: 0, receipts: 0, cards: 0, entitlements: 0, linked: 0 };
+    const live = { hits: 0, empty: 0, fails: 0, receipts: 0, cards: 0, entitlements: 0, linked: 0, gamepass: 0 };
     const msg = await respond({ embeds: [betaAioProgressEmbed(0, accounts.length, live)], components: [stopButton(userId)], fetchReply: true });
     const t0 = Date.now();
     let lastEdit = 0;
@@ -1601,6 +1601,7 @@ async function handleBetaAio(respond, userId, accountsRaw, accountsFile, threads
         live.cards += r.payment?.paymentMethods?.length || 0;
         live.entitlements += r.entitle?.entitlements?.length || 0;
         live.linked += r.bridge?.linkedCount || 0;
+        if (r.bridge?.services?.GamePass?.linked) live.gamepass++;
       } else if (r?.status === "empty") live.empty++;
       else live.fails++;
 
