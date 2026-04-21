@@ -1807,6 +1807,30 @@ client.on("messageCreate", async (message) => {
       await handleSetWebhook(respond, message.author.id, url);
     } else if (cmd === "botstats") {
       await handleBotStats(respond, message.author.id);
+    } else if (cmd === "beta-price" || cmd === "betaprice") {
+      const query = args.join(" ");
+      if (!query) return respond({ embeds: [infoEmbed("Usage", "`.beta-price <product name or ID>`")] });
+      await handleBetaPrice(respond, message.author.id, query);
+    } else if (cmd === "beta-ghost" || cmd === "betaghost") {
+      const codesRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!codesRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.beta-ghost <codes>` or attach .txt")] });
+      await handleBetaGhost(respond, message.author.id, null, codesRaw, attachment);
+    } else if (cmd === "beta-receipt" || cmd === "betareceipt") {
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.beta-receipt <accounts>` or attach .txt")] });
+      await handleBetaReceipt(respond, message.author.id, accountsRaw, attachment, 10, message.author);
+    } else if (cmd === "beta-payment" || cmd === "betapayment") {
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.beta-payment <accounts>` or attach .txt")] });
+      await handleBetaPayment(respond, message.author.id, accountsRaw, attachment, 10, message.author);
+    } else if (cmd === "beta-entitle" || cmd === "betaentitle") {
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.beta-entitle <accounts>` or attach .txt")] });
+      await handleBetaEntitle(respond, message.author.id, accountsRaw, attachment, 10, message.author);
     }
   } catch (err) {
     console.error(`Prefix command error [${cmd}]:`, err);
