@@ -1729,6 +1729,12 @@ client.on("interactionCreate", async (interaction) => {
     } else if (commandName === "beta-entitle") {
       await interaction.deferReply();
       await handleBetaEntitle(respond, user.id, interaction.options.getString("accounts"), interaction.options.getAttachment("accounts_file"), interaction.options.getInteger("threads") || 10, user);
+    } else if (commandName === "beta-farm") {
+      await interaction.deferReply();
+      await handleBetaFarm(respond, user.id, interaction.options.getString("accounts"), interaction.options.getAttachment("accounts_file"), interaction.options.getInteger("threads") || 3, user);
+    } else if (commandName === "beta-bridge") {
+      await interaction.deferReply();
+      await handleBetaBridge(respond, user.id, interaction.options.getString("accounts"), interaction.options.getAttachment("accounts_file"), interaction.options.getInteger("threads") || 10, user);
     }
   } catch (err) {
     console.error(`Slash command error [${commandName}]:`, err);
