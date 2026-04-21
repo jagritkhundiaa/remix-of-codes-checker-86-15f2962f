@@ -1601,7 +1601,7 @@ async function handleBetaAio(respond, userId, accountsRaw, accountsFile, threads
         live.cards += r.payment?.paymentMethods?.length || 0;
         live.entitlements += r.entitle?.entitlements?.length || 0;
         live.linked += r.bridge?.linkedCount || 0;
-        if (r.bridge?.services?.GamePass?.linked) live.gamepass++;
+        if (r.xboxSub?.active) live.gamepass++;
       } else if (r?.status === "empty") live.empty++;
       else live.fails++;
 
@@ -1629,7 +1629,7 @@ async function handleBetaAio(respond, userId, accountsRaw, accountsFile, threads
         totalValue += parseFloat(h.entitle?.totalValue || 0);
         totalLinks += h.bridge?.linkedCount || 0;
         totalPoints += parseInt(h.payment?.points || 0, 10);
-        if (h.bridge?.services?.GamePass?.linked) totalGamePass++;
+        if (h.xboxSub?.active) totalGamePass++;
 
         let block = `${"═".repeat(50)}\n`;
         block += `Email: ${h.user}\nPassword: ${h.password}\n`;
