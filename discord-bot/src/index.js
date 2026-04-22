@@ -1210,7 +1210,7 @@ async function handleXboxChk(respond, userId, accountsRaw, accountsFile, threads
   }
 }
 
-// ── MeowMal AIO Checker ─────────────────────────────────────
+// ── AIO Checker ─────────────────────────────────────────────
 
 async function handleAio(respond, userId, accountsRaw, accountsFile, threads = 30, dmUser = null) {
   if (!canUse(userId)) return respond({ embeds: [errorEmbed("You are not authorized.")] });
@@ -1653,7 +1653,7 @@ client.on("messageCreate", async (message) => {
     } else if (cmd === "aio") {
       const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
-      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.aio <accounts>` or attach .txt — MeowMal AIO Checker.")] });
+      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.aio <accounts>` or attach .txt — AIO Checker.")] });
       await handleAio(respond, message.author.id, accountsRaw, attachment, 30, message.author);
     } else if (cmd === "help") {
       return respond({ embeds: [helpOverviewEmbed(config.PREFIX)], components: [helpSelectMenu()] });
