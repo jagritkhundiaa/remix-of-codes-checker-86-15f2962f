@@ -1210,7 +1210,7 @@ async function handleXboxChk(respond, userId, accountsRaw, accountsFile, threads
   }
 }
 
-// ── MeowMal AIO Checker ─────────────────────────────────────
+// ── AIO Checker ─────────────────────────────────────────────
 
 async function handleAio(respond, userId, accountsRaw, accountsFile, threads = 30, dmUser = null) {
   if (!canUse(userId)) return respond({ embeds: [errorEmbed("You are not authorized.")] });
@@ -1305,13 +1305,14 @@ async function handleAio(respond, userId, accountsRaw, accountsFile, threads = 3
     statsManager.record("aio", s);
 
     const target = dmUser || null;
+    const uname = target ? target.username : null;
     if (target) {
       try {
         const dm = await target.createDM();
-        await dm.send({ embeds: [aioResultsEmbed(s)], files: attachments });
-        await msg.edit({ embeds: [successEmbed(`Done — ${s.checked} checked. Results sent to DMs.`)], components: [] });
+        await dm.send({ embeds: [aioResultsEmbed(s, { username: uname })], files: attachments });
+        await msg.edit({ embeds: [aioResultsEmbed(s, { dmSent: true, username: uname })], components: [] });
       } catch {
-        await msg.edit({ embeds: [aioResultsEmbed(s)], files: attachments, components: [] });
+        await msg.edit({ embeds: [aioResultsEmbed(s, { username: uname })], files: attachments, components: [] });
       }
     } else {
       await msg.edit({ embeds: [aioResultsEmbed(s)], files: attachments, components: [] });
@@ -1652,7 +1653,7 @@ client.on("messageCreate", async (message) => {
     } else if (cmd === "aio") {
       const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
-      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.aio <accounts>` or attach .txt — MeowMal AIO Checker.")] });
+      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.aio <accounts>` or attach .txt — AIO Checker.")] });
       await handleAio(respond, message.author.id, accountsRaw, attachment, 30, message.author);
     } else if (cmd === "help") {
       return respond({ embeds: [helpOverviewEmbed(config.PREFIX)], components: [helpSelectMenu()] });
