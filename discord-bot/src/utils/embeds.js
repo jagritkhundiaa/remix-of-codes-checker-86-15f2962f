@@ -1466,4 +1466,60 @@ module.exports = {
   unauthorisedEmbed,
   xboxChkProgressEmbed,
   xboxChkResultsEmbed,
+  aioProgressEmbed,
+  aioResultsEmbed,
 };
+
+// ── AIO (MeowMal) Embeds ─────────────────────────────────────
+
+function aioProgressEmbed(done, total, live = {}) {
+  const pct = total === 0 ? 0 : Math.round((done / total) * 100);
+  const barLen = 20;
+  const filled = Math.round((pct / 100) * barLen);
+  const bar = "#".repeat(filled) + "-".repeat(barLen - filled);
+
+  const lines = [
+    "MeowMal AIO Checker",
+    `  [${bar}] ${pct}%`,
+    "----------------------------",
+    `    > Checked          ${done}/${total}`,
+    `    > Hits             ${live.hits || 0}`,
+    `    > Bad              ${live.bad || 0}`,
+    `    > 2FA              ${live.twofa || 0}`,
+    `    > Valid Mail       ${live.valid_mail || 0}`,
+    `    > XGP              ${live.xgp || 0}`,
+    `    > XGPU             ${live.xgpu || 0}`,
+    `    > CPM              ${live.cpm || 0}`,
+    `    > Errors           ${live.errors || 0}`,
+  ];
+
+  return header()
+    .setColor(COLORS.PRIMARY)
+    .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
+}
+
+function aioResultsEmbed(s) {
+  const lines = [
+    "MeowMal AIO — Results",
+    "============================",
+    `    > Checked          ${s.checked || 0}`,
+    `    > Hits             ${s.hits || 0}`,
+    `    > Bad              ${s.bad || 0}`,
+    `    > 2FA              ${s.twofa || 0}`,
+    `    > Valid Mail       ${s.valid_mail || 0}`,
+    `    > XGP              ${s.xgp || 0}`,
+    `    > XGPU             ${s.xgpu || 0}`,
+    `    > MFA              ${s.mfa || 0}`,
+    `    > SFA              ${s.sfa || 0}`,
+    `    > Cards            ${s.payment_methods || 0}`,
+    `    > Errors           ${s.errors || 0}`,
+    "",
+    "----------------------------",
+    `  Time: ${s.elapsed || "?"}`,
+    `  CPM:  ${s.cpm || 0}`,
+  ];
+
+  return header()
+    .setColor(COLORS.PRIMARY)
+    .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
+}
