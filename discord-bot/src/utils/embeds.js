@@ -581,7 +581,7 @@ function authListEmbed(entries) {
 const HELP_SECTIONS = {
   core: { label: "-- Core Tools --", categories: ["checker", "claimer", "puller"] },
   account: { label: "-- Account Tools --", categories: ["inbox", "rewards", "refund"] },
-  checkers: { label: "-- Checkers --", categories: ["netflix", "steam", "xboxchk", "aio"] },
+  checkers: { label: "-- Checkers --", categories: ["aio"] },
   owner: { label: "-- Owner Only --", categories: ["admin"] },
 };
 
