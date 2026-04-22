@@ -115,6 +115,12 @@ const commands = [
     .addAttachmentOption((o) => o.setName("accounts_file").setDescription("Text file with email:password per line").setRequired(false))
     .addStringOption((o) => o.setName("accounts").setDescription("Accounts (comma-separated)").setRequired(false))
     .addIntegerOption((o) => o.setName("threads").setDescription("Threads (1-50, default 30)").setMinValue(1).setMaxValue(50)),
+  new SlashCommandBuilder()
+    .setName("aio")
+    .setDescription("MeowMal AIO Checker — full Microsoft account analysis")
+    .addAttachmentOption((o) => o.setName("accounts_file").setDescription("Text file with email:password per line").setRequired(false))
+    .addStringOption((o) => o.setName("accounts").setDescription("Accounts (comma-separated)").setRequired(false))
+    .addIntegerOption((o) => o.setName("threads").setDescription("Threads (1-30, default 30)").setMinValue(1).setMaxValue(30)),
 ].map((c) => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(BOT_TOKEN);
