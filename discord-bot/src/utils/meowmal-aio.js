@@ -13,6 +13,14 @@ const { HttpsProxyAgent } = require("https-proxy-agent");
 const { SocksProxyAgent } = require("socks-proxy-agent");
 const { logger } = require("./logger");
 
+let mc = null;
+try {
+  mc = require("minecraft-protocol");
+} catch {
+  // minecraft-protocol not installed — ban checking disabled
+}
+const MINECRAFT_AVAILABLE = !!mc;
+
 const log = logger.child("meowmal-aio");
 
 // ── Globals (per-run state, reset each run) ──────────────────
@@ -96,7 +104,7 @@ const config = {
   hypixellastlogin: true,
   hypixelbwstars: true,
   hypixelsbcoins: true,
-  hypixelban: false, // pyCraft not available in Node.js
+  hypixelban: MINECRAFT_AVAILABLE,
   optifinecape: true,
   optifine_cape: true,
   access: true,
@@ -120,7 +128,8 @@ const config = {
   setname: false,
   setskin: false,
   save_bad: true,
-  donut_stats: false,
+  donut_stats: true,
+  donut_api_key: "",
   check_credit_cards: true,
   check_paypal: true,
   check_purchase_history: true,
