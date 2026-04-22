@@ -1421,7 +1421,7 @@ function xboxChkResultsEmbed(stats) {
 }
 
 
-// ── AIO (MeowMal) Embeds ─────────────────────────────────────
+// ── AIO Checker Embeds ───────────────────────────────────────
 
 function aioProgressEmbed(done, total, live = {}) {
   const pct = total === 0 ? 0 : Math.round((done / total) * 100);
@@ -1430,21 +1430,31 @@ function aioProgressEmbed(done, total, live = {}) {
   const bar = "#".repeat(filled) + "-".repeat(barLen - filled);
 
   const lines = [
-    "MeowMal AIO Checker",
+    "Checking Accounts",
     `  [${bar}] ${pct}%`,
     "----------------------------",
-    `    > Checked          ${done}/${total}`,
-    `    > Hits             ${live.hits || 0}`,
-    `    > Bad              ${live.bad || 0}`,
-    `    > 2FA              ${live.twofa || 0}`,
-    `    > Valid Mail       ${live.valid_mail || 0}`,
+    "",
+    "  Live Stats",
+    "",
+    `  ${pad("Checked")}${done}/${total}`,
+    `  ${pad("Hits")}${live.hits || 0}`,
     `    > XGP              ${live.xgp || 0}`,
     `    > XGPU             ${live.xgpu || 0}`,
-    `    > MFA              ${live.mfa || 0}`,
-    `    > SFA              ${live.sfa || 0}`,
     `    > Cards            ${live.payment_methods || 0}`,
-    `    > CPM              ${live.cpm || 0}`,
-    `    > Errors           ${live.errors || 0}`,
+    `  ${pad("2FA")}${live.twofa || 0}`,
+    `  ${pad("Valid Mail")}${live.valid_mail || 0}`,
+    `  ${pad("Bad")}${live.bad || 0}`,
+    "",
+    "  Security",
+    "",
+    `  ${pad("MFA")}${live.mfa || 0}`,
+    `  ${pad("SFA")}${live.sfa || 0}`,
+    `  ${pad("Banned")}${live.banned || 0}`,
+    `  ${pad("Unbanned")}${live.unbanned || 0}`,
+    "",
+    "----------------------------",
+    `  ${pad("CPM")}${live.cpm || 0}`,
+    `  ${pad("Errors")}${live.errors || 0}`,
   ];
 
   return header()
@@ -1452,32 +1462,47 @@ function aioProgressEmbed(done, total, live = {}) {
     .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
 }
 
-function aioResultsEmbed(s) {
+function aioResultsEmbed(s, { dmSent, username } = {}) {
   const lines = [
-    "MeowMal AIO — Results",
-    "============================",
-    `    > Checked          ${s.checked || 0}`,
-    `    > Hits             ${s.hits || 0}`,
-    `    > Bad              ${s.bad || 0}`,
-    `    > 2FA              ${s.twofa || 0}`,
-    `    > Valid Mail       ${s.valid_mail || 0}`,
+    "Checking Complete!",
+    "----------------------------",
+    "",
+    "  Account Analysis",
+    "",
+    `  ${pad("Total Checked")}${s.checked || 0}`,
+    `  ${pad("Hits")}${s.hits || 0}`,
     `    > XGP              ${s.xgp || 0}`,
     `    > XGPU             ${s.xgpu || 0}`,
-    `    > MFA              ${s.mfa || 0}`,
-    `    > SFA              ${s.sfa || 0}`,
     `    > Cards            ${s.payment_methods || 0}`,
-    `    > Banned           ${s.banned || 0}`,
-    `    > Unbanned         ${s.unbanned || 0}`,
-    `    > Errors           ${s.errors || 0}`,
+    `  ${pad("2FA")}${s.twofa || 0}`,
+    `  ${pad("Valid Mail")}${s.valid_mail || 0}`,
+    `  ${pad("Bad")}${s.bad || 0}`,
+    "",
+    "  Security",
+    "",
+    `  ${pad("MFA")}${s.mfa || 0}`,
+    `  ${pad("SFA")}${s.sfa || 0}`,
+    `  ${pad("Banned")}${s.banned || 0}`,
+    `  ${pad("Unbanned")}${s.unbanned || 0}`,
     "",
     "----------------------------",
+    `  ${pad("CPM")}${s.cpm || 0}`,
     `  Time: ${s.elapsed || "?"}`,
-    `  CPM:  ${s.cpm || 0}`,
   ];
 
-  return header()
-    .setColor(COLORS.PRIMARY)
+  const embed = header()
+    .setColor(s.hits > 0 ? COLORS.SUCCESS : COLORS.ERROR)
     .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
+
+  if (dmSent) {
+    embed.addFields({ name: "\u200b", value: "```\n>> Results sent to your DMs\n```", inline: false });
+  }
+
+  if (username) {
+    embed.setFooter({ text: `Checked by ${username} | ${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` });
+  }
+
+  return embed;
 }
 
 module.exports = {
