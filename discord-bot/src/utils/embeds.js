@@ -1529,9 +1529,6 @@ module.exports = {
   aioProgressEmbed,
   aioResultsEmbed,
 };
-
-  const lines = [
-    "MeowMal AIO Checker",
     `  [${bar}] ${pct}%`,
     "----------------------------",
     `    > Checked          ${done}/${total}`,
