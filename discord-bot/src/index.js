@@ -60,10 +60,7 @@ const {
   unauthorisedEmbed,
 } = require("./utils/embeds");
 const { checkRewardsBalances } = require("./utils/microsoft-rewards");
-const { checkNetflixAccounts } = require("./utils/netflix-checker");
-const { checkSteamAccounts, shortenGames } = require("./utils/steam-checker");
-const { checkXboxAccounts } = require("./utils/xbox-full-checker");
-const { runAioCheck } = require("./utils/meowmal-aio");
+const { runAioCheck, liveStats: aioLiveStats } = require("./utils/meowmal-aio");
 
 const client = new Client({
   intents: [
@@ -1425,27 +1422,6 @@ client.on("interactionCreate", async (interaction) => {
         interaction.options.getAttachment("accounts_file"),
         interaction.options.getInteger("threads") || 5,
         user, user.username);
-    } else if (commandName === "netflix") {
-      await interaction.deferReply();
-      await handleNetflix(respond, user.id,
-        interaction.options.getString("accounts"),
-        interaction.options.getAttachment("accounts_file"),
-        interaction.options.getInteger("threads") || 10,
-        user);
-    } else if (commandName === "steam") {
-      await interaction.deferReply();
-      await handleSteam(respond, user.id,
-        interaction.options.getString("accounts"),
-        interaction.options.getAttachment("accounts_file"),
-        interaction.options.getInteger("threads") || 15,
-        user);
-    } else if (commandName === "xboxchk") {
-      await interaction.deferReply();
-      await handleXboxChk(respond, user.id,
-        interaction.options.getString("accounts"),
-        interaction.options.getAttachment("accounts_file"),
-        interaction.options.getInteger("threads") || 30,
-        user);
     } else if (commandName === "aio") {
       await interaction.deferReply();
       await handleAio(respond, user.id,
@@ -1635,21 +1611,6 @@ client.on("messageCreate", async (message) => {
       await handleBlacklistShow(respond);
     } else if (cmd === "stats") {
       await handleStats(respond);
-    } else if (cmd === "netflix") {
-      const accountsRaw = args.join(" ");
-      const attachment = message.attachments.first();
-      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.netflix <accounts>` or attach .txt")] });
-      await handleNetflix(respond, message.author.id, accountsRaw, attachment, 10, message.author);
-    } else if (cmd === "steam") {
-      const accountsRaw = args.join(" ");
-      const attachment = message.attachments.first();
-      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.steam <accounts>` or attach .txt")] });
-      await handleSteam(respond, message.author.id, accountsRaw, attachment, 15, message.author);
-    } else if (cmd === "xboxchk") {
-      const accountsRaw = args.join(" ");
-      const attachment = message.attachments.first();
-      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.xboxchk <accounts>` or attach .txt — Full capture Xbox checker.")] });
-      await handleXboxChk(respond, message.author.id, accountsRaw, attachment, 30, message.author);
     } else if (cmd === "aio") {
       const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
