@@ -1489,6 +1489,9 @@ function aioProgressEmbed(done, total, live = {}) {
     `    > Valid Mail       ${live.valid_mail || 0}`,
     `    > XGP              ${live.xgp || 0}`,
     `    > XGPU             ${live.xgpu || 0}`,
+    `    > MFA              ${live.mfa || 0}`,
+    `    > SFA              ${live.sfa || 0}`,
+    `    > Cards            ${live.payment_methods || 0}`,
     `    > CPM              ${live.cpm || 0}`,
     `    > Errors           ${live.errors || 0}`,
   ];
@@ -1512,6 +1515,8 @@ function aioResultsEmbed(s) {
     `    > MFA              ${s.mfa || 0}`,
     `    > SFA              ${s.sfa || 0}`,
     `    > Cards            ${s.payment_methods || 0}`,
+    `    > Banned           ${s.banned || 0}`,
+    `    > Unbanned         ${s.unbanned || 0}`,
     `    > Errors           ${s.errors || 0}`,
     "",
     "----------------------------",
