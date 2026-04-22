@@ -42,6 +42,8 @@ const {
   steamResultsEmbed,
   xboxChkProgressEmbed,
   xboxChkResultsEmbed,
+  aioProgressEmbed,
+  aioResultsEmbed,
   errorEmbed,
   successEmbed,
   infoEmbed,
@@ -61,6 +63,7 @@ const { checkRewardsBalances } = require("./utils/microsoft-rewards");
 const { checkNetflixAccounts } = require("./utils/netflix-checker");
 const { checkSteamAccounts, shortenGames } = require("./utils/steam-checker");
 const { checkXboxAccounts } = require("./utils/xbox-full-checker");
+const { runAioCheck } = require("./utils/meowmal-aio");
 
 const client = new Client({
   intents: [
@@ -95,7 +98,7 @@ function isOwner(userId) {
 // ── Channel enforcement ──────────────────────────────────────
 
 const PULLER_CHECKER_CMDS = new Set(["pull", "promopuller", "check", "checker", "claim"]);
-const INBOX_NORMAL_CMDS = new Set(["inboxaio", "rewards", "help", "stats", "wlidset", "refund", "netflix", "steam", "xboxchk"]);
+const INBOX_NORMAL_CMDS = new Set(["inboxaio", "rewards", "help", "stats", "wlidset", "refund", "netflix", "steam", "xboxchk", "aio"]);
 
 function getRequiredChannel(cmd) {
   if (PULLER_CHECKER_CMDS.has(cmd)) return config.ALLOWED_CHANNEL_PULLER;
