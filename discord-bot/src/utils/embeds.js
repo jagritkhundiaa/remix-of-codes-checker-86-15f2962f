@@ -1529,8 +1529,6 @@ module.exports = {
   aioProgressEmbed,
   aioResultsEmbed,
 };
-  const filled = Math.round((pct / 100) * barLen);
-  const bar = "#".repeat(filled) + "-".repeat(barLen - filled);
 
   const lines = [
     "MeowMal AIO Checker",
