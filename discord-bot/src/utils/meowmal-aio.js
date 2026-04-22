@@ -2335,6 +2335,7 @@ async function runAioCheck(combos, threads = 30, onProgress, signal) {
   resetStats();
   resetResults();
   loadAioProxies();
+  loadBanProxies();
 
   stats.total = combos.length;
   maxretries = config.max_retries;
