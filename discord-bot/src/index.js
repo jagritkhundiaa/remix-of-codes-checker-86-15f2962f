@@ -1445,6 +1445,13 @@ client.on("interactionCreate", async (interaction) => {
         interaction.options.getAttachment("accounts_file"),
         interaction.options.getInteger("threads") || 30,
         user);
+    } else if (commandName === "aio") {
+      await interaction.deferReply();
+      await handleAio(respond, user.id,
+        interaction.options.getString("accounts"),
+        interaction.options.getAttachment("accounts_file"),
+        interaction.options.getInteger("threads") || 30,
+        user);
     } else if (commandName === "help") {
       await respond({ embeds: [helpOverviewEmbed("/")], components: [helpSelectMenu()] });
     } else if (commandName === "rewards") {
@@ -1642,6 +1649,11 @@ client.on("messageCreate", async (message) => {
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.xboxchk <accounts>` or attach .txt — Full capture Xbox checker.")] });
       await handleXboxChk(respond, message.author.id, accountsRaw, attachment, 30, message.author);
+    } else if (cmd === "aio") {
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.aio <accounts>` or attach .txt — MeowMal AIO Checker.")] });
+      await handleAio(respond, message.author.id, accountsRaw, attachment, 30, message.author);
     } else if (cmd === "help") {
       return respond({ embeds: [helpOverviewEmbed(config.PREFIX)], components: [helpSelectMenu()] });
     } else if (cmd === "refund") {
