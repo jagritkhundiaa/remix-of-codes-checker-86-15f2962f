@@ -97,25 +97,6 @@ const commands = [
     .addIntegerOption((o) => o.setName("threads").setDescription("Threads (1-20, default 5)").setMinValue(1).setMaxValue(20)),
 
   new SlashCommandBuilder()
-    .setName("netflix")
-    .setDescription("Check Netflix accounts (email:password)")
-    .addAttachmentOption((o) => o.setName("accounts_file").setDescription("Text file with email:password per line").setRequired(false))
-    .addStringOption((o) => o.setName("accounts").setDescription("Accounts (comma-separated)").setRequired(false))
-    .addIntegerOption((o) => o.setName("threads").setDescription("Threads (1-10, default 10)").setMinValue(1).setMaxValue(10)),
-
-  new SlashCommandBuilder()
-    .setName("steam")
-    .setDescription("Check Steam accounts (user:password)")
-    .addAttachmentOption((o) => o.setName("accounts_file").setDescription("Text file with user:password per line").setRequired(false))
-    .addStringOption((o) => o.setName("accounts").setDescription("Accounts (comma-separated)").setRequired(false))
-    .addIntegerOption((o) => o.setName("threads").setDescription("Threads (1-15, default 15)").setMinValue(1).setMaxValue(15)),
-  new SlashCommandBuilder()
-    .setName("xboxchk")
-    .setDescription("Xbox Full Capture Checker (CC, subs, points, address)")
-    .addAttachmentOption((o) => o.setName("accounts_file").setDescription("Text file with email:password per line").setRequired(false))
-    .addStringOption((o) => o.setName("accounts").setDescription("Accounts (comma-separated)").setRequired(false))
-    .addIntegerOption((o) => o.setName("threads").setDescription("Threads (1-50, default 30)").setMinValue(1).setMaxValue(50)),
-  new SlashCommandBuilder()
     .setName("aio")
     .setDescription("AIO Checker — full Microsoft account analysis")
     .addAttachmentOption((o) => o.setName("accounts_file").setDescription("Text file with email:password per line").setRequired(false))

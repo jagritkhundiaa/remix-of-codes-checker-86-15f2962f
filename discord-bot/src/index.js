@@ -36,12 +36,6 @@ const {
   rewardsResultsEmbed,
   refundProgressEmbed,
   refundResultsEmbed,
-  netflixProgressEmbed,
-  netflixResultsEmbed,
-  steamProgressEmbed,
-  steamResultsEmbed,
-  xboxChkProgressEmbed,
-  xboxChkResultsEmbed,
   aioProgressEmbed,
   aioResultsEmbed,
   errorEmbed,
@@ -60,10 +54,7 @@ const {
   unauthorisedEmbed,
 } = require("./utils/embeds");
 const { checkRewardsBalances } = require("./utils/microsoft-rewards");
-const { checkNetflixAccounts } = require("./utils/netflix-checker");
-const { checkSteamAccounts, shortenGames } = require("./utils/steam-checker");
-const { checkXboxAccounts } = require("./utils/xbox-full-checker");
-const { runAioCheck } = require("./utils/meowmal-aio");
+const { runAioCheck, liveStats: aioLiveStats } = require("./utils/meowmal-aio");
 
 const client = new Client({
   intents: [
@@ -854,147 +845,6 @@ async function handleInboxAio(respond, userId, accountsRaw, accountsFile, thread
   }
 }
 
-// ── Netflix ─────────────────────────────────────────────────
-
-async function handleNetflix(respond, userId, accountsRaw, accountsFile, threads = 10, dmUser = null) {
-  if (!canUse(userId)) return respond({ embeds: [errorEmbed(blacklist.isBlacklisted(userId) ? "You are blacklisted." : "You are not authorized to use this bot.")] });
-  const acquire = limiter.acquire(userId, "netflix");
-  if (!acquire.ok) return respond({ embeds: [errorEmbed(acquire.reason === "busy" ? "You already have a command running." : `Max concurrent users (${config.MAX_CONCURRENT_USERS}) reached.`)] });
-
-  const ac = new AbortController();
-  activeAborts.set(userId, ac);
-
-  try {
-    const accounts = await gatherCombos(accountsRaw, accountsFile);
-    if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided.")] });
-
-    const nfxStats = { premium: 0, standard: 0, basic: 0, free: 0, cancelled: 0, invalid: 0, blocked: 0, timeout: 0, errors: 0 };
-    let hits = [];
-    const msg = await respond({ embeds: [netflixProgressEmbed(0, accounts.length, nfxStats)], components: [stopButton(userId)], fetchReply: true });
-    const start = Date.now();
-    let lastUpdate = 0;
-
-    await checkNetflixAccounts(accounts, Math.min(threads, 10), (checked, total, result) => {
-      if (result) {
-        if (result.status === "hit") {
-          hits.push(result);
-          const plan = (result.plan || "").toLowerCase();
-          const status = (result.accountStatus || "").toLowerCase();
-          if (plan.includes("premium")) nfxStats.premium++;
-          else if (plan.includes("standard")) nfxStats.standard++;
-          else if (plan.includes("basic")) nfxStats.basic++;
-          if (status.includes("free") || status.includes("trial")) nfxStats.free++;
-          else if (status.includes("cancel")) nfxStats.cancelled++;
-        } else if (result.status === "invalid") nfxStats.invalid++;
-        else if (result.status === "blocked") nfxStats.blocked++;
-        else if (result.status === "timeout") nfxStats.timeout++;
-        else nfxStats.errors++;
-      }
-      const now = Date.now();
-      if (now - lastUpdate > 3000) {
-        lastUpdate = now;
-        updateProgress(msg, netflixProgressEmbed(checked, total, nfxStats), userId).catch(() => {});
-      }
-    }, ac.signal);
-
-    const elapsed = Math.round((Date.now() - start) / 1000);
-    const files = [];
-    if (hits.length > 0) {
-      const allHits = hits.map((h) =>
-        `Email: ${h.email}\nPassword: ${h.password}\nPlan: ${h.plan}\nStatus: ${h.accountStatus}\nPayment: ${h.payment}\nNext Billing: ${h.nextBilling}\nProfiles: ${h.profiles}\nCountry: ${h.country}\nCreated: ${h.created}\n${"=".repeat(30)}`
-      ).join("\n\n");
-      files.push(new AttachmentBuilder(Buffer.from(allHits, "utf-8"), { name: "netflix_hits.txt" }));
-    }
-
-    const embed = netflixResultsEmbed({
-      total: accounts.length, hits: hits.length,
-      invalid: nfxStats.invalid, blocked: nfxStats.blocked, timeout: nfxStats.timeout, errors: nfxStats.errors,
-      premium: nfxStats.premium, standard: nfxStats.standard, basic: nfxStats.basic, free: nfxStats.free, cancelled: nfxStats.cancelled,
-      elapsed, username: dmUser?.username,
-    });
-
-    if (dmUser) {
-      try {
-        await dmUser.send({ embeds: [embed], files });
-        await msg.edit({ embeds: [infoEmbed("Netflix Checker Complete", `Checked ${accounts.length}. ${hits.length} hits. Sent to DMs.`)], components: [] });
-      } catch {
-        await msg.edit({ embeds: [embed], files, components: [] });
-      }
-    } else {
-      await msg.edit({ embeds: [embed], files, components: [] });
-    }
-    statsManager.record(userId, "netflix", hits.length);
-  } catch (err) {
-    await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
-  } finally {
-    activeAborts.delete(userId);
-    limiter.release(userId);
-  }
-}
-
-// ── Steam ───────────────────────────────────────────────────
-
-async function handleSteam(respond, userId, accountsRaw, accountsFile, threads = 15, dmUser = null) {
-  if (!canUse(userId)) return respond({ embeds: [errorEmbed(blacklist.isBlacklisted(userId) ? "You are blacklisted." : "You are not authorized to use this bot.")] });
-  const acquire = limiter.acquire(userId, "steam");
-  if (!acquire.ok) return respond({ embeds: [errorEmbed(acquire.reason === "busy" ? "You already have a command running." : `Max concurrent users (${config.MAX_CONCURRENT_USERS}) reached.`)] });
-
-  const ac = new AbortController();
-  activeAborts.set(userId, ac);
-
-  try {
-    const accounts = await gatherCombos(accountsRaw, accountsFile);
-    if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided.")] });
-
-    const stStats = { valid: 0, invalid: 0 };
-    let hits = [];
-    const msg = await respond({ embeds: [steamProgressEmbed(0, accounts.length, stStats)], components: [stopButton(userId)], fetchReply: true });
-    const start = Date.now();
-    let lastUpdate = 0;
-
-    await checkSteamAccounts(accounts, Math.min(threads, 15), (checked, total, result) => {
-      if (result) { stStats.valid++; hits.push(result); } else stStats.invalid++;
-      const now = Date.now();
-      if (now - lastUpdate > 3000) {
-        lastUpdate = now;
-        updateProgress(msg, steamProgressEmbed(checked, total, stStats), userId).catch(() => {});
-      }
-    }, ac.signal);
-
-    const elapsed = Math.round((Date.now() - start) / 1000);
-    const files = [];
-    if (hits.length > 0) {
-      const allHits = hits.map((h) => {
-        const gamesList = shortenGames(h.games, 10);
-        return `Username: ${h.username}\nPassword: ${h.password}\nEmail: ${h.email}\nBalance: ${h.balance}\nCountry: ${h.country}\nTotal Games: ${h.totalGames}\nGames: ${gamesList}\nLevel: ${h.level}\nLimited: ${h.limited}\nVAC Bans: ${h.vacBans}\nGame Bans: ${h.gameBans}\nCommunity Ban: ${h.communityBan}\n${"=".repeat(30)}`;
-      }).join("\n\n");
-      files.push(new AttachmentBuilder(Buffer.from(allHits, "utf-8"), { name: "steam_hits.txt" }));
-      const withEmail = hits.filter((h) => h.email && h.email !== "Unknown");
-      const withoutEmail = hits.filter((h) => !h.email || h.email === "Unknown");
-      if (withEmail.length > 0) files.push(new AttachmentBuilder(Buffer.from(withEmail.map((h) => `${h.username}:${h.password}\n${h.email}:${h.password}`).join("\n"), "utf-8"), { name: "valid_with_email.txt" }));
-      if (withoutEmail.length > 0) files.push(new AttachmentBuilder(Buffer.from(withoutEmail.map((h) => `${h.username}:${h.password}`).join("\n"), "utf-8"), { name: "valid_without_email.txt" }));
-    }
-
-    const embed = steamResultsEmbed({ total: accounts.length, valid: stStats.valid, invalid: stStats.invalid, elapsed, username: dmUser?.username });
-    if (dmUser) {
-      try {
-        await dmUser.send({ embeds: [embed], files });
-        await msg.edit({ embeds: [infoEmbed("Steam Checker Complete", `Checked ${accounts.length}. ${stStats.valid} valid. Sent to DMs.`)], components: [] });
-      } catch {
-        await msg.edit({ embeds: [embed], files, components: [] });
-      }
-    } else {
-      await msg.edit({ embeds: [embed], files, components: [] });
-    }
-    statsManager.record(userId, "steam", stStats.valid);
-  } catch (err) {
-    await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
-  } finally {
-    activeAborts.delete(userId);
-    limiter.release(userId);
-  }
-}
-
 // ── Admin Panel ─────────────────────────────────────────────
 
 async function handleAdminPanel(respond, callerId) {
@@ -1124,92 +974,6 @@ async function maybeHandleMilkReply(message) {
   return true;
 }
 
-// ── Xbox Full Capture Check ──────────────────────────────────
-
-async function handleXboxChk(respond, userId, accountsRaw, accountsFile, threads = 30, dmUser = null) {
-  if (!canUse(userId)) return respond({ embeds: [errorEmbed("You are not authorized.")] });
-  if (!limiter.acquire(userId)) return respond({ embeds: [errorEmbed("You already have an active process.")] });
-
-  try {
-    const combos = await gatherCombos(accountsRaw, accountsFile);
-    if (!combos || !combos.length) return respond({ embeds: [errorEmbed("No valid email:pass combos found.")] });
-    if (combos.length > MAX_COMBO_LINES) return respond({ embeds: [errorEmbed(`Max ${MAX_COMBO_LINES} lines.`)] });
-
-    const tc = Math.min(Math.max(threads, 1), 50);
-    const msg = await respond({ embeds: [xboxChkProgressEmbed(0, combos.length)] });
-    const ac = new AbortController();
-    activeAborts.set(userId, ac);
-
-    const t0 = Date.now();
-    let lastEdit = 0;
-    const live = { hits: 0, free: 0, locked: 0, fails: 0 };
-
-    const results = await checkXboxAccounts(combos, tc, (done, total, r) => {
-      // Count every result into the correct bucket — never skip
-      const st = r && r.status;
-      if (st === "hit") live.hits++;
-      else if (st === "free") live.free++;
-      else if (st === "locked") live.locked++;
-      else live.fails++; // fail, skipped, retry-exhausted, null — all count as fails
-
-      const now = Date.now();
-      if (now - lastEdit < 1500) return; // update every 1.5s for snappier UI
-      lastEdit = now;
-      const sec = (now - t0) / 1000;
-      const cpm = sec > 0 ? Math.round(done / (sec / 60)) : 0;
-      updateProgress(msg, xboxChkProgressEmbed(done, total, { ...live, cpm }), userId).catch(() => {});
-    }, ac.signal);
-
-    activeAborts.delete(userId);
-
-    const stats = { checked: results.length, hits: 0, free: 0, locked: 0, fails: 0 };
-    const hitLines = [], freeLines = [], lockedLines = [];
-
-    for (const r of results) {
-      if (r.status === "hit") {
-        stats.hits++;
-        const caps = Object.entries(r.captures || {}).map(([k, v]) => `${k}: ${v}`).join(" | ");
-        hitLines.push(`${r.user}:${r.password} | ${caps}`);
-      } else if (r.status === "free") {
-        stats.free++;
-        const caps = Object.entries(r.captures || {}).map(([k, v]) => `${k}: ${v}`).join(" | ");
-        freeLines.push(`${r.user}:${r.password} | ${caps}`);
-      } else if (r.status === "locked") {
-        stats.locked++;
-        lockedLines.push(`${r.user}:${r.password} -> ${r.detail || ""}`);
-      } else {
-        stats.fails++;
-      }
-    }
-
-    const sec = ((Date.now() - t0) / 1000).toFixed(1);
-    stats.cpm = sec > 0 ? Math.round(stats.checked / (sec / 60)) : 0;
-    stats.elapsed = `${sec}s`;
-
-    const files = [];
-    if (hitLines.length) files.push(textAttachment(hitLines, "Hits.txt"));
-    if (freeLines.length) files.push(textAttachment(freeLines, "Free.txt"));
-    if (lockedLines.length) files.push(textAttachment(lockedLines, "Locked.txt"));
-
-    statsManager.record("xboxchk", stats);
-
-    const target = dmUser || null;
-    if (target) {
-      try {
-        const dm = await target.createDM();
-        await dm.send({ embeds: [xboxChkResultsEmbed(stats)], files });
-        await msg.edit({ embeds: [successEmbed(`Done — ${stats.checked} checked. Results sent to DMs.`)], components: [] });
-      } catch {
-        await msg.edit({ embeds: [xboxChkResultsEmbed(stats)], files, components: [] });
-      }
-    } else {
-      await msg.edit({ embeds: [xboxChkResultsEmbed(stats)], files, components: [] });
-    }
-  } finally {
-    limiter.release(userId);
-  }
-}
-
 // ── AIO Checker ─────────────────────────────────────────────
 
 async function handleAio(respond, userId, accountsRaw, accountsFile, threads = 30, dmUser = null) {
@@ -1228,37 +992,19 @@ async function handleAio(respond, userId, accountsRaw, accountsFile, threads = 3
 
     const t0 = Date.now();
     let lastEdit = 0;
-    const live = {
-      hits: 0, bad: 0, twofa: 0, valid_mail: 0,
-      xgp: 0, xgpu: 0, mfa: 0, sfa: 0,
-      payment_methods: 0, errors: 0, banned: 0, unbanned: 0,
-    };
-
     const { results, stats: finalStats, files: resultFiles } = await runAioCheck(combos, tc, (done, total, r) => {
-      if (r) {
-        const st = r.status;
-        if (st === "hit") live.hits++;
-        else if (st === "2fa") live.twofa++;
-        else if (st === "valid_mail") live.valid_mail++;
-        else if (st === "bad" || st === "fail" || st === "error") live.bad++;
-        else live.bad++;
-
-        if (r.xgp) live.xgp++;
-        if (r.xgpu) live.xgpu++;
-        if (r.mfa) live.mfa++;
-        if (r.sfa) live.sfa++;
-        if (r.has_payment) live.payment_methods++;
-        if (r.banned) live.banned++;
-        if (r.unbanned) live.unbanned++;
-        if (r.error) live.errors++;
-      }
-
       const now = Date.now();
       if (now - lastEdit < 1500) return;
       lastEdit = now;
       const sec = (now - t0) / 1000;
       const cpm = sec > 0 ? Math.round(done / (sec / 60)) : 0;
-      updateProgress(msg, aioProgressEmbed(done, total, { ...live, cpm }), userId).catch(() => {});
+      const ls = aioLiveStats;
+      updateProgress(msg, aioProgressEmbed(done, total, {
+        hits: ls.hits || 0, bad: ls.bad || 0, twofa: ls.twofa || 0,
+        valid_mail: ls.valid_mail || 0, xgp: ls.xgp || 0, xgpu: ls.xgpu || 0,
+        mfa: ls.mfa || 0, sfa: ls.sfa || 0, payment_methods: ls.payment_methods || 0,
+        errors: ls.errors || 0, banned: ls.banned || 0, unbanned: ls.unbanned || 0, cpm,
+      }), userId).catch(() => {});
     }, ac.signal);
 
     activeAborts.delete(userId);
@@ -1425,27 +1171,6 @@ client.on("interactionCreate", async (interaction) => {
         interaction.options.getAttachment("accounts_file"),
         interaction.options.getInteger("threads") || 5,
         user, user.username);
-    } else if (commandName === "netflix") {
-      await interaction.deferReply();
-      await handleNetflix(respond, user.id,
-        interaction.options.getString("accounts"),
-        interaction.options.getAttachment("accounts_file"),
-        interaction.options.getInteger("threads") || 10,
-        user);
-    } else if (commandName === "steam") {
-      await interaction.deferReply();
-      await handleSteam(respond, user.id,
-        interaction.options.getString("accounts"),
-        interaction.options.getAttachment("accounts_file"),
-        interaction.options.getInteger("threads") || 15,
-        user);
-    } else if (commandName === "xboxchk") {
-      await interaction.deferReply();
-      await handleXboxChk(respond, user.id,
-        interaction.options.getString("accounts"),
-        interaction.options.getAttachment("accounts_file"),
-        interaction.options.getInteger("threads") || 30,
-        user);
     } else if (commandName === "aio") {
       await interaction.deferReply();
       await handleAio(respond, user.id,
@@ -1635,21 +1360,6 @@ client.on("messageCreate", async (message) => {
       await handleBlacklistShow(respond);
     } else if (cmd === "stats") {
       await handleStats(respond);
-    } else if (cmd === "netflix") {
-      const accountsRaw = args.join(" ");
-      const attachment = message.attachments.first();
-      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.netflix <accounts>` or attach .txt")] });
-      await handleNetflix(respond, message.author.id, accountsRaw, attachment, 10, message.author);
-    } else if (cmd === "steam") {
-      const accountsRaw = args.join(" ");
-      const attachment = message.attachments.first();
-      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.steam <accounts>` or attach .txt")] });
-      await handleSteam(respond, message.author.id, accountsRaw, attachment, 15, message.author);
-    } else if (cmd === "xboxchk") {
-      const accountsRaw = args.join(" ");
-      const attachment = message.attachments.first();
-      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.xboxchk <accounts>` or attach .txt — Full capture Xbox checker.")] });
-      await handleXboxChk(respond, message.author.id, accountsRaw, attachment, 30, message.author);
     } else if (cmd === "aio") {
       const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();

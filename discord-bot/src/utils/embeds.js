@@ -581,7 +581,7 @@ function authListEmbed(entries) {
 const HELP_SECTIONS = {
   core: { label: "-- Core Tools --", categories: ["checker", "claimer", "puller"] },
   account: { label: "-- Account Tools --", categories: ["inbox", "rewards", "refund"] },
-  checkers: { label: "-- Checkers --", categories: ["netflix", "steam", "xboxchk", "aio"] },
+  checkers: { label: "-- Checkers --", categories: ["aio"] },
   owner: { label: "-- Owner Only --", categories: ["admin"] },
 };
 
@@ -706,63 +706,6 @@ const HELP_CATEGORIES = {
       "  Notes",
       "  ----------------------------------------",
       "    Controlled concurrency, no skipped hits.",
-    ].join("\n"),
-  },
-  netflix: {
-    label: "Netflix",
-    description: "Check Netflix accounts",
-    section: "checkers",
-    content: (p) => [
-      "Netflix Checker",
-      "========================================",
-      "",
-      "  Commands",
-      "  ----------------------------------------",
-      `  ${p}netflix <email:pass> or attach .txt`,
-      "    Checks Netflix account validity and",
-      "    plan details (Premium/Standard/Basic).",
-      "",
-      "  Output",
-      "  ----------------------------------------",
-      "  All results sent to your DMs.",
-    ].join("\n"),
-  },
-  steam: {
-    label: "Steam",
-    description: "Check Steam accounts",
-    section: "checkers",
-    content: (p) => [
-      "Steam Checker",
-      "========================================",
-      "",
-      "  Commands",
-      "  ----------------------------------------",
-      `  ${p}steam <user:pass> or attach .txt`,
-      "    Checks Steam account validity, games,",
-      "    and profile details.",
-      "",
-      "  Output",
-      "  ----------------------------------------",
-      "  All results sent to your DMs.",
-    ].join("\n"),
-  },
-  xboxchk: {
-    label: "Xbox Full",
-    description: "Full Xbox capture (CC, subs, points)",
-    section: "checkers",
-    content: (p) => [
-      "Xbox Full Capture Checker",
-      "========================================",
-      "",
-      "  Commands",
-      "  ----------------------------------------",
-      `  ${p}xboxchk <email:pass> or attach .txt`,
-      "    Full account analysis: credit cards,",
-      "    subscriptions, points, addresses.",
-      "",
-      "  Output",
-      "  ----------------------------------------",
-      "  All results sent to your DMs.",
     ].join("\n"),
   },
   aio: {
@@ -1285,219 +1228,6 @@ function refundResultsEmbed(results, { elapsed, dmSent, username } = {}) {
   return embed;
 }
 
-// ── Netflix Checker Embeds ────────────────────────────────────
-
-function netflixProgressEmbed(checked, total, stats = {}) {
-  const pct = total === 0 ? 0 : Math.round((checked / total) * 100);
-  const barLen = 20;
-  const filled = Math.round((pct / 100) * barLen);
-  const bar = "#".repeat(filled) + "-".repeat(barLen - filled);
-
-  const lines = [
-    "Netflix Checker",
-    "----------------------------",
-    "",
-    `  [${bar}] ${pct}%`,
-    `  ${pad("Checked")}${checked} / ${total}`,
-    "",
-    `  ${pad("Premium")}${stats.premium || 0}`,
-    `  ${pad("Standard")}${stats.standard || 0}`,
-    `  ${pad("Basic")}${stats.basic || 0}`,
-    `  ${pad("Free Trial")}${stats.free || 0}`,
-    `  ${pad("Invalid")}${stats.invalid || 0}`,
-    `  ${pad("Blocked")}${stats.blocked || 0}`,
-    `  ${pad("Timeout")}${stats.timeout || 0}`,
-  ];
-
-  return header({ thumbnail: false })
-    .setColor(COLORS.INFO)
-    .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
-}
-
-function netflixResultsEmbed({ total, hits, invalid, blocked, timeout, errors, premium, standard, basic, free, cancelled, elapsed, username }) {
-  const lines = [
-    "Netflix Checker -- Results",
-    "----------------------------",
-    "",
-    `  ${pad("Total Accounts")}${total}`,
-    `  ${pad("Hits")}${hits}`,
-    "",
-    `  ${pad("Premium")}${premium}`,
-    `  ${pad("Standard")}${standard}`,
-    `  ${pad("Basic")}${basic}`,
-    `  ${pad("Free Trial")}${free}`,
-    `  ${pad("Cancelled")}${cancelled}`,
-    "",
-    `  ${pad("Invalid")}${invalid}`,
-    `  ${pad("Blocked")}${blocked}`,
-    `  ${pad("Timeout")}${timeout}`,
-    `  ${pad("Errors")}${errors}`,
-  ];
-
-  if (elapsed) {
-    lines.push("", "----------------------------", `  Time: ${elapsed}s`);
-  }
-
-  const embed = header()
-    .setColor(hits > 0 ? COLORS.SUCCESS : COLORS.PRIMARY)
-    .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
-
-  if (username) {
-    embed.setFooter({ text: `Checked by ${username} | ${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` });
-  }
-
-  return embed;
-}
-
-function netflixHitEmbed(result) {
-  const lines = [
-    "Netflix -- Hit Found",
-    "----------------------------",
-    "",
-    `  ${pad("Email")}${result.email}`,
-    `  ${pad("Plan")}${result.plan}`,
-    `  ${pad("Status")}${result.accountStatus}`,
-    `  ${pad("Payment")}${result.payment}`,
-    `  ${pad("Next Billing")}${result.nextBilling}`,
-    `  ${pad("Profiles")}${result.profiles}`,
-    `  ${pad("Country")}${result.country}`,
-    `  ${pad("Created")}${result.created}`,
-  ];
-
-  return header({ thumbnail: false })
-    .setColor(COLORS.SUCCESS)
-    .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
-}
-
-// ── Steam Checker Embeds ─────────────────────────────────────
-
-function steamProgressEmbed(checked, total, stats = {}) {
-  const pct = total === 0 ? 0 : Math.round((checked / total) * 100);
-  const barLen = 20;
-  const filled = Math.round((pct / 100) * barLen);
-  const bar = "#".repeat(filled) + "-".repeat(barLen - filled);
-
-  const lines = [
-    "Steam Checker",
-    "----------------------------",
-    "",
-    `  [${bar}] ${pct}%`,
-    `  ${pad("Checked")}${checked} / ${total}`,
-    "",
-    `  ${pad("Valid")}${stats.valid || 0}`,
-    `  ${pad("Invalid")}${stats.invalid || 0}`,
-  ];
-
-  return header({ thumbnail: false })
-    .setColor(COLORS.INFO)
-    .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
-}
-
-function steamResultsEmbed({ total, valid, invalid, elapsed, username }) {
-  const lines = [
-    "Steam Checker -- Results",
-    "----------------------------",
-    "",
-    `  ${pad("Total Accounts")}${total}`,
-    `  ${pad("Valid")}${valid}`,
-    `  ${pad("Invalid")}${invalid}`,
-  ];
-
-  if (elapsed) {
-    lines.push("", "----------------------------", `  Time: ${elapsed}s`);
-  }
-
-  const embed = header()
-    .setColor(valid > 0 ? COLORS.SUCCESS : COLORS.PRIMARY)
-    .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
-
-  if (username) {
-    embed.setFooter({ text: `Checked by ${username} | ${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` });
-  }
-
-  return embed;
-}
-
-function steamHitEmbed(result) {
-  const gamesList = Array.isArray(result.games) && result.games.length > 0
-    ? (result.games.length > 5 ? result.games.slice(0, 5).join(", ") + ` (+${result.games.length - 5})` : result.games.join(", "))
-    : "None";
-
-  const lines = [
-    "Steam -- Hit Found",
-    "----------------------------",
-    "",
-    `  ${pad("Username")}${result.username}`,
-    `  ${pad("Email")}${result.email}`,
-    `  ${pad("Balance")}${result.balance}`,
-    `  ${pad("Country")}${result.country}`,
-    `  ${pad("Total Games")}${result.totalGames}`,
-    `  ${pad("Level")}${result.level}`,
-    `  ${pad("Limited")}${result.limited}`,
-    `  ${pad("VAC Bans")}${result.vacBans}`,
-    `  ${pad("Game Bans")}${result.gameBans}`,
-    `  ${pad("Community Ban")}${result.communityBan}`,
-    `  ${pad("Games")}${gamesList}`,
-  ];
-
-  return header({ thumbnail: false })
-    .setColor(COLORS.SUCCESS)
-    .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
-}
-
-// ── Xbox Full Capture Checker ────────────────────────────────
-
-function xboxChkProgressEmbed(checked, total, stats = {}) {
-  const pct = total === 0 ? 0 : Math.round((checked / total) * 100);
-  const barLen = 20;
-  const filled = Math.round((pct / 100) * barLen);
-  const bar = "#".repeat(filled) + "-".repeat(barLen - filled);
-
-  const hits = stats.hits || 0;
-  const free = stats.free || 0;
-  const locked = stats.locked || 0;
-  const fails = stats.fails || 0;
-  const cpm = stats.cpm || 0;
-
-  const block = [
-    "Xbox Full Capture",
-    "----------------------------",
-    "",
-    `  [${bar}] ${pct}%`,
-    `  ${checked.toLocaleString()} / ${total.toLocaleString()}`,
-    "",
-    `  ${pad("Hits")}${hits}`,
-    `  ${pad("Free")}${free}`,
-    `  ${pad("Locked")}${locked}`,
-    `  ${pad("Fails")}${fails}`,
-    `  ${pad("CPM")}${cpm}`,
-  ];
-
-  return header({ thumbnail: false })
-    .setColor(COLORS.INFO)
-    .setDescription("```\n" + block.join("\n") + "\n```");
-}
-
-function xboxChkResultsEmbed(stats) {
-  const block = [
-    "Xbox Full Capture — Results",
-    "----------------------------",
-    "",
-    `  ${pad("Checked")}${stats.checked}`,
-    `  ${pad("Hits (Active)")}${stats.hits}`,
-    `  ${pad("Free (Expired)")}${stats.free}`,
-    `  ${pad("Locked")}${stats.locked}`,
-    `  ${pad("Fails")}${stats.fails}`,
-    "",
-    `  ${pad("CPM")}${stats.cpm}`,
-    `  ${pad("Time")}${stats.elapsed}`,
-  ];
-
-  return header()
-    .setColor(stats.hits > 0 ? COLORS.SUCCESS : COLORS.INFO)
-    .setDescription("```\n" + block.join("\n") + "\n```");
-}
-
 
 // ── AIO Checker Embeds ───────────────────────────────────────
 
@@ -1618,17 +1348,9 @@ module.exports = {
   recoverResultEmbed,
   inboxAioProgressEmbed,
   inboxAioResultsEmbed,
-  netflixProgressEmbed,
-  netflixResultsEmbed,
-  netflixHitEmbed,
-  steamProgressEmbed,
-  steamResultsEmbed,
-  steamHitEmbed,
   genHelpEmbed,
   stockListEmbed,
   unauthorisedEmbed,
-  xboxChkProgressEmbed,
-  xboxChkResultsEmbed,
   aioProgressEmbed,
   aioResultsEmbed,
 };

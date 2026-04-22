@@ -2387,4 +2387,4 @@ async function runAioCheck(combos, threads = 30, onProgress, signal) {
   };
 }
 
-module.exports = { runAioCheck };
+module.exports = { runAioCheck, get liveStats() { return stats; } };
