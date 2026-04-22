@@ -1529,8 +1529,6 @@ module.exports = {
   aioProgressEmbed,
   aioResultsEmbed,
 };
-  const pct = total === 0 ? 0 : Math.round((done / total) * 100);
-  const barLen = 20;
   const filled = Math.round((pct / 100) * barLen);
   const bar = "#".repeat(filled) + "-".repeat(barLen - filled);
 
