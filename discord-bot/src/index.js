@@ -1017,6 +1017,7 @@ async function handleAio(respond, userId, accountsRaw, accountsFile, threads = 3
       valid_mail: finalStats.valid_mail, xgp: finalStats.xgp, xgpu: finalStats.xgpu,
       mfa: finalStats.mfa, sfa: finalStats.sfa, payment_methods: finalStats.payment_methods,
       banned: finalStats.banned, unbanned: finalStats.unbanned, errors: finalStats.errors,
+      ms_balance: finalStats.ms_balance, ms_points: finalStats.ms_points,
       elapsed: `${sec}s`,
       cpm: sec > 0 ? Math.round((finalStats.checked || combos.length) / (sec / 60)) : 0,
     };
