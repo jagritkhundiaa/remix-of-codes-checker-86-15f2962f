@@ -1022,7 +1022,8 @@ async function handleAio(respond, userId, accountsRaw, accountsFile, threads = 3
       cpm: sec > 0 ? Math.round((finalStats.checked || combos.length) / (sec / 60)) : 0,
     };
 
-    const attachments = [];
+    const { buildZipBuffer } = require("./utils/zip-builder");
+    const zipEntries = [];
     const fileMap = {
       "Hits.txt": resultFiles.hits,
       "Normal.txt": resultFiles.normal,
@@ -1047,8 +1048,11 @@ async function handleAio(respond, userId, accountsRaw, accountsFile, threads = 3
     };
 
     for (const [name, lines] of Object.entries(fileMap)) {
-      if (lines && lines.length) attachments.push(textAttachment(lines, name));
+      if (lines && lines.length) zipEntries.push({ name, content: lines.join("\n") });
     }
+
+    const zipBuffer = buildZipBuffer(zipEntries);
+    const zipFile = new AttachmentBuilder(zipBuffer, { name: "aio_results.zip" });
 
     statsManager.record("aio", s);
 
@@ -1057,13 +1061,13 @@ async function handleAio(respond, userId, accountsRaw, accountsFile, threads = 3
     if (target) {
       try {
         const dm = await target.createDM();
-        await dm.send({ embeds: [aioResultsEmbed(s, { username: uname })], files: attachments });
+        await dm.send({ embeds: [aioResultsEmbed(s, { username: uname })], files: [zipFile] });
         await msg.edit({ embeds: [aioResultsEmbed(s, { dmSent: true, username: uname })], components: [] });
       } catch {
-        await msg.edit({ embeds: [aioResultsEmbed(s, { username: uname })], files: attachments, components: [] });
+        await msg.edit({ embeds: [aioResultsEmbed(s, { username: uname })], files: [zipFile], components: [] });
       }
     } else {
-      await msg.edit({ embeds: [aioResultsEmbed(s)], files: attachments, components: [] });
+      await msg.edit({ embeds: [aioResultsEmbed(s)], files: [zipFile], components: [] });
     }
   } finally {
     limiter.release(userId);
