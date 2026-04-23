@@ -42,6 +42,7 @@ function resetStats() {
     checked: 0, total: 0, cpm: 0, retries: 0, errors: 0,
     minecraft_capes: 0, optifine_capes: 0, inbox_matches: 0,
     name_changes: 0, payment_methods: 0, banned: 0, unbanned: 0,
+    ms_balance: 0, ms_points: 0,
   };
 }
 
@@ -903,6 +904,7 @@ async function checkMicrosoftAccount(jar, email, password) {
         const amountStr = balance.replace(/[^\d.]/g, "");
         if (amountStr && parseFloat(amountStr) > 0) {
           results_ms_balance.push(`${email}:${password} | Balance: ${balance}`);
+          stats.ms_balance++;
           results.balance = balance;
         }
       }
@@ -912,6 +914,7 @@ async function checkMicrosoftAccount(jar, email, password) {
       const points = await checker.checkRewardsPoints();
       if (points) {
         results_ms_points.push(`${email}:${password} | Points: ${points}`);
+        stats.ms_points++;
         results.rewards_points = points;
       }
     } catch {}
@@ -2387,4 +2390,4 @@ async function runAioCheck(combos, threads = 30, onProgress, signal) {
   };
 }
 
-module.exports = { runAioCheck, get liveStats() { return stats; } };
+module.exports = { runAioCheck, getStats() { return stats; } };

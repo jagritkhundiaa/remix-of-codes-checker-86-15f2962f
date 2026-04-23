@@ -54,7 +54,7 @@ const {
   unauthorisedEmbed,
 } = require("./utils/embeds");
 const { checkRewardsBalances } = require("./utils/microsoft-rewards");
-const { runAioCheck, liveStats: aioLiveStats } = require("./utils/meowmal-aio");
+const { runAioCheck, getStats: getAioStats } = require("./utils/meowmal-aio");
 
 const client = new Client({
   intents: [
@@ -998,12 +998,13 @@ async function handleAio(respond, userId, accountsRaw, accountsFile, threads = 3
       lastEdit = now;
       const sec = (now - t0) / 1000;
       const cpm = sec > 0 ? Math.round(done / (sec / 60)) : 0;
-      const ls = aioLiveStats;
+      const ls = getAioStats();
       updateProgress(msg, aioProgressEmbed(done, total, {
         hits: ls.hits || 0, bad: ls.bad || 0, twofa: ls.twofa || 0,
         valid_mail: ls.valid_mail || 0, xgp: ls.xgp || 0, xgpu: ls.xgpu || 0,
         mfa: ls.mfa || 0, sfa: ls.sfa || 0, payment_methods: ls.payment_methods || 0,
-        errors: ls.errors || 0, banned: ls.banned || 0, unbanned: ls.unbanned || 0, cpm,
+        errors: ls.errors || 0, banned: ls.banned || 0, unbanned: ls.unbanned || 0,
+        ms_balance: ls.ms_balance || 0, ms_points: ls.ms_points || 0, cpm,
       }), userId).catch(() => {});
     }, ac.signal);
 
