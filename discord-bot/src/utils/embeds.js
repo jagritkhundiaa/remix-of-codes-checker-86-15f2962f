@@ -579,7 +579,7 @@ function authListEmbed(entries) {
 
 // Section groupings for the help dropdown
 const HELP_SECTIONS = {
-  core: { label: "-- Core Tools --", categories: ["checker", "claimer", "puller"] },
+  core: { label: "-- Core Tools --", categories: ["checker", "claimer", "puller", "promopuller"] },
   account: { label: "-- Account Tools --", categories: ["inbox", "rewards", "refund"] },
   checkers: { label: "-- Checkers --", categories: ["aio"] },
   owner: { label: "-- Owner Only --", categories: ["admin"] },
