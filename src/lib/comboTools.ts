@@ -201,7 +201,8 @@ export async function downloadZip(files: { name: string; content: string }[], zi
   dvE.setUint32(12, centralSize, true); dvE.setUint32(16, offset, true);
   dvE.setUint16(20, 0, true);
 
-  const blob = new Blob([...fileData, ...central, end], { type: "application/zip" });
+  const parts: BlobPart[] = [...fileData, ...central, end].map((u) => u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength) as ArrayBuffer);
+  const blob = new Blob(parts, { type: "application/zip" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url; a.download = zipName;
