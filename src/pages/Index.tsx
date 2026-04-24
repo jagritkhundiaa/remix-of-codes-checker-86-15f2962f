@@ -1,7 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { LogOut, Zap, Users, Sparkles } from "lucide-react";
-import AccessGate from "@/components/neon/AccessGate";
+import { Zap, Users, Sparkles } from "lucide-react";
 import UrlAnalyzer from "@/components/neon/UrlAnalyzer";
 import CardInput from "@/components/neon/CardInput";
 import HitRunner from "@/components/neon/HitRunner";
@@ -10,40 +9,16 @@ import Settings from "@/components/neon/Settings";
 import AdminPanel from "@/components/neon/AdminPanel";
 import { UrlAnalysis, CardData, NeonSettings, loadSettings } from "@/lib/neon";
 
+// License gate removed — site is open to everyone.
+// Backend functions still expect an accessKey, so we use the
+// built-in master key for all requests transparently.
+const OPEN_KEY = "NEONISTHEGOAT";
+
 export default function Index() {
-  const [accessKey, setAccessKey] = useState<string | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
   const [analysis, setAnalysis] = useState<UrlAnalysis | null>(null);
   const [cards, setCards] = useState<CardData[]>([]);
   const [settings, setSettings] = useState<NeonSettings>(loadSettings());
   const [showAdmin, setShowAdmin] = useState(false);
-
-  useEffect(() => {
-    const saved = localStorage.getItem("neon_key");
-    const admin = localStorage.getItem("neon_admin");
-    if (saved) {
-      setAccessKey(saved);
-      setIsAdmin(admin === "1");
-    }
-  }, []);
-
-  const handleLogout = () => {
-    localStorage.removeItem("neon_key");
-    localStorage.removeItem("neon_admin");
-    setAccessKey(null);
-    setIsAdmin(false);
-    setAnalysis(null);
-    setCards([]);
-  };
-
-  const handleAuth = (key: string, admin: boolean) => {
-    setAccessKey(key);
-    setIsAdmin(admin);
-  };
-
-  if (!accessKey) {
-    return <AccessGate onAuthenticated={handleAuth} />;
-  }
 
   return (
     <div className="min-h-screen relative overflow-hidden">
@@ -65,31 +40,26 @@ export default function Index() {
           >
             <Sparkles className="w-3 h-3" /> Combo Cleaner
           </Link>
-          {isAdmin && (
-            <button
-              onClick={() => setShowAdmin(true)}
-              className="text-xs text-primary hover:text-primary/80 transition-colors flex items-center gap-1 font-bold"
-            >
-              <Users className="w-3 h-3" /> Admin
-            </button>
-          )}
-          <button onClick={handleLogout} className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
-            <LogOut className="w-3 h-3" /> Logout
+          <button
+            onClick={() => setShowAdmin(true)}
+            className="text-xs text-primary hover:text-primary/80 transition-colors flex items-center gap-1 font-bold"
+          >
+            <Users className="w-3 h-3" /> Admin
           </button>
         </div>
       </header>
 
       <main className="relative z-10 max-w-3xl mx-auto px-4 py-6 space-y-4">
-        <UrlAnalyzer accessKey={accessKey} onAnalyzed={setAnalysis} analysis={analysis} />
+        <UrlAnalyzer accessKey={OPEN_KEY} onAnalyzed={setAnalysis} analysis={analysis} />
         <CardInput cards={cards} onCardsChange={setCards} />
-        <HitRunner accessKey={accessKey} analysis={analysis} cards={cards} settings={settings} />
+        <HitRunner accessKey={OPEN_KEY} analysis={analysis} cards={cards} settings={settings} />
       </main>
 
       <Settings settings={settings} onSettingsChange={setSettings} />
       <Credits />
 
-      {showAdmin && isAdmin && (
-        <AdminPanel adminKey={accessKey} onClose={() => setShowAdmin(false)} />
+      {showAdmin && (
+        <AdminPanel adminKey={OPEN_KEY} onClose={() => setShowAdmin(false)} />
       )}
     </div>
   );
