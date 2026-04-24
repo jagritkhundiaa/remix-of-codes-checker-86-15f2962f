@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { LogOut, Zap, Users } from "lucide-react";
+import { Link } from "react-router-dom";
+import { LogOut, Zap, Users, Sparkles } from "lucide-react";
 import AccessGate from "@/components/neon/AccessGate";
 import UrlAnalyzer from "@/components/neon/UrlAnalyzer";
 import CardInput from "@/components/neon/CardInput";
@@ -58,6 +59,12 @@ export default function Index() {
           <span className="text-[10px] text-muted-foreground/50 uppercase tracking-widest ml-1">v2.0</span>
         </div>
         <div className="flex items-center gap-3">
+          <Link
+            to="/combo-cleaner"
+            className="text-xs text-accent hover:text-accent/80 transition-colors flex items-center gap-1 font-bold"
+          >
+            <Sparkles className="w-3 h-3" /> Combo Cleaner
+          </Link>
           {isAdmin && (
             <button
               onClick={() => setShowAdmin(true)}
