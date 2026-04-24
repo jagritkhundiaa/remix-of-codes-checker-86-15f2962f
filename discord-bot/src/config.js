@@ -34,6 +34,12 @@ module.exports = {
   // Discord webhook for logging valid codes / tokens (optional, leave "" to disable)
   DISCORD_WEBHOOK: "",
 
+  // ── PromoPuller ────────────────────────────────────────────
+  // Discord user/bot token used by /promopuller to validate gift-codes
+  // via discord.com/api/v9/entitlements/gift-codes. Leave the placeholder
+  // to disable validation (links will still be pulled).
+  DISCORD_TOKEN: "YOUR_DISCORD_TOKEN_HERE",
+
   // ── Branding ───────────────────────────────────────────────
   // Bot thumbnail URL — appears on major embeds (set to your logo/avatar URL)
   // Use a direct image URL (PNG/JPG). Leave "" to disable.

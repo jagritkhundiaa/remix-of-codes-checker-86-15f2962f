@@ -12,6 +12,7 @@ const { StatsManager } = require("./utils/stats-manager");
 const { checkCodes } = require("./utils/microsoft-checker");
 const { claimWlids } = require("./utils/microsoft-claimer");
 const { pullCodes, pullLinks } = require("./utils/microsoft-puller");
+const { pullPromos } = require("./utils/promo-puller");
 const { checkRefundAccounts } = require("./utils/microsoft-refund");
 const { checkInboxAccounts, getServiceCount } = require("./utils/microsoft-inbox");
 const { loadProxies, isProxyEnabled, getProxyCount, getProxyStats } = require("./utils/proxy-manager");
@@ -437,7 +438,7 @@ async function handlePromoPuller(respond, userId, accountsRaw, accountsFile, dmU
     let lastAccount = "", lastLinks = 0, lastError = null;
     let fetchWorking = 0, fetchFailed = 0, fetchWithLinks = 0, fetchNoLinks = 0;
 
-    const { fetchResults, allLinks } = await pullLinks(accounts, (phase, detail) => {
+    const { fetchResults, allLinks } = await pullPromos(accounts, (phase, detail) => {
       const now = Date.now();
       if (phase === "fetch") {
         totalLinksSoFar += detail.links;
