@@ -332,10 +332,8 @@ export default function ComboCleaner() {
     </div>
   );
 }
-      </main>
-    </div>
-  );
-}
+
+
 
 function Stat({ label, value, accent, muted }: { label: string; value: number; accent?: boolean; muted?: boolean }) {
   return (
