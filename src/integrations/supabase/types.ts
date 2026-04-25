@@ -47,6 +47,164 @@ export type Database = {
         }
         Relationships: []
       }
+      aio_jobs: {
+        Row: {
+          access_key: string
+          bads: number
+          combos_pending: string[]
+          created_at: string
+          errors: number
+          hits: number
+          id: string
+          label: string | null
+          last_heartbeat: string | null
+          processed: number
+          status: string
+          threads: number
+          total: number
+          twofa: number
+          updated_at: string
+          valid_mail: number
+          xgp: number
+        }
+        Insert: {
+          access_key: string
+          bads?: number
+          combos_pending?: string[]
+          created_at?: string
+          errors?: number
+          hits?: number
+          id?: string
+          label?: string | null
+          last_heartbeat?: string | null
+          processed?: number
+          status?: string
+          threads?: number
+          total?: number
+          twofa?: number
+          updated_at?: string
+          valid_mail?: number
+          xgp?: number
+        }
+        Update: {
+          access_key?: string
+          bads?: number
+          combos_pending?: string[]
+          created_at?: string
+          errors?: number
+          hits?: number
+          id?: string
+          label?: string | null
+          last_heartbeat?: string | null
+          processed?: number
+          status?: string
+          threads?: number
+          total?: number
+          twofa?: number
+          updated_at?: string
+          valid_mail?: number
+          xgp?: number
+        }
+        Relationships: []
+      }
+      aio_proxies: {
+        Row: {
+          created_at: string
+          fail_count: number
+          id: string
+          is_active: boolean
+          last_checked: string | null
+          last_status: string | null
+          protocol: string
+          proxy: string
+          rr_index: number
+          success_count: number
+        }
+        Insert: {
+          created_at?: string
+          fail_count?: number
+          id?: string
+          is_active?: boolean
+          last_checked?: string | null
+          last_status?: string | null
+          protocol?: string
+          proxy: string
+          rr_index?: number
+          success_count?: number
+        }
+        Update: {
+          created_at?: string
+          fail_count?: number
+          id?: string
+          is_active?: boolean
+          last_checked?: string | null
+          last_status?: string | null
+          protocol?: string
+          proxy?: string
+          rr_index?: number
+          success_count?: number
+        }
+        Relationships: []
+      }
+      aio_results: {
+        Row: {
+          capture: string | null
+          country: string | null
+          created_at: string
+          email: string
+          has_xgp: boolean | null
+          has_xgpu: boolean | null
+          id: string
+          is_2fa: boolean | null
+          job_id: string
+          password: string
+          raw_response: Json | null
+          status: string
+          subscriptions: string[] | null
+          xbox_gamertag: string | null
+        }
+        Insert: {
+          capture?: string | null
+          country?: string | null
+          created_at?: string
+          email: string
+          has_xgp?: boolean | null
+          has_xgpu?: boolean | null
+          id?: string
+          is_2fa?: boolean | null
+          job_id: string
+          password: string
+          raw_response?: Json | null
+          status: string
+          subscriptions?: string[] | null
+          xbox_gamertag?: string | null
+        }
+        Update: {
+          capture?: string | null
+          country?: string | null
+          created_at?: string
+          email?: string
+          has_xgp?: boolean | null
+          has_xgpu?: boolean | null
+          id?: string
+          is_2fa?: boolean | null
+          job_id?: string
+          password?: string
+          raw_response?: Json | null
+          status?: string
+          subscriptions?: string[] | null
+          xbox_gamertag?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "aio_results_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "aio_jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       check_logs: {
         Row: {
           access_key: string
