@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Zap, Users, Sparkles } from "lucide-react";
+import { ArrowRight, Server, Zap, Users, Sparkles } from "lucide-react";
 import UrlAnalyzer from "@/components/neon/UrlAnalyzer";
 import CardInput from "@/components/neon/CardInput";
 import HitRunner from "@/components/neon/HitRunner";
@@ -38,7 +38,7 @@ export default function Index() {
             to="/combo-cleaner"
             className="text-xs text-accent hover:text-accent/80 transition-colors flex items-center gap-1 font-bold"
           >
-            <Sparkles className="w-3 h-3" /> Combo Cleaner
+            <Sparkles className="w-3 h-3" /> AIO Checker
           </Link>
           <button
             onClick={() => setShowAdmin(true)}
@@ -50,6 +50,21 @@ export default function Index() {
       </header>
 
       <main className="relative z-10 max-w-3xl mx-auto px-4 py-6 space-y-4">
+        <Link
+          to="/combo-cleaner"
+          className="glass rounded-xl p-4 flex items-center justify-between gap-3 border border-accent/30 hover:border-accent/60 hover:bg-accent/5 transition-colors"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center shrink-0">
+              <Server className="w-5 h-5 text-accent" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-black text-foreground">AIO Combo Checker</div>
+              <div className="text-[11px] text-muted-foreground truncate">Clean combos, queue checks, manage proxies, and save results.</div>
+            </div>
+          </div>
+          <ArrowRight className="w-4 h-4 text-accent shrink-0" />
+        </Link>
         <UrlAnalyzer accessKey={OPEN_KEY} onAnalyzed={setAnalysis} analysis={analysis} />
         <CardInput cards={cards} onCardsChange={setCards} />
         <HitRunner accessKey={OPEN_KEY} analysis={analysis} cards={cards} settings={settings} />
