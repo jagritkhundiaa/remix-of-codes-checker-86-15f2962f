@@ -214,7 +214,7 @@ async function doLoginPost(email: string, password: string, ppft: string, postUr
         "User-Agent": UA,
         "Content-Type": "application/x-www-form-urlencoded",
         Cookie: jar.header(),
-        Referer: loginUrl,
+        Referer: referer,
       },
       body: form.toString(),
     });
