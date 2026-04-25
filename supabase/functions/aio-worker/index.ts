@@ -102,23 +102,97 @@ interface LoginResult {
   password: string;
 }
 
+function extractPPFT(html: string): string | null {
+  // Try every known variant Microsoft has shipped over the years
+  const patterns = [
+    /name="PPFT"[^>]*value="([^"]+)"/i,
+    /sFTTag\s*:\s*'[^']*value="([^"]+)"/i,
+    /sFTTag\s*:\s*"[^"]*value=\\"([^\\"]+)\\"/i,
+    /<input[^>]*name="PPFT"[^>]*value="([^"]+)"/i,
+    /id="i0327"[^>]*value="([^"]+)"/i,
+    /value="([^"]+)"[^>]*name="PPFT"/i,
+  ];
+  for (const re of patterns) {
+    const m = html.match(re);
+    if (m && m[1]) return m[1];
+  }
+  return null;
+}
+
+function extractPostUrl(html: string, fallback: string): string {
+  const patterns = [
+    /urlPost\s*:\s*'([^']+)'/,
+    /urlPost\s*:\s*"([^"]+)"/,
+    /urlPost=([^&"'\s]+)/,
+  ];
+  for (const re of patterns) {
+    const m = html.match(re);
+    if (m && m[1]) return m[1].replace(/\\u002f/gi, "/").replace(/\\\//g, "/");
+  }
+  return fallback;
+}
+
 async function microsoftLogin(email: string, password: string): Promise<LoginResult> {
   const jar = new CookieJar();
   // Step 1: GET login page → extract PPFT + PostUrl
   const loginUrl = "https://login.live.com/oauth20_authorize.srf?client_id=000000004C12AE6F&scope=service::user.auth.xboxlive.com::MBI_SSL&response_type=token&display=touch&redirect_uri=https://login.live.com/oauth20_desktop.srf&locale=en";
   let res: Response;
   try {
-    res = await safeFetch(loginUrl, { headers: { "User-Agent": UA, Accept: "text/html" } });
+    res = await safeFetch(loginUrl, {
+      headers: {
+        "User-Agent": UA,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Upgrade-Insecure-Requests": "1",
+      },
+    });
     jar.ingest(getSetCookies(res));
   } catch (e) {
     return { status: "error", message: `login page: ${(e as Error).message}`, email, password };
   }
-  const html = await res.text();
-  const ppftMatch = html.match(/name="PPFT" id="i0327" value="([^"]+)"/) || html.match(/sFTTag:'.*?value=\"([^\"]+)\"/);
-  const postUrlMatch = html.match(/urlPost:'([^']+)'/) || html.match(/urlPost\s*:\s*"([^"]+)"/);
-  if (!ppftMatch || !postUrlMatch) return { status: "error", message: "no PPFT", email, password };
-  const ppft = ppftMatch[1];
-  const postUrl = postUrlMatch[1];
+  // Follow one redirect manually if needed (login.live.com sometimes 302s to itself)
+  let html = await res.text();
+  let currentUrl = loginUrl;
+  if (res.status >= 300 && res.status < 400) {
+    const loc = res.headers.get("location");
+    if (loc) {
+      const next = loc.startsWith("http") ? loc : new URL(loc, loginUrl).toString();
+      try {
+        const r2 = await safeFetch(next, {
+          headers: { "User-Agent": UA, Cookie: jar.header(), Accept: "text/html" },
+        });
+        jar.ingest(getSetCookies(r2));
+        html = await r2.text();
+        currentUrl = next;
+      } catch { /* ignore */ }
+    }
+  }
+
+  const ppft = extractPPFT(html);
+  if (!ppft) {
+    // Fallback: try the classic login.srf endpoint which always serves PPFT
+    try {
+      const r3 = await safeFetch("https://login.live.com/login.srf?wa=wsignin1.0&rpsnv=13&ct=" + Date.now() + "&rver=7.0.6737.0&wp=MBI_SSL&wreply=https%3a%2f%2flogin.live.com%2foauth20_desktop.srf%3fclient_id%3d000000004C12AE6F&lc=1033&id=293817", {
+        headers: { "User-Agent": UA, Accept: "text/html", Cookie: jar.header() },
+      });
+      jar.ingest(getSetCookies(r3));
+      const h3 = await r3.text();
+      const p2 = extractPPFT(h3);
+      if (p2) {
+        html = h3;
+        currentUrl = "https://login.live.com/login.srf";
+        const postUrl = extractPostUrl(html, "https://login.live.com/ppsecure/post.srf");
+        return await doLoginPost(email, password, p2, postUrl, currentUrl, jar);
+      }
+    } catch { /* ignore */ }
+    return { status: "error", message: "no PPFT (login page format changed)", email, password };
+  }
+  const postUrl = extractPostUrl(html, "https://login.live.com/ppsecure/post.srf");
+  return await doLoginPost(email, password, ppft, postUrl, currentUrl, jar);
+}
+
+async function doLoginPost(email: string, password: string, ppft: string, postUrl: string, referer: string, jar: CookieJar): Promise<LoginResult> {
 
   // Step 2: POST credentials
   const form = new URLSearchParams();
