@@ -48,7 +48,8 @@ let proxyPool: { proxy: string; protocol: string }[] = [];
 let proxyIdx = 0;
 const proxyFails = new Map<string, number>();
 
-async function loadProxies(supabase: ReturnType<typeof createClient>) {
+// deno-lint-ignore no-explicit-any
+async function loadProxies(supabase: any) {
   const { data } = await supabase.from("aio_proxies").select("proxy,protocol").eq("is_active", true).limit(500);
   proxyPool = (data as { proxy: string; protocol: string }[] | null) || [];
 }
@@ -188,7 +189,8 @@ async function processCombo(combo: string): Promise<LoginResult> {
   }
 }
 
-async function runBatch(supabase: ReturnType<typeof createClient>, jobId: string) {
+// deno-lint-ignore no-explicit-any
+async function runBatch(supabase: any, jobId: string) {
   const startedAt = Date.now();
   await loadProxies(supabase);
 
