@@ -389,7 +389,8 @@ async function sendTelegram(result: CheckResult, merchant: string, amount: strin
 }
 
 // ============= LOG TO DB =============
-async function logCheck(supabase: ReturnType<typeof createClient>, result: CheckResult, accessKey: string, merchant: string, amount: string | null, provider: string) {
+// deno-lint-ignore no-explicit-any
+async function logCheck(supabase: any, result: CheckResult, accessKey: string, merchant: string, amount: string | null, provider: string) {
   try {
     await supabase.from('check_logs').insert({
       access_key: accessKey,
