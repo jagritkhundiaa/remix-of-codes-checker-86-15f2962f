@@ -298,6 +298,40 @@ export default function ComboCleaner() {
             </button>
           </div>
         </div>
+
+        {/* AIO Check */}
+        <div className="glass rounded-xl p-4 space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="text-xs uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+              <Zap className="w-3 h-3 text-accent" /> Auto Checker (Microsoft / Xbox)
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowProxies(s => !s)}
+                className="text-xs flex items-center gap-1 px-3 py-1.5 rounded-md bg-background/40 border border-border/30 hover:border-primary/40 hover:text-primary transition-colors"
+              >
+                <Server className="w-3 h-3" /> {showProxies ? "Hide" : "Manage"} proxies
+              </button>
+              <button
+                onClick={() => submitCheck()}
+                disabled={submitting || !combos.length}
+                className="text-xs flex items-center gap-1.5 px-4 py-1.5 rounded-md bg-accent text-accent-foreground hover:bg-accent/90 font-bold disabled:opacity-40 transition-colors"
+              >
+                {submitting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+                Check {combos.length.toLocaleString()} combos
+              </button>
+            </div>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Combos are queued and auto-checked in the background. Close the tab anytime — checks keep running. Results appear live below and persist forever.
+          </p>
+          {showProxies && <AioProxyPanel adminKey={OPEN_KEY} />}
+          <AioJobsPanel accessKey={OPEN_KEY} />
+        </div>
+      </main>
+    </div>
+  );
+}
       </main>
     </div>
   );
