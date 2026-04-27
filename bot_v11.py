@@ -280,14 +280,21 @@ puller.py (Z-codes, 3 phase), wlid_claimer.py (10 stage logging), aio_tool.py (c
 """
 
 # ================= ROAST CATEGORIES =================
-# different angles to force variety
+# different angles to force variety — heavy on family/mom/dad/granny
 ROAST_ANGLES = [
-    "mom joke", "dad joke", "looks roast", "intelligence roast", "existence roast",
-    "poverty roast", "lonely roast", "smell roast", "voice roast", "typing roast",
-    "birth roast", "relationship roast", "career roast", "hygiene roast", "age roast",
-    "weight roast", "face roast", "brain roast", "future roast", "family roast",
-    "education roast", "fashion roast", "gaming roast", "social life roast",
+    "your mom joke", "your mom joke", "your mom joke",
+    "your dad joke", "your dad joke",
+    "your granny joke", "your granny joke",
+    "dead family joke", "sister joke", "brother joke", "uncle joke",
+    "looks roast", "intelligence roast", "existence roast",
+    "poverty roast", "lonely virgin roast", "smell roast", "voice roast",
+    "birth defect roast", "relationship roast", "career failure roast",
+    "hygiene roast", "weight roast", "face roast", "brain dead roast",
+    "no future roast", "gaming loser roast", "no friends roast",
+    "uneducated roast", "fashion roast", "incest joke",
 ]
+_last_angle_per_user = defaultdict(lambda: deque(maxlen=6))
+
 
 # ================= PROMPT =================
 def build_system(lang: str, target_user: str, target_id: int, force_savage: bool, ch_mood: float, recent_roasts: list, is_owner: bool, is_slave: bool, reply_ctx: str | None, mentioned_info: str | None, is_question: bool, target_roast_user: str | None, conv_history: list | None = None):
