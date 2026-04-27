@@ -60,21 +60,21 @@ def _call_provider(which: str, messages):
         return client.chat.completions.create(
             model=MODEL,
             messages=messages,
-            temperature=1.1,
-            max_tokens=80,
-            top_p=0.92,
-            frequency_penalty=1.3,
-            presence_penalty=1.0,
+            temperature=1.25,
+            max_tokens=110,
+            top_p=0.95,
+            frequency_penalty=1.6,
+            presence_penalty=1.4,
             timeout=API_TIMEOUT,
         )
     return client_backup.chat.completions.create(
         model=MODEL_2,
         messages=messages,
-        temperature=1.1,
-        max_tokens=80,
-        top_p=0.92,
-        frequency_penalty=1.3,
-        presence_penalty=1.0,
+        temperature=1.25,
+        max_tokens=110,
+        top_p=0.95,
+        frequency_penalty=1.6,
+        presence_penalty=1.4,
         timeout=API_TIMEOUT,
     )
 
