@@ -41,6 +41,74 @@ bot = discord.Client(intents=intents)
 tree = discord.app_commands.CommandTree(bot)
 
 client = OpenAI(base_url=BASE_URL, api_key=API_KEY)
+client_backup = None
+if API_KEY_2 and API_KEY_2 != "PUT_KEY_HERE":
+    try:
+        client_backup = OpenAI(base_url=BASE_URL_2, api_key=API_KEY_2)
+    except Exception:
+        client_backup = None
+
+# circuit breaker — if primary fails repeatedly, skip it for a bit
+_primary_fail_streak = 0
+_primary_skip_until = 0.0
+PRIMARY_FAIL_LIMIT = 3
+PRIMARY_COOLDOWN = 120  # seconds skipped after limit hit
+
+def _call_provider(which: str, messages):
+    """Blocking call — runs inside asyncio.to_thread."""
+    if which == "primary":
+        return client.chat.completions.create(
+            model=MODEL,
+            messages=messages,
+            temperature=1.1,
+            max_tokens=80,
+            top_p=0.92,
+            frequency_penalty=1.3,
+            presence_penalty=1.0,
+            timeout=API_TIMEOUT,
+        )
+    return client_backup.chat.completions.create(
+        model=MODEL_2,
+        messages=messages,
+        temperature=1.1,
+        max_tokens=80,
+        top_p=0.92,
+        frequency_penalty=1.3,
+        presence_penalty=1.0,
+        timeout=API_TIMEOUT,
+    )
+
+async def ai_complete(messages):
+    """Try primary -> backup with timeout + circuit breaker. Returns response or raises."""
+    global _primary_fail_streak, _primary_skip_until
+    now = time.time()
+    use_primary = now >= _primary_skip_until
+
+    if use_primary:
+        try:
+            resp = await asyncio.wait_for(
+                asyncio.to_thread(_call_provider, "primary", messages),
+                timeout=API_TIMEOUT + 2,
+            )
+            _primary_fail_streak = 0
+            return resp
+        except Exception as e:
+            _primary_fail_streak += 1
+            if _primary_fail_streak >= PRIMARY_FAIL_LIMIT:
+                _primary_skip_until = time.time() + PRIMARY_COOLDOWN
+                _primary_fail_streak = 0
+                print(f"[ai] primary tripped, cooling {PRIMARY_COOLDOWN}s ({e})")
+            else:
+                print(f"[ai] primary fail {_primary_fail_streak}/{PRIMARY_FAIL_LIMIT}: {e}")
+            if client_backup is None:
+                raise
+
+    if client_backup is None:
+        raise RuntimeError("primary down and no backup configured")
+    return await asyncio.wait_for(
+        asyncio.to_thread(_call_provider, "backup", messages),
+        timeout=API_TIMEOUT + 2,
+    )
 
 # ================= STATE =================
 savage_global = True
