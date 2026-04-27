@@ -388,18 +388,11 @@ async def get_reply(user_msg: str, target_user: str, target_id: int, force_savag
 
     for attempt in range(5):
         try:
-            resp = await asyncio.to_thread(
-                client.chat.completions.create,
-                model=MODEL,
+            resp = await ai_complete(
                 messages=[
                     {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": f"{target_user} said: {user_msg}"},
                 ],
-                temperature=1.1,  # lowered from 1.4 for coherence
-                max_tokens=80,  # increased from 55
-                top_p=0.92,
-                frequency_penalty=1.3,  # increased to fight repetition
-                presence_penalty=1.0,
             )
             text = (resp.choices[0].message.content or "").strip().strip('"').strip("'")
             if not text: continue
