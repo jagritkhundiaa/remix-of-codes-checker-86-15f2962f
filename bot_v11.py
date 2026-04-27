@@ -85,30 +85,43 @@ async def ai_complete(messages):
     use_primary = now >= _primary_skip_until
 
     if use_primary:
+        t0 = time.time()
         try:
             resp = await asyncio.wait_for(
                 asyncio.to_thread(_call_provider, "primary", messages),
                 timeout=API_TIMEOUT + 2,
             )
             _primary_fail_streak = 0
+            print(f"[ai] ✅ PRIMARY ({MODEL}) ok in {round(time.time()-t0,2)}s")
             return resp
         except Exception as e:
             _primary_fail_streak += 1
             if _primary_fail_streak >= PRIMARY_FAIL_LIMIT:
                 _primary_skip_until = time.time() + PRIMARY_COOLDOWN
                 _primary_fail_streak = 0
-                print(f"[ai] primary tripped, cooling {PRIMARY_COOLDOWN}s ({e})")
+                print(f"[ai] ⚠️ PRIMARY tripped, cooling {PRIMARY_COOLDOWN}s ({e})")
             else:
-                print(f"[ai] primary fail {_primary_fail_streak}/{PRIMARY_FAIL_LIMIT}: {e}")
+                print(f"[ai] ⚠️ PRIMARY fail {_primary_fail_streak}/{PRIMARY_FAIL_LIMIT}: {e}")
             if client_backup is None:
+                print("[ai] ❌ no BACKUP configured, giving up")
                 raise
+    else:
+        print(f"[ai] ⏭️ skipping PRIMARY (cooldown {round(_primary_skip_until - now)}s left)")
 
     if client_backup is None:
         raise RuntimeError("primary down and no backup configured")
-    return await asyncio.wait_for(
-        asyncio.to_thread(_call_provider, "backup", messages),
-        timeout=API_TIMEOUT + 2,
-    )
+    t0 = time.time()
+    try:
+        resp = await asyncio.wait_for(
+            asyncio.to_thread(_call_provider, "backup", messages),
+            timeout=API_TIMEOUT + 2,
+        )
+        print(f"[ai] ✅ BACKUP ({MODEL_2}) ok in {round(time.time()-t0,2)}s")
+        return resp
+    except Exception as e:
+        print(f"[ai] ❌ BACKUP fail: {e}")
+        raise
+
 
 # ================= STATE =================
 savage_global = True
