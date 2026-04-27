@@ -419,10 +419,10 @@ async def get_reply(user_msg: str, target_user: str, target_id: int, force_savag
             # strip quotes wrapping
             cleaned = cleaned.strip('"').strip("'").strip("*")
             words = cleaned.split()
-            cap = 20 if (is_owner and not target_roast_user) else 18
+            cap = 22 if (is_owner and not target_roast_user) else 20
             if len(words) > cap:
                 cleaned = " ".join(words[:cap])
-            # anti-repeat check vs recent global pool (50% token overlap = dup)
+            # anti-repeat check vs recent global pool (40% token overlap = dup, stricter)
             low = cleaned.lower().strip(".,!? ")
             dup = False
             for r in list(recent_global) + recent_roasts:
@@ -430,7 +430,7 @@ async def get_reply(user_msg: str, target_user: str, target_id: int, force_savag
                 if not rl: continue
                 if low == rl: dup = True; break
                 a, b = set(low.split()), set(rl.split())
-                if a and b and len(a & b) / max(len(a), len(b)) >= 0.50:
+                if a and b and len(a & b) / max(len(a), len(b)) >= 0.40:
                     dup = True; break
             if dup and attempt < 4: continue
             return cleaned
