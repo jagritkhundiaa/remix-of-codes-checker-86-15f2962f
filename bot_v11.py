@@ -11,9 +11,20 @@ from openai import OpenAI
 
 # ================= CONFIG =================
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "PUT_TOKEN_HERE")
+
+# ----- PRIMARY API (existing, do not change) -----
 API_KEY = os.getenv("NVIDIA_API_KEY", "PUT_KEY_HERE")
 BASE_URL = "https://integrate.api.nvidia.com/v1"
 MODEL = "meta/llama-3.3-70b-instruct"
+
+# ----- BACKUP API (failover when primary slow / rate-limited / errors) -----
+# Fill these in (or set env vars). If left as PUT_KEY_HERE the backup is just skipped.
+API_KEY_2 = os.getenv("BACKUP_API_KEY", "PUT_KEY_HERE")
+BASE_URL_2 = os.getenv("BACKUP_BASE_URL", "https://openrouter.ai/api/v1")
+MODEL_2 = os.getenv("BACKUP_MODEL", "meta-llama/llama-3.3-70b-instruct")
+
+# Timeout (seconds) before we treat primary as "too slow" and fail over
+API_TIMEOUT = float(os.getenv("API_TIMEOUT", "8"))
 
 OWNER_ID = 1450727165061496064  # talkneon
 ALLOWED_CHANNEL_IDS = {int(x) for x in os.getenv("ALLOWED_CHANNELS", "0").split(",") if x.strip().isdigit()}
@@ -30,6 +41,74 @@ bot = discord.Client(intents=intents)
 tree = discord.app_commands.CommandTree(bot)
 
 client = OpenAI(base_url=BASE_URL, api_key=API_KEY)
+client_backup = None
+if API_KEY_2 and API_KEY_2 != "PUT_KEY_HERE":
+    try:
+        client_backup = OpenAI(base_url=BASE_URL_2, api_key=API_KEY_2)
+    except Exception:
+        client_backup = None
+
+# circuit breaker — if primary fails repeatedly, skip it for a bit
+_primary_fail_streak = 0
+_primary_skip_until = 0.0
+PRIMARY_FAIL_LIMIT = 3
+PRIMARY_COOLDOWN = 120  # seconds skipped after limit hit
+
+def _call_provider(which: str, messages):
+    """Blocking call — runs inside asyncio.to_thread."""
+    if which == "primary":
+        return client.chat.completions.create(
+            model=MODEL,
+            messages=messages,
+            temperature=1.1,
+            max_tokens=80,
+            top_p=0.92,
+            frequency_penalty=1.3,
+            presence_penalty=1.0,
+            timeout=API_TIMEOUT,
+        )
+    return client_backup.chat.completions.create(
+        model=MODEL_2,
+        messages=messages,
+        temperature=1.1,
+        max_tokens=80,
+        top_p=0.92,
+        frequency_penalty=1.3,
+        presence_penalty=1.0,
+        timeout=API_TIMEOUT,
+    )
+
+async def ai_complete(messages):
+    """Try primary -> backup with timeout + circuit breaker. Returns response or raises."""
+    global _primary_fail_streak, _primary_skip_until
+    now = time.time()
+    use_primary = now >= _primary_skip_until
+
+    if use_primary:
+        try:
+            resp = await asyncio.wait_for(
+                asyncio.to_thread(_call_provider, "primary", messages),
+                timeout=API_TIMEOUT + 2,
+            )
+            _primary_fail_streak = 0
+            return resp
+        except Exception as e:
+            _primary_fail_streak += 1
+            if _primary_fail_streak >= PRIMARY_FAIL_LIMIT:
+                _primary_skip_until = time.time() + PRIMARY_COOLDOWN
+                _primary_fail_streak = 0
+                print(f"[ai] primary tripped, cooling {PRIMARY_COOLDOWN}s ({e})")
+            else:
+                print(f"[ai] primary fail {_primary_fail_streak}/{PRIMARY_FAIL_LIMIT}: {e}")
+            if client_backup is None:
+                raise
+
+    if client_backup is None:
+        raise RuntimeError("primary down and no backup configured")
+    return await asyncio.wait_for(
+        asyncio.to_thread(_call_provider, "backup", messages),
+        timeout=API_TIMEOUT + 2,
+    )
 
 # ================= STATE =================
 savage_global = True
@@ -309,18 +388,11 @@ async def get_reply(user_msg: str, target_user: str, target_id: int, force_savag
 
     for attempt in range(5):
         try:
-            resp = await asyncio.to_thread(
-                client.chat.completions.create,
-                model=MODEL,
+            resp = await ai_complete(
                 messages=[
                     {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": f"{target_user} said: {user_msg}"},
                 ],
-                temperature=1.1,  # lowered from 1.4 for coherence
-                max_tokens=80,  # increased from 55
-                top_p=0.92,
-                frequency_penalty=1.3,  # increased to fight repetition
-                presence_penalty=1.0,
             )
             text = (resp.choices[0].message.content or "").strip().strip('"').strip("'")
             if not text: continue
