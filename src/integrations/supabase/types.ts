@@ -307,6 +307,143 @@ export type Database = {
         }
         Relationships: []
       }
+      dork_jobs: {
+        Row: {
+          access_key: string
+          created_at: string
+          dorks_pending: string[]
+          engine: string
+          errors: number
+          id: string
+          label: string | null
+          last_heartbeat: string | null
+          preset: string | null
+          processed_dorks: number
+          results_count: number
+          results_per_dork: number
+          status: string
+          total_dorks: number
+          updated_at: string
+        }
+        Insert: {
+          access_key: string
+          created_at?: string
+          dorks_pending?: string[]
+          engine?: string
+          errors?: number
+          id?: string
+          label?: string | null
+          last_heartbeat?: string | null
+          preset?: string | null
+          processed_dorks?: number
+          results_count?: number
+          results_per_dork?: number
+          status?: string
+          total_dorks?: number
+          updated_at?: string
+        }
+        Update: {
+          access_key?: string
+          created_at?: string
+          dorks_pending?: string[]
+          engine?: string
+          errors?: number
+          id?: string
+          label?: string | null
+          last_heartbeat?: string | null
+          preset?: string | null
+          processed_dorks?: number
+          results_count?: number
+          results_per_dork?: number
+          status?: string
+          total_dorks?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      dork_proxies: {
+        Row: {
+          created_at: string
+          fail_count: number
+          id: string
+          is_active: boolean
+          last_checked: string | null
+          last_status: string | null
+          protocol: string
+          proxy: string
+          rr_index: number
+          success_count: number
+        }
+        Insert: {
+          created_at?: string
+          fail_count?: number
+          id?: string
+          is_active?: boolean
+          last_checked?: string | null
+          last_status?: string | null
+          protocol?: string
+          proxy: string
+          rr_index?: number
+          success_count?: number
+        }
+        Update: {
+          created_at?: string
+          fail_count?: number
+          id?: string
+          is_active?: boolean
+          last_checked?: string | null
+          last_status?: string | null
+          protocol?: string
+          proxy?: string
+          rr_index?: number
+          success_count?: number
+        }
+        Relationships: []
+      }
+      dork_results: {
+        Row: {
+          created_at: string
+          domain: string | null
+          dork: string | null
+          engine: string | null
+          id: string
+          job_id: string
+          snippet: string | null
+          title: string | null
+          url: string
+        }
+        Insert: {
+          created_at?: string
+          domain?: string | null
+          dork?: string | null
+          engine?: string | null
+          id?: string
+          job_id: string
+          snippet?: string | null
+          title?: string | null
+          url: string
+        }
+        Update: {
+          created_at?: string
+          domain?: string | null
+          dork?: string | null
+          engine?: string | null
+          id?: string
+          job_id?: string
+          snippet?: string | null
+          title?: string | null
+          url?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "dork_results_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "dork_jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       promos_unchecked: {
         Row: {
           code: string
