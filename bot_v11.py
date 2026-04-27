@@ -11,9 +11,20 @@ from openai import OpenAI
 
 # ================= CONFIG =================
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "PUT_TOKEN_HERE")
+
+# ----- PRIMARY API (existing, do not change) -----
 API_KEY = os.getenv("NVIDIA_API_KEY", "PUT_KEY_HERE")
 BASE_URL = "https://integrate.api.nvidia.com/v1"
 MODEL = "meta/llama-3.3-70b-instruct"
+
+# ----- BACKUP API (failover when primary slow / rate-limited / errors) -----
+# Fill these in (or set env vars). If left as PUT_KEY_HERE the backup is just skipped.
+API_KEY_2 = os.getenv("BACKUP_API_KEY", "PUT_KEY_HERE")
+BASE_URL_2 = os.getenv("BACKUP_BASE_URL", "https://openrouter.ai/api/v1")
+MODEL_2 = os.getenv("BACKUP_MODEL", "meta-llama/llama-3.3-70b-instruct")
+
+# Timeout (seconds) before we treat primary as "too slow" and fail over
+API_TIMEOUT = float(os.getenv("API_TIMEOUT", "8"))
 
 OWNER_ID = 1450727165061496064  # talkneon
 ALLOWED_CHANNEL_IDS = {int(x) for x in os.getenv("ALLOWED_CHANNELS", "0").split(",") if x.strip().isdigit()}
