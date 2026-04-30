@@ -12,22 +12,18 @@ from openai import OpenAI
 # ================= CONFIG =================
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "PUT_TOKEN_HERE")
 
-# ----- PRIMARY API -----
+# ----- PRIMARY API (existing, do not change) -----
 API_KEY = os.getenv("NVIDIA_API_KEY", "PUT_KEY_HERE")
 BASE_URL = "https://integrate.api.nvidia.com/v1"
 MODEL = "meta/llama-3.3-70b-instruct"
 
-# ----- BACKUP API #2 (failover when primary slow / rate-limited / errors) -----
+# ----- BACKUP API (failover when primary slow / rate-limited / errors) -----
+# Fill these in (or set env vars). If left as PUT_KEY_HERE the backup is just skipped.
 API_KEY_2 = os.getenv("BACKUP_API_KEY", "PUT_KEY_HERE")
 BASE_URL_2 = os.getenv("BACKUP_BASE_URL", "https://openrouter.ai/api/v1")
 MODEL_2 = os.getenv("BACKUP_MODEL", "meta-llama/llama-3.3-70b-instruct")
 
-# ----- BACKUP API #3 (failover when both primary and #2 down) -----
-API_KEY_3 = os.getenv("BACKUP_API_KEY_3", "PUT_KEY_HERE")
-BASE_URL_3 = os.getenv("BACKUP_BASE_URL_3", "https://api.groq.com/openai/v1")
-MODEL_3 = os.getenv("BACKUP_MODEL_3", "llama-3.3-70b-versatile")
-
-# Timeout (seconds) before we treat a provider as "too slow" and fail over
+# Timeout (seconds) before we treat primary as "too slow" and fail over
 API_TIMEOUT = float(os.getenv("API_TIMEOUT", "8"))
 
 OWNER_ID = 1450727165061496064  # talkneon
@@ -44,36 +40,35 @@ intents.members = True
 bot = discord.Client(intents=intents)
 tree = discord.app_commands.CommandTree(bot)
 
-def _mk_client(key, url):
-    if not key or key == "PUT_KEY_HERE":
-        return None
+client = OpenAI(base_url=BASE_URL, api_key=API_KEY)
+client_backup = None
+if API_KEY_2 and API_KEY_2 != "PUT_KEY_HERE":
     try:
-        return OpenAI(base_url=url, api_key=key)
+        client_backup = OpenAI(base_url=BASE_URL_2, api_key=API_KEY_2)
     except Exception:
-        return None
+        client_backup = None
 
-# Provider chain: tried in order, with per-provider cooldown after repeated failures
-PROVIDERS = [
-    {"name": "PRIMARY", "client": _mk_client(API_KEY, BASE_URL),    "model": MODEL},
-    {"name": "BACKUP2", "client": _mk_client(API_KEY_2, BASE_URL_2), "model": MODEL_2},
-    {"name": "BACKUP3", "client": _mk_client(API_KEY_3, BASE_URL_3), "model": MODEL_3},
-]
+# circuit breaker — if primary fails repeatedly, skip it for a bit
+_primary_fail_streak = 0
+_primary_skip_until = 0.0
+PRIMARY_FAIL_LIMIT = 3
+PRIMARY_COOLDOWN = 120  # seconds skipped after limit hit
 
-# per-provider circuit breaker state
-_fail_streak = [0, 0, 0]
-_skip_until  = [0.0, 0.0, 0.0]
-FAIL_LIMIT = 3
-COOLDOWN = 120  # seconds skipped after limit hit
-
-print(f"[ai] providers loaded: " + ", ".join(
-    f"{p['name']}={'ON' if p['client'] else 'OFF'}" for p in PROVIDERS
-))
-
-def _call_provider(idx: int, messages):
+def _call_provider(which: str, messages):
     """Blocking call — runs inside asyncio.to_thread."""
-    p = PROVIDERS[idx]
-    return p["client"].chat.completions.create(
-        model=p["model"],
+    if which == "primary":
+        return client.chat.completions.create(
+            model=MODEL,
+            messages=messages,
+            temperature=1.25,
+            max_tokens=110,
+            top_p=0.95,
+            frequency_penalty=1.6,
+            presence_penalty=1.4,
+            timeout=API_TIMEOUT,
+        )
+    return client_backup.chat.completions.create(
+        model=MODEL_2,
         messages=messages,
         temperature=1.25,
         max_tokens=110,
@@ -84,38 +79,48 @@ def _call_provider(idx: int, messages):
     )
 
 async def ai_complete(messages):
-    """Walk provider chain in order. Per-provider cooldown on repeated failures."""
-    last_err = None
-    for idx, p in enumerate(PROVIDERS):
-        if p["client"] is None:
-            continue
-        now = time.time()
-        if now < _skip_until[idx]:
-            print(f"[ai] ⏭️ skipping {p['name']} (cooldown {round(_skip_until[idx]-now)}s left)")
-            continue
+    """Try primary -> backup with timeout + circuit breaker. Returns response or raises."""
+    global _primary_fail_streak, _primary_skip_until
+    now = time.time()
+    use_primary = now >= _primary_skip_until
+
+    if use_primary:
         t0 = time.time()
         try:
             resp = await asyncio.wait_for(
-                asyncio.to_thread(_call_provider, idx, messages),
+                asyncio.to_thread(_call_provider, "primary", messages),
                 timeout=API_TIMEOUT + 2,
             )
-            _fail_streak[idx] = 0
-            print(f"[ai] ✅ {p['name']} ({p['model']}) ok in {round(time.time()-t0,2)}s")
+            _primary_fail_streak = 0
+            print(f"[ai] ✅ PRIMARY ({MODEL}) ok in {round(time.time()-t0,2)}s")
             return resp
         except Exception as e:
-            last_err = e
-            _fail_streak[idx] += 1
-            if _fail_streak[idx] >= FAIL_LIMIT:
-                _skip_until[idx] = time.time() + COOLDOWN
-                _fail_streak[idx] = 0
-                print(f"[ai] ⚠️ {p['name']} tripped, cooling {COOLDOWN}s ({e})")
+            _primary_fail_streak += 1
+            if _primary_fail_streak >= PRIMARY_FAIL_LIMIT:
+                _primary_skip_until = time.time() + PRIMARY_COOLDOWN
+                _primary_fail_streak = 0
+                print(f"[ai] ⚠️ PRIMARY tripped, cooling {PRIMARY_COOLDOWN}s ({e})")
             else:
-                print(f"[ai] ⚠️ {p['name']} fail {_fail_streak[idx]}/{FAIL_LIMIT}: {e}")
-            # fall through to next provider
-    print(f"[ai] ❌ all providers exhausted")
-    raise last_err or RuntimeError("no providers available")
+                print(f"[ai] ⚠️ PRIMARY fail {_primary_fail_streak}/{PRIMARY_FAIL_LIMIT}: {e}")
+            if client_backup is None:
+                print("[ai] ❌ no BACKUP configured, giving up")
+                raise
+    else:
+        print(f"[ai] ⏭️ skipping PRIMARY (cooldown {round(_primary_skip_until - now)}s left)")
 
-
+    if client_backup is None:
+        raise RuntimeError("primary down and no backup configured")
+    t0 = time.time()
+    try:
+        resp = await asyncio.wait_for(
+            asyncio.to_thread(_call_provider, "backup", messages),
+            timeout=API_TIMEOUT + 2,
+        )
+        print(f"[ai] ✅ BACKUP ({MODEL_2}) ok in {round(time.time()-t0,2)}s")
+        return resp
+    except Exception as e:
+        print(f"[ai] ❌ BACKUP fail: {e}")
+        raise
 
 
 # ================= STATE =================
@@ -356,8 +361,8 @@ def build_system(lang: str, target_user: str, target_id: int, force_savage: bool
             "smell/hygiene/teeth/acne jabs, third world jabs, body shaming, intelligence shaming. NOTHING off limits. "
             "Quote their own dumbest word back and twist it into the punchline. "
             "PACK 2-3 of the dirtiest words into every reply. "
-            f"Vocabulary you USE freely and explicitly: "
-            f"{'madarchod, bhenchod, mc, bc, bsdk, chutiya, gandu, randi, randwa, harami, haramzada, kutta, kutti, suar, suar ki aulad, saala, kameena, lulle, lund, jhaant, gaand, chinaal, raand, kuttiya, bhadwa, bhadwe, lavde, tatti, hagne wala, chod, choda, chodu, chudai, gand mara, gaand mara, teri maa ki chut, teri behen ki chut, maa chuda, behen chuda, randi ka bachcha, harami ka pilla, kutte ki aulad, suar ke bachche' if lang=='hi' else 'motherfucker, fuck, fucker, cunt, cunt-rag, bitch, whore, slut, hoe, retard, retarded, sped, dumbass, dumbfuck, dipshit, shitstain, bastard, son of a bitch, son of a whore, faggot, fag, queer, pussy, pussy-ass, simp, incel, virgin, kissless virgin, loser, asshole, dickhead, dickless, cocksucker, cumdumpster, cumguzzler, jizz-stain, jackass, prick, twat, douchebag, pissbaby, manchild, mouthbreather, knuckle dragger, smegma sniffer, bitch-baby, your mom is a $5 hooker, your dad is a deadbeat, your sister is a whore, your whole bloodline is a mistake'}. "
+            f"Vocabulary you USE freely: "
+            f"{'madarchod, bhenchod, mc, bc, bsdk, chutiya, gandu, randi, randwa, harami, haramzada, kutta, kutti, suar, suar ki aulad, saala, kameena, lulle, lund, jhaant, gaand, chinaal, raand, kuttiya, bhadwa, bhadwe' if lang=='hi' else 'motherfucker, fuck, fucker, cunt, bitch, whore, slut, retard, retarded, dumbass, dumbfuck, bastard, son of a bitch, faggot, fag, pussy, simp, incel, virgin, loser, asshole, dickhead, cocksucker, jackass, prick, twat, douchebag, pissbaby, manchild, mouthbreather, knuckle dragger'}. "
             "End on the punchline, no explanation. NEVER reuse any phrase or structure from past roasts."
         )
     else:
