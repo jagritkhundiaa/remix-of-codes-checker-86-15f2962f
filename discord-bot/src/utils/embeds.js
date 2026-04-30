@@ -894,30 +894,25 @@ function textAttachment(lines, filename) {
 }
 
 function recoverProgressEmbed(email, status) {
-  const block = [
-    "Account Recovery",
-    "----------------------------",
-    "",
-    `  Account: ${email}`,
-  ];
-
   return header({ thumbnail: false })
     .setColor(COLORS.INFO)
-    .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\`\n${status}`);
+    .setDescription([
+      `${UI.key} **Account Recovery**`,
+      `${UI.bullet} **Account:** \`${email}\``,
+      ``,
+      status,
+    ].join("\n"));
 }
 
 function recoverResultEmbed(email, success, message) {
-  const title = success ? "Recovery Successful" : "Recovery Failed";
-  const block = [
-    title,
-    "----------------------------",
-    "",
-    `  Account: ${email}`,
-  ];
-
   return header()
     .setColor(success ? COLORS.SUCCESS : COLORS.ERROR)
-    .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\`\n${message || (success ? "Password has been reset." : "Recovery failed.")}`);
+    .setDescription([
+      `${success ? UI.ok : UI.fail} **${success ? "Recovery Successful" : "Recovery Failed"}**`,
+      `${UI.bullet} **Account:** \`${email}\``,
+      ``,
+      message || (success ? "Password has been reset." : "Recovery failed."),
+    ].join("\n"));
 }
 
 // ── Inbox AIO Embeds ─────────────────────────────────────────
