@@ -8,6 +8,23 @@ const { COLORS, THUMBNAIL_URL, BANNER_URL } = require("../config");
 
 const FOOTER_TEXT = "AutizMens | TalkNeon";
 
+// ── Puller-specific animated emojis (exact IDs from spec) ────
+const PULLER_EMOJI = {
+  loading: "<a:Loading:1473740101367500918>",
+  working: "<a:Working:1473738927251914919>",
+  failed:  "<a:Failed:1473739301291561021>",
+  codes:   "<a:Codes:1473739526861226248>",
+  money:   "<a:Money2:1473744817270952161>",
+  claimed: "<:Claimed:1473747602708107525>",
+};
+
+function _fmtPullerFooter(username) {
+  const d = new Date();
+  const date = d.toLocaleDateString("en-GB");
+  const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  return `Pulled by ${username || "user"}. | ${date}, ${time}`;
+}
+
 function header(options = {}) {
   const embed = new EmbedBuilder()
     .setAuthor({ name: "AutizMens" })
@@ -93,117 +110,88 @@ function claimResultsEmbed(results) {
     .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\``);
 }
 
-// ── Pull Progress (Fetch Phase) ──────────────────────────────
+// ── Pull Progress (Fetch Phase) — matches screenshot 1:1 ─────
 
 function pullFetchProgressEmbed(details) {
-  const pct = details.total === 0 ? 0 : Math.round((details.done / details.total) * 100);
-  const barLen = 20;
-  const filled = Math.round((pct / 100) * barLen);
-  const bar = "#".repeat(filled) + "-".repeat(barLen - filled);
-
+  const E = PULLER_EMOJI;
+  const total = details.total || 0;
   const working = details.working || 0;
   const failed = details.failed || 0;
   const withCodes = details.withCodes || 0;
   const noCodes = details.noCodes || 0;
   const totalCodes = details.totalCodes || 0;
-  const elapsed = details.startTime ? ((Date.now() - details.startTime) / 1000).toFixed(1) : "...";
+  const elapsed = details.startTime ? ((Date.now() - details.startTime) / 1000).toFixed(1) : "0.0";
 
   const lines = [
-    "Fetching Codes",
-    `  [${bar}] ${pct}%`,
-    "----------------------------",
-    "",
-    "  Account Analysis",
-    "",
-    `  ${pad("Total Accounts")}${details.total}`,
-    `  ${pad("Processed")}${details.done}`,
-    `  ${pad("Working")}${working}`,
-    `    > With Codes       ${withCodes}`,
-    `    > No Codes         ${noCodes}`,
-    `  ${pad("Failed")}${failed}`,
-    "",
-    `  ${pad("Codes Found")}${totalCodes}`,
+    `**Fetching Codes...**`,
+    `${E.loading} **Account Analysis:**`,
+    `• **Total Accounts:** ${total}`,
+    `• ${E.working} **Working Accounts:** ${working}`,
+    `  └ With Codes: ${withCodes}`,
+    `  └ No Codes: ${noCodes}`,
+    `• ${E.failed} **Failed Accounts:** ${failed}`,
+    `• ${E.codes} **Codes Found:** ${totalCodes}`,
+    ``,
+    `:stopwatch: **Time:** ${elapsed}s`,
   ];
 
-  if (details.lastAccount) {
-    const status = details.lastError
-      ? `Failed`
-      : `${details.lastCodes || 0} codes`;
-    lines.push("", `  ${pad("Latest")}${details.lastAccount}`, `  ${pad("Status")}${status}`);
-  }
-
-  lines.push("", "----------------------------", `  Time: ${elapsed}s`);
-
-  const embed = header({ thumbnail: false }).setColor(COLORS.INFO).setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
+  const embed = header({ thumbnail: false })
+    .setColor(COLORS.INFO)
+    .setDescription(lines.join("\n"));
 
   if (details.username) {
-    embed.setFooter({ text: `Pulled by ${details.username} | ${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` });
+    embed.setFooter({ text: _fmtPullerFooter(details.username) });
   }
-
   return embed;
 }
 
-// ── Pull Live Progress (Validate Phase) ──────────────────────
+// ── Pull Live Progress (Validate Phase) — matches screenshot ─
 
 function pullLiveProgressEmbed(fetchResults, validateProgress, { username, startTime } = {}) {
+  const E = PULLER_EMOJI;
   const totalAccounts = fetchResults.length;
   const workingAccounts = fetchResults.filter((r) => !r.error);
   const failedAccounts = fetchResults.filter((r) => r.error);
   const withCodes = workingAccounts.filter((r) => r.codes.length > 0);
   const noCodes = workingAccounts.filter((r) => r.codes.length === 0);
   const totalCodesFetched = fetchResults.reduce((sum, r) => sum + r.codes.length, 0);
-
-  const pct = validateProgress.total === 0 ? 0 : Math.round((validateProgress.done / validateProgress.total) * 100);
-  const barLen = 20;
-  const filled = Math.round((pct / 100) * barLen);
-  const bar = "#".repeat(filled) + "-".repeat(barLen - filled);
 
   const valid = validateProgress.valid || 0;
   const used = validateProgress.used || 0;
   const balance = validateProgress.balance || 0;
-  const expired = validateProgress.expired || 0;
-  const regionLocked = validateProgress.regionLocked || 0;
-  const invalid = validateProgress.invalid || 0;
 
-  const elapsed = startTime ? ((Date.now() - startTime) / 1000).toFixed(1) : "...";
+  const elapsed = startTime ? ((Date.now() - startTime) / 1000).toFixed(1) : "0.0";
 
   const lines = [
-    "Validating Codes",
-    `  [${bar}] ${pct}%`,
-    "----------------------------",
-    "",
-    "  Account Analysis",
-    "",
-    `  ${pad("Total Accounts")}${totalAccounts}`,
-    `  ${pad("Working")}${workingAccounts.length}`,
-    `    > With Codes       ${withCodes.length}`,
-    `    > No Codes         ${noCodes.length}`,
-    `  ${pad("Failed")}${failedAccounts.length}`,
-    "",
-    `  ${pad("Codes Found")}${totalCodesFetched}`,
-    `    > Working           ${valid}`,
-    `    > Claimed           ${used}`,
-    `    > Balance           ${balance}`,
+    `**Validating Codes...**`,
+    `${E.loading} **Account Analysis:**`,
+    `• **Total Accounts:** ${totalAccounts}`,
+    `• ${E.working} **Working Accounts:** ${workingAccounts.length}`,
+    `  └ With Codes: ${withCodes.length}`,
+    `  └ No Codes: ${noCodes.length}`,
+    `• ${E.failed} **Failed Accounts:** ${failedAccounts.length}`,
+    `• ${E.codes} **Codes Found:** ${totalCodesFetched}`,
+    `  └ Working: ${valid}`,
+    `  └ ${E.claimed} Claimed: ${used}`,
+    `  └ ${E.money} Balance: ${balance}`,
+    ``,
+    `:stopwatch: **Time:** ${elapsed}s`,
   ];
 
-  if (expired > 0) lines.push(`    > Expired          ${expired}`);
-  if (regionLocked > 0) lines.push(`    > Region Locked    ${regionLocked}`);
-  if (invalid > 0) lines.push(`    > Invalid          ${invalid}`);
-
-  lines.push("", "----------------------------", `  Time: ${elapsed}s`);
-
-  const embed = header({ thumbnail: false }).setColor(COLORS.INFO).setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
+  const embed = header({ thumbnail: false })
+    .setColor(COLORS.INFO)
+    .setDescription(lines.join("\n"));
 
   if (username) {
-    embed.setFooter({ text: `Pulled by ${username} | ${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` });
+    embed.setFooter({ text: _fmtPullerFooter(username) });
   }
-
   return embed;
 }
 
-// ── Pull Results (Final) ─────────────────────────────────────
+// ── Pull Results (Final) — matches screenshot 1:1 ────────────
 
 function pullResultsEmbed(fetchResults, validateResults, { elapsed, dmSent, username } = {}) {
+  const E = PULLER_EMOJI;
   const totalAccounts = fetchResults.length;
   const workingAccounts = fetchResults.filter((r) => !r.error);
   const failedAccounts = fetchResults.filter((r) => r.error);
@@ -211,55 +199,37 @@ function pullResultsEmbed(fetchResults, validateResults, { elapsed, dmSent, user
   const noCodes = workingAccounts.filter((r) => r.codes.length === 0);
   const totalCodesFetched = fetchResults.reduce((sum, r) => sum + r.codes.length, 0);
 
-  const valid = validateResults.filter((r) => r.status === "valid");
-  const used = validateResults.filter((r) => r.status === "used" || r.status === "REDEEMED");
-  const expired = validateResults.filter((r) => r.status === "expired" || r.status === "EXPIRED");
-  const invalid = validateResults.filter((r) => r.status === "invalid" || r.status === "error" || r.status === "INVALID");
-  const balance = validateResults.filter((r) => r.status === "BALANCE_CODE");
-  const regionLocked = validateResults.filter((r) => r.status === "REGION_LOCKED");
+  const valid = validateResults.filter((r) => r.status === "valid").length;
+  const used = validateResults.filter((r) => r.status === "used" || r.status === "REDEEMED").length;
+  const balance = validateResults.filter((r) => r.status === "BALANCE_CODE").length;
 
   const lines = [
-    "Fetching Complete!",
-    "----------------------------",
-    "",
-    "  Account Analysis",
-    "",
-    `  ${pad("Total Accounts")}${totalAccounts}`,
-    `  ${pad("Working")}${workingAccounts.length}`,
-    `    > With Codes       ${withCodes.length}`,
-    `    > No Codes         ${noCodes.length}`,
-    `  ${pad("Failed")}${failedAccounts.length}`,
-    "",
-    `  ${pad("Codes Found")}${totalCodesFetched}`,
-    `    > Working           ${valid.length}`,
-    `    > Claimed           ${used.length}`,
-    `    > Balance           ${balance.length}`,
+    `**Fetching Complete!**`,
+    `${E.loading} **Account Analysis:**`,
+    `• **Total Accounts:** ${totalAccounts}`,
+    `• ${E.working} **Working Accounts:** ${workingAccounts.length}`,
+    `  └ With Codes: ${withCodes.length}`,
+    `  └ No Codes: ${noCodes.length}`,
+    `• ${E.failed} **Failed Accounts:** ${failedAccounts.length}`,
+    `• ${E.codes} **Codes Found:** ${totalCodesFetched}`,
+    `  └ Working: ${valid}`,
+    `  └ ${E.claimed} Claimed: ${used}`,
+    `  └ ${E.money} Balance: ${balance}`,
+    ``,
+    `:stopwatch: **Time:** ${elapsed || "0.0"}s`,
   ];
 
-  if (expired.length > 0) lines.push(`    > Expired          ${expired.length}`);
-  if (regionLocked.length > 0) lines.push(`    > Region Locked    ${regionLocked.length}`);
-  if (invalid.length > 0) lines.push(`    > Invalid          ${invalid.length}`);
-
-  if (elapsed) {
-    lines.push("", "----------------------------", `  Time: ${elapsed}s`);
-  }
-
-  const embed = header()
-    .setColor(COLORS.PRIMARY)
-    .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
-
   if (dmSent) {
-    embed.addFields({ name: "\u200b", value: "```\n>> Results sent to your DMs\n```", inline: false });
+    lines.push("", "> » Codes sent to your DMs");
   }
 
-  if (username) {
-    embed.setFooter({ text: `Pulled by ${username} | ${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` });
-  }
+  const embed = header({ thumbnail: false })
+    .setColor(COLORS.PRIMARY)
+    .setDescription(lines.join("\n"));
 
+  embed.setFooter({ text: _fmtPullerFooter(username) });
   return embed;
 }
-
-// ── PromoPuller Embeds ───────────────────────────────────────
 
 function promoPullerFetchProgressEmbed(details) {
   const pct = details.total === 0 ? 0 : Math.round((details.done / details.total) * 100);
