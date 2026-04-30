@@ -88,14 +88,17 @@ function pad(label, width = 16) {
 
 function progressEmbed(completed, total, label = "Processing") {
   const pct = total === 0 ? 0 : Math.round((completed / total) * 100);
-  const barLen = 20;
+  const barLen = 18;
   const filled = Math.round((pct / 100) * barLen);
-  const bar = "#".repeat(filled) + "-".repeat(barLen - filled);
+  const bar = "█".repeat(filled) + "░".repeat(barLen - filled);
 
   return header({ thumbnail: false })
     .setColor(COLORS.INFO)
-    .setTitle(label)
-    .setDescription(`\`\`\`\n[${bar}] ${pct}%\n${completed.toLocaleString()} / ${total.toLocaleString()}\n\`\`\``);
+    .setDescription([
+      `**${label}...**`,
+      `\`${bar}\` **${pct}%**`,
+      `${UI.bullet} ${completed.toLocaleString()} / ${total.toLocaleString()}`,
+    ].join("\n"));
 }
 
 // ── Check Results ────────────────────────────────────────────
