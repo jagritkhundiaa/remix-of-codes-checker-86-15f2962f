@@ -720,46 +720,44 @@ const HELP_CATEGORIES = {
 // ── Gen system embeds (hidden from main help) ─────────────────
 
 function genHelpEmbed(prefix) {
-  const block = [
-    "Gen System  [Hidden]",
-    "========================================",
-    "",
-    "  User Commands",
-    "  ----------------------------------------",
-    `  ${prefix}gen <product> <amount>`,
-    "    Pull stock items. Users: 1 per request,",
-    "    200s cooldown. Admins: 50 per request.",
-    "",
-    `  ${prefix}stock`,
-    "    List all products and stock counts.",
-    "",
-    "  Stock Management",
-    "  ----------------------------------------",
-    `  ${prefix}addstock <product> + attach .txt`,
-    `  ${prefix}replacegenstock <product> + attach .txt`,
-    `  ${prefix}downloadgenstock`,
-    "",
-    "  Output",
-    "  ----------------------------------------",
-    "  Items delivered via DM.",
-  ];
-  return header().setColor(COLORS.PRIMARY).setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\``);
+  return header()
+    .setColor(COLORS.PRIMARY)
+    .setDescription([
+      `${UI.gift} **Gen System** _(Hidden)_`,
+      ``,
+      `**User Commands**`,
+      `${UI.bullet} \`${prefix}gen <product> <amount>\``,
+      `  ${UI.sub} Pull stock items. Users: 1 per request, 200s cooldown. Admins: 50.`,
+      `${UI.bullet} \`${prefix}stock\``,
+      `  ${UI.sub} List all products and stock counts.`,
+      ``,
+      `**Stock Management**`,
+      `${UI.bullet} \`${prefix}addstock <product>\` + attach .txt`,
+      `${UI.bullet} \`${prefix}replacegenstock <product>\` + attach .txt`,
+      `${UI.bullet} \`${prefix}downloadgenstock\``,
+      ``,
+      `${UI.mail} Items delivered via DM.`,
+    ].join("\n"));
 }
 
 function stockListEmbed(entries) {
   if (entries.length === 0) {
-    return header().setColor(COLORS.MUTED).setDescription("```\nStock\n----------------------------\n\nNo products yet. Use .addstock to add some.\n```");
+    return header()
+      .setColor(COLORS.MUTED)
+      .setDescription(`${UI.shop} **Stock**\nNo products yet. Use \`.addstock\` to add some.`);
   }
-  const lines = ["Stock", "----------------------------", ""];
+  const lines = [`${UI.shop} **Stock**`, ``];
   for (const e of entries) {
-    lines.push(`  ${e.name.padEnd(20)}${e.count}`);
+    lines.push(`${UI.bullet} **${e.name}** — ${e.count}`);
   }
-  lines.push("", "----------------------------", `  Total products: ${entries.length}`);
-  return header().setColor(COLORS.INFO).setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
+  lines.push(``, `${UI.flag} **Total products:** ${entries.length}`);
+  return header().setColor(COLORS.INFO).setDescription(lines.join("\n"));
 }
 
 function unauthorisedEmbed() {
-  return header().setColor(COLORS.WARNING).setDescription("hi unauthorised dude.. reply **milk** to this chat to gain auto access if not wait for owner");
+  return header()
+    .setColor(COLORS.WARNING)
+    .setDescription(`${UI.lock} **Unauthorised**\nReply **\`milk\`** to this chat to gain auto access — otherwise wait for the owner.`);
 }
 
 function helpOverviewEmbed(prefix) {
