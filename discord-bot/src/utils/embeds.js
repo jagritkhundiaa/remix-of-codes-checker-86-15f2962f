@@ -819,55 +819,48 @@ function helpSelectMenu() {
 // ── Welcome Embed ────────────────────────────────────────────
 
 function welcomeEmbed(username) {
-  const block = [
-    `Welcome, ${username}`,
-    "----------------------------",
-    "",
-    "  You now have access to AutizMens.",
-    "",
-    "  Quick Start",
-    "    .help      View all commands",
-    "    .pull      Fetch & validate codes",
-    "    .check     Check codes",
-    "    .rewards   Check point balances",
-    "",
-    "  All results are sent to your DMs.",
-    "  Attach a .txt file for bulk operations.",
-    "",
-    "----------------------------",
-    "  Type .help to get started.",
-  ];
-
   return header({ banner: true })
     .setColor(COLORS.PRIMARY)
-    .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\``);
+    .setDescription([
+      `${UI.spark} **Welcome, ${username}**`,
+      ``,
+      `You now have access to **AutizMens**.`,
+      ``,
+      `${UI.bolt} **Quick Start**`,
+      `${UI.bullet} \`.help\` — view all commands`,
+      `${UI.bullet} \`.pull\` — fetch & validate codes`,
+      `${UI.bullet} \`.check\` — check codes`,
+      `${UI.bullet} \`.rewards\` — check point balances`,
+      ``,
+      `${UI.mail} All results are sent to your DMs.`,
+      `${UI.info} Attach a \`.txt\` file for bulk operations.`,
+      ``,
+      `_Type_ \`.help\` _to get started._`,
+    ].join("\n"));
 }
 
 // ── Admin Panels ─────────────────────────────────────────────
 
 function adminPanelEmbed(stats, authCount, activeOtpSessions, activeProcesses, webhookSet) {
-  const block = [
-    "Admin Control Panel",
-    "----------------------------",
-    "",
-    "  Users",
-    `  ${pad("Authorized")}${authCount}`,
-    `  ${pad("OTP Sessions")}${activeOtpSessions}`,
-    `  ${pad("Active")}${activeProcesses}`,
-    "",
-    "  Processing",
-    `  ${pad("Total")}${stats.total_processed}`,
-    `  ${pad("Success")}${stats.total_success}`,
-    `  ${pad("Failed")}${stats.total_failed}`,
-    "",
-    "  Status",
-    `  ${pad("Bot")}Online`,
-    `  ${pad("Webhook")}${webhookSet ? "Set" : "Not Set"}`,
-  ];
-
   return header()
     .setColor(COLORS.PRIMARY)
-    .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\``);
+    .setDescription([
+      `${UI.shield} **Admin Control Panel**`,
+      ``,
+      `${UI.user} **Users**`,
+      `${UI.bullet} **Authorized:** ${authCount}`,
+      `${UI.bullet} **OTP Sessions:** ${activeOtpSessions}`,
+      `${UI.bullet} **Active Tasks:** ${activeProcesses}`,
+      ``,
+      `${UI.bolt} **Processing**`,
+      `${UI.bullet} **Total:** ${stats.total_processed}`,
+      `${UI.bullet} ${UI.ok} **Success:** ${stats.total_success}`,
+      `${UI.bullet} ${UI.fail} **Failed:** ${stats.total_failed}`,
+      ``,
+      `${UI.info} **Status**`,
+      `${UI.bullet} **Bot:** ${UI.ok} Online`,
+      `${UI.bullet} **Webhook:** ${webhookSet ? `${UI.ok} Set` : `${UI.fail} Not Set`}`,
+    ].join("\n"));
 }
 
 function detailedStatsEmbed(stats, topUsers) {
@@ -875,22 +868,18 @@ function detailedStatsEmbed(stats, topUsers) {
     ? Math.round((stats.total_success / stats.total_processed) * 100)
     : 0;
 
-  const block = [
-    "Detailed Statistics",
-    "----------------------------",
-    "",
-    `  ${pad("Processed")}${stats.total_processed}`,
-    `  ${pad("Success")}${stats.total_success}`,
-    `  ${pad("Failed")}${stats.total_failed}`,
-    `  ${pad("Rate")}${rate}%`,
-  ];
-
   const embed = header()
     .setColor(COLORS.PRIMARY)
-    .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\``);
+    .setDescription([
+      `${UI.bolt} **Detailed Statistics**`,
+      `${UI.bullet} **Processed:** ${stats.total_processed}`,
+      `${UI.bullet} ${UI.ok} **Success:** ${stats.total_success}`,
+      `${UI.bullet} ${UI.fail} **Failed:** ${stats.total_failed}`,
+      `${UI.bullet} ${UI.star} **Rate:** ${rate}%`,
+    ].join("\n"));
 
   if (topUsers.length > 0) {
-    const topText = topUsers.map(([uid, d]) => `<@${uid}> -- ${d.processed} processed (${d.success} success)`).join("\n");
+    const topText = topUsers.map(([uid, d]) => `${UI.bullet} <@${uid}> — ${d.processed} processed (${d.success} success)`).join("\n");
     embed.addFields({ name: "Top Users", value: topText, inline: false });
   }
 
