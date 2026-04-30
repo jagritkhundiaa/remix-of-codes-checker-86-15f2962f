@@ -18,11 +18,47 @@ const PULLER_EMOJI = {
   claimed: "<:Claimed:1473747602708107525>",
 };
 
-function _fmtPullerFooter(username) {
+// ── Reusable unicode glyphs for the rest of the bot ──────────
+// (no random clutter — only meaningful, classy markers)
+const UI = {
+  // status
+  ok:    "✅",
+  fail:  "❌",
+  warn:  "⚠️",
+  info:  "🔹",
+  // counters
+  bullet:"•",
+  sub:   "└",
+  // categories
+  user:  "👤",
+  lock:  "🔒",
+  key:   "🔑",
+  star:  "⭐",
+  card:  "💳",
+  coin:  "🪙",
+  gift:  "🎁",
+  link:  "🔗",
+  mail:  "📬",
+  shield:"🛡️",
+  shop:  "🛒",
+  refund:"💸",
+  // meta
+  time:  "⏱️",
+  bolt:  "⚡",
+  flag:  "🏁",
+  search:"🔍",
+  spark: "✨",
+};
+
+function _fmtFooter(prefix, username) {
   const d = new Date();
   const date = d.toLocaleDateString("en-GB");
   const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-  return `Pulled by ${username || "user"}. | ${date}, ${time}`;
+  return `${prefix} ${username || "user"}. | ${date}, ${time}`;
+}
+
+function _fmtPullerFooter(username) {
+  return _fmtFooter("Pulled by", username);
 }
 
 function header(options = {}) {
