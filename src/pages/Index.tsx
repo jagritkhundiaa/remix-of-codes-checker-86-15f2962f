@@ -40,12 +40,6 @@ export default function Index() {
           >
             <Sparkles className="w-3 h-3" /> AIO Checker
           </Link>
-          <Link
-            to="/combo-combiner"
-            className="text-xs text-primary hover:text-primary/80 transition-colors flex items-center gap-1 font-bold"
-          >
-            <Sparkles className="w-3 h-3" /> Combiner
-          </Link>
           <button
             onClick={() => setShowAdmin(true)}
             className="text-xs text-primary hover:text-primary/80 transition-colors flex items-center gap-1 font-bold"

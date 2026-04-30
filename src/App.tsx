@@ -6,7 +6,6 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import ComboCleaner from "./components/neon/ComboCleaner";
-import ComboCombiner from "./components/neon/ComboCombiner";
 
 const queryClient = new QueryClient();
 
@@ -21,8 +20,6 @@ const App = () => (
           <Route path="/index" element={<Index />} />
           <Route path="/combo-cleaner" element={<ComboCleaner />} />
           <Route path="/aio" element={<ComboCleaner />} />
-          <Route path="/combo-combiner" element={<ComboCombiner />} />
-          <Route path="/combiner" element={<ComboCombiner />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
