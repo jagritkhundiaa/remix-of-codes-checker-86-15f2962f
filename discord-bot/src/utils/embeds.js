@@ -1123,93 +1123,70 @@ function refundResultsEmbed(results, { elapsed, dmSent, username } = {}) {
 
 function aioProgressEmbed(done, total, live = {}) {
   const pct = total === 0 ? 0 : Math.round((done / total) * 100);
-  const barLen = 20;
+  const barLen = 18;
   const filled = Math.round((pct / 100) * barLen);
-  const bar = "#".repeat(filled) + "-".repeat(barLen - filled);
+  const bar = "█".repeat(filled) + "░".repeat(barLen - filled);
 
   const lines = [
-    "Checking Accounts",
-    `  [${bar}] ${pct}%`,
-    "----------------------------",
-    "",
-    "  Live Stats",
-    "",
-    `  ${pad("Checked")}${done}/${total}`,
-    `  ${pad("Hits")}${live.hits || 0}`,
-    `    > XGP              ${live.xgp || 0}`,
-    `    > XGPU             ${live.xgpu || 0}`,
-    `    > Cards            ${live.payment_methods || 0}`,
-    `  ${pad("2FA")}${live.twofa || 0}`,
-    `  ${pad("Valid Mail")}${live.valid_mail || 0}`,
-    `  ${pad("Bad")}${live.bad || 0}`,
-    "",
-    "  Microsoft",
-    "",
-    `  ${pad("Balance")}${live.ms_balance || 0}`,
-    `  ${pad("Points")}${live.ms_points || 0}`,
-    "",
-    "  Security",
-    "",
-    `  ${pad("MFA")}${live.mfa || 0}`,
-    `  ${pad("SFA")}${live.sfa || 0}`,
-    `  ${pad("Banned")}${live.banned || 0}`,
-    `  ${pad("Unbanned")}${live.unbanned || 0}`,
-    "",
-    "----------------------------",
-    `  ${pad("CPM")}${live.cpm || 0}`,
-    `  ${pad("Errors")}${live.errors || 0}`,
+    `${UI.bolt} **Checking Accounts...**`,
+    `\`${bar}\` **${pct}%**`,
+    `${UI.bullet} **Checked:** ${done} / ${total}`,
+    ``,
+    `${UI.star} **Live Stats**`,
+    `${UI.bullet} ${UI.ok} **Hits:** ${live.hits || 0}`,
+    `  ${UI.sub} XGP: ${live.xgp || 0}`,
+    `  ${UI.sub} XGPU: ${live.xgpu || 0}`,
+    `  ${UI.sub} ${UI.card} Cards: ${live.payment_methods || 0}`,
+    `${UI.bullet} ${UI.shield} **2FA:** ${live.twofa || 0}`,
+    `${UI.bullet} ${UI.mail} **Valid Mail:** ${live.valid_mail || 0}`,
+    `${UI.bullet} ${UI.fail} **Bad:** ${live.bad || 0}`,
+    ``,
+    `${UI.coin} **Microsoft**`,
+    `${UI.bullet} **Balance:** ${live.ms_balance || 0}`,
+    `${UI.bullet} **Points:** ${live.ms_points || 0}`,
+    ``,
+    `${UI.lock} **Security**`,
+    `${UI.bullet} **MFA:** ${live.mfa || 0} ${UI.bullet} **SFA:** ${live.sfa || 0}`,
+    `${UI.bullet} **Banned:** ${live.banned || 0} ${UI.bullet} **Unbanned:** ${live.unbanned || 0}`,
+    ``,
+    `${UI.bolt} **CPM:** ${live.cpm || 0} ${UI.bullet} ${UI.warn} **Errors:** ${live.errors || 0}`,
   ];
 
-  return header()
-    .setColor(COLORS.PRIMARY)
-    .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
+  return header().setColor(COLORS.PRIMARY).setDescription(lines.join("\n"));
 }
 
 function aioResultsEmbed(s, { dmSent, username } = {}) {
   const lines = [
-    "Checking Complete!",
-    "----------------------------",
-    "",
-    "  Account Analysis",
-    "",
-    `  ${pad("Total Checked")}${s.checked || 0}`,
-    `  ${pad("Hits")}${s.hits || 0}`,
-    `    > XGP              ${s.xgp || 0}`,
-    `    > XGPU             ${s.xgpu || 0}`,
-    `    > Cards            ${s.payment_methods || 0}`,
-    `  ${pad("2FA")}${s.twofa || 0}`,
-    `  ${pad("Valid Mail")}${s.valid_mail || 0}`,
-    `  ${pad("Bad")}${s.bad || 0}`,
-    "",
-    "  Microsoft",
-    "",
-    `  ${pad("Balance")}${s.ms_balance || 0}`,
-    `  ${pad("Points")}${s.ms_points || 0}`,
-    "",
-    "  Security",
-    "",
-    `  ${pad("MFA")}${s.mfa || 0}`,
-    `  ${pad("SFA")}${s.sfa || 0}`,
-    `  ${pad("Banned")}${s.banned || 0}`,
-    `  ${pad("Unbanned")}${s.unbanned || 0}`,
-    "",
-    "----------------------------",
-    `  ${pad("CPM")}${s.cpm || 0}`,
-    `  Time: ${s.elapsed || "?"}`,
+    `${UI.flag} **Checking Complete!**`,
+    `${UI.bullet} **Total Checked:** ${s.checked || 0}`,
+    ``,
+    `${UI.star} **Account Analysis**`,
+    `${UI.bullet} ${UI.ok} **Hits:** ${s.hits || 0}`,
+    `  ${UI.sub} XGP: ${s.xgp || 0}`,
+    `  ${UI.sub} XGPU: ${s.xgpu || 0}`,
+    `  ${UI.sub} ${UI.card} Cards: ${s.payment_methods || 0}`,
+    `${UI.bullet} ${UI.shield} **2FA:** ${s.twofa || 0}`,
+    `${UI.bullet} ${UI.mail} **Valid Mail:** ${s.valid_mail || 0}`,
+    `${UI.bullet} ${UI.fail} **Bad:** ${s.bad || 0}`,
+    ``,
+    `${UI.coin} **Microsoft**`,
+    `${UI.bullet} **Balance:** ${s.ms_balance || 0}`,
+    `${UI.bullet} **Points:** ${s.ms_points || 0}`,
+    ``,
+    `${UI.lock} **Security**`,
+    `${UI.bullet} **MFA:** ${s.mfa || 0} ${UI.bullet} **SFA:** ${s.sfa || 0}`,
+    `${UI.bullet} **Banned:** ${s.banned || 0} ${UI.bullet} **Unbanned:** ${s.unbanned || 0}`,
+    ``,
+    `${UI.bolt} **CPM:** ${s.cpm || 0}`,
+    `${UI.time} **Time:** ${s.elapsed || "?"}`,
   ];
+  if (dmSent) lines.push(``, `> » Results sent to your DMs`);
 
   const embed = header()
     .setColor(s.hits > 0 ? COLORS.SUCCESS : COLORS.ERROR)
-    .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
+    .setDescription(lines.join("\n"));
 
-  if (dmSent) {
-    embed.addFields({ name: "\u200b", value: "```\n>> Results sent to your DMs\n```", inline: false });
-  }
-
-  if (username) {
-    embed.setFooter({ text: `Checked by ${username} | ${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` });
-  }
-
+  if (username) embed.setFooter({ text: _fmtFooter("Checked by", username) });
   return embed;
 }
 
