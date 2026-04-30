@@ -261,54 +261,35 @@ function pullResultsEmbed(fetchResults, validateResults, { elapsed, dmSent, user
 }
 
 function promoPullerFetchProgressEmbed(details) {
-  const pct = details.total === 0 ? 0 : Math.round((details.done / details.total) * 100);
-  const barLen = 20;
-  const filled = Math.round((pct / 100) * barLen);
-  const bar = "#".repeat(filled) + "-".repeat(barLen - filled);
-
+  const E = PULLER_EMOJI;
+  const total = details.total || 0;
   const working = details.working || 0;
   const failed = details.failed || 0;
   const withLinks = details.withLinks || 0;
   const noLinks = details.noLinks || 0;
   const totalLinks = details.totalLinks || 0;
-  const elapsed = details.startTime ? ((Date.now() - details.startTime) / 1000).toFixed(1) : "...";
+  const elapsed = details.startTime ? ((Date.now() - details.startTime) / 1000).toFixed(1) : "0.0";
 
   const lines = [
-    "Fetching Links",
-    `  [${bar}] ${pct}%`,
-    "----------------------------",
-    "",
-    "  Account Analysis",
-    "",
-    `  ${pad("Total Accounts")}${details.total}`,
-    `  ${pad("Processed")}${details.done}`,
-    `  ${pad("Working")}${working}`,
-    `    > With Links       ${withLinks}`,
-    `    > No Links         ${noLinks}`,
-    `  ${pad("Failed")}${failed}`,
-    "",
-    `  ${pad("Links Found")}${totalLinks}`,
+    `**Fetching Promo Links...**`,
+    `${E.loading} **Account Analysis:**`,
+    `${UI.bullet} **Total Accounts:** ${total}`,
+    `${UI.bullet} ${E.working} **Working Accounts:** ${working}`,
+    `  ${UI.sub} With Links: ${withLinks}`,
+    `  ${UI.sub} No Links: ${noLinks}`,
+    `${UI.bullet} ${E.failed} **Failed Accounts:** ${failed}`,
+    `${UI.bullet} ${UI.link} **Links Found:** ${totalLinks}`,
+    ``,
+    `${UI.time} **Time:** ${elapsed}s`,
   ];
 
-  if (details.lastAccount) {
-    const status = details.lastError
-      ? `Failed`
-      : `${details.lastLinks || 0} links`;
-    lines.push("", `  ${pad("Latest")}${details.lastAccount}`, `  ${pad("Status")}${status}`);
-  }
-
-  lines.push("", "----------------------------", `  Time: ${elapsed}s`);
-
-  const embed = header({ thumbnail: false }).setColor(COLORS.INFO).setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
-
-  if (details.username) {
-    embed.setFooter({ text: `Pulled by ${details.username} | ${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` });
-  }
-
+  const embed = header({ thumbnail: false }).setColor(COLORS.INFO).setDescription(lines.join("\n"));
+  if (details.username) embed.setFooter({ text: _fmtPullerFooter(details.username) });
   return embed;
 }
 
 function promoPullerResultsEmbed(fetchResults, allLinks, { elapsed, dmSent, username } = {}) {
+  const E = PULLER_EMOJI;
   const totalAccounts = fetchResults.length;
   const workingAccounts = fetchResults.filter((r) => !r.error);
   const failedAccounts = fetchResults.filter((r) => r.error);
@@ -318,37 +299,23 @@ function promoPullerResultsEmbed(fetchResults, allLinks, { elapsed, dmSent, user
   const uniqueLinks = [...new Set(allLinks)];
 
   const lines = [
-    "Promo Puller Complete!",
-    "----------------------------",
-    "",
-    "  Account Analysis",
-    "",
-    `  ${pad("Total Accounts")}${totalAccounts}`,
-    `  ${pad("Working")}${workingAccounts.length}`,
-    `    > With Links       ${withLinks.length}`,
-    `    > No Links         ${noLinks.length}`,
-    `  ${pad("Failed")}${failedAccounts.length}`,
-    "",
-    `  ${pad("Links Found")}${totalLinkCount}`,
-    `  ${pad("Unique Links")}${uniqueLinks.length}`,
+    `**Promo Puller Complete!**`,
+    `${E.loading} **Account Analysis:**`,
+    `${UI.bullet} **Total Accounts:** ${totalAccounts}`,
+    `${UI.bullet} ${E.working} **Working Accounts:** ${workingAccounts.length}`,
+    `  ${UI.sub} With Links: ${withLinks.length}`,
+    `  ${UI.sub} No Links: ${noLinks.length}`,
+    `${UI.bullet} ${E.failed} **Failed Accounts:** ${failedAccounts.length}`,
+    `${UI.bullet} ${UI.link} **Links Found:** ${totalLinkCount}`,
+    `  ${UI.sub} ${UI.spark} Unique: ${uniqueLinks.length}`,
+    ``,
+    `${UI.time} **Time:** ${elapsed || "0.0"}s`,
   ];
 
-  if (elapsed) {
-    lines.push("", "----------------------------", `  Time: ${elapsed}s`);
-  }
+  if (dmSent) lines.push("", "> » Links sent to your DMs");
 
-  const embed = header()
-    .setColor(COLORS.PRIMARY)
-    .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
-
-  if (dmSent) {
-    embed.addFields({ name: "\u200b", value: "```\n>> Results sent to your DMs\n```", inline: false });
-  }
-
-  if (username) {
-    embed.setFooter({ text: `Pulled by ${username} | ${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` });
-  }
-
+  const embed = header({ thumbnail: false }).setColor(COLORS.PRIMARY).setDescription(lines.join("\n"));
+  embed.setFooter({ text: _fmtPullerFooter(username) });
   return embed;
 }
 
