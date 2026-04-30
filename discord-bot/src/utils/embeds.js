@@ -109,22 +109,17 @@ function checkResultsEmbed(results) {
   const expired = results.filter((r) => r.status === "expired").length;
   const invalid = results.filter((r) => r.status === "invalid" || r.status === "error").length;
 
-  const block = [
-    "Check Results",
-    "----------------------------",
-    "",
-    `  ${pad("Valid")}${valid}`,
-    `  ${pad("Used")}${used}`,
-    `  ${pad("Expired")}${expired}`,
-    `  ${pad("Invalid")}${invalid}`,
-    "",
-    "----------------------------",
-    `  ${pad("Total")}${results.length}`,
-  ];
-
   return header()
     .setColor(COLORS.PRIMARY)
-    .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\``);
+    .setDescription([
+      `**Check Results**`,
+      `${UI.bullet} ${UI.ok} **Valid:** ${valid}`,
+      `${UI.bullet} ${UI.coin} **Claimed:** ${used}`,
+      `${UI.bullet} ${UI.warn} **Expired:** ${expired}`,
+      `${UI.bullet} ${UI.fail} **Invalid:** ${invalid}`,
+      ``,
+      `${UI.flag} **Total:** ${results.length}`,
+    ].join("\n"));
 }
 
 // ── Claim Results ────────────────────────────────────────────
@@ -133,20 +128,15 @@ function claimResultsEmbed(results) {
   const success = results.filter((r) => r.success).length;
   const failed = results.filter((r) => !r.success).length;
 
-  const block = [
-    "Claim Results",
-    "----------------------------",
-    "",
-    `  ${pad("Success")}${success}`,
-    `  ${pad("Failed")}${failed}`,
-    "",
-    "----------------------------",
-    `  ${pad("Total")}${results.length}`,
-  ];
-
   return header()
     .setColor(COLORS.PRIMARY)
-    .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\``);
+    .setDescription([
+      `**Claim Results**`,
+      `${UI.bullet} ${UI.ok} **Success:** ${success}`,
+      `${UI.bullet} ${UI.fail} **Failed:** ${failed}`,
+      ``,
+      `${UI.flag} **Total:** ${results.length}`,
+    ].join("\n"));
 }
 
 // ── Pull Progress (Fetch Phase) — matches screenshot 1:1 ─────
