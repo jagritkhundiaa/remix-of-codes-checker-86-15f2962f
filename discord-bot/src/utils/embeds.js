@@ -943,33 +943,29 @@ function buildServiceFields(serviceBreakdown, labelPrefix = "Services") {
 
 function inboxAioProgressEmbed({ completed, total, hits, fails, elapsed, latestAccount, latestStatus, servicesFound, serviceBreakdown }) {
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
-  const barW = 20;
+  const barW = 18;
   const filled = Math.round((pct / 100) * barW);
-  const bar = "#".repeat(filled) + "-".repeat(barW - filled);
+  const bar = "█".repeat(filled) + "░".repeat(barW - filled);
   const elSec = elapsed ? Math.round(elapsed / 1000) : 0;
   const cpm = elSec > 0 ? Math.round((completed / elSec) * 60) : 0;
 
-  const block = [
-    `  Progress    [${bar}] ${pct}%`,
-    `  ${pad("Processed")}${completed} / ${total}`,
-    `  ${pad("Hits")}${hits}`,
-    `  ${pad("Failed")}${fails}`,
-    `  ${pad("Speed")}${cpm} checks/min`,
-    `  ${pad("Elapsed")}${elSec}s`,
+  const lines = [
+    `${UI.mail} **Inbox AIO — Live**`,
+    `\`${bar}\` **${pct}%**`,
+    `${UI.bullet} **Processed:** ${completed} / ${total}`,
+    `${UI.bullet} ${UI.ok} **Hits:** ${hits}`,
+    `${UI.bullet} ${UI.fail} **Failed:** ${fails}`,
+    `${UI.bullet} ${UI.bolt} **Speed:** ${cpm} c/min`,
+    `${UI.bullet} ${UI.time} **Elapsed:** ${elSec}s`,
   ];
-
   if (latestAccount) {
     const masked = latestAccount.replace(/(.{3}).*(@.*)/, "$1***$2");
-    block.push(`  ${pad("Latest")}${masked} [${latestStatus || "..."}]`);
+    lines.push(`${UI.bullet} ${UI.user} **Latest:** ${masked} _(${latestStatus || "…"})_`);
   }
 
-  const embed = header()
-    .setColor(COLORS.PRIMARY)
-    .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\``);
-
+  const embed = header().setColor(COLORS.PRIMARY).setDescription(lines.join("\n"));
   const svcFields = buildServiceFields(serviceBreakdown, "Services");
   for (const f of svcFields) embed.addFields(f);
-
   return embed;
 }
 
@@ -977,24 +973,21 @@ function inboxAioResultsEmbed({ total, hits, fails, locked, twoFA, elapsed, serv
   const elSec = elapsed ? Math.round(elapsed / 1000) : 0;
   const cpm = elSec > 0 ? Math.round((total / elSec) * 60) : 0;
 
-  const block = [
-    `  ${pad("Checked")}${total}`,
-    `  ${pad("Valid")}${hits}`,
-    `  ${pad("Invalid")}${fails}`,
-    `  ${pad("Locked")}${locked || 0}`,
-    `  ${pad("2FA")}${twoFA || 0}`,
-    `  ${pad("Speed")}${cpm} checks/min`,
-    `  ${pad("Elapsed")}${elSec}s`,
+  const lines = [
+    `${UI.mail} **Inbox AIO — Results**`,
+    `${UI.bullet} **Checked:** ${total}`,
+    `${UI.bullet} ${UI.ok} **Valid:** ${hits}`,
+    `${UI.bullet} ${UI.fail} **Invalid:** ${fails}`,
+    `${UI.bullet} ${UI.lock} **Locked:** ${locked || 0}`,
+    `${UI.bullet} ${UI.shield} **2FA:** ${twoFA || 0}`,
+    `${UI.bullet} ${UI.bolt} **Speed:** ${cpm} c/min`,
+    `${UI.bullet} ${UI.time} **Elapsed:** ${elSec}s`,
   ];
-
-  if (username) {
-    block.push("", `  Requested by ${username}`);
-  }
+  if (username) lines.push(``, `_Requested by ${username}_`);
 
   const embed = header()
     .setColor(hits > 0 ? COLORS.SUCCESS : COLORS.ERROR)
-    .setTitle("Inbox AIO  ─  Results")
-    .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\``);
+    .setDescription(lines.join("\n"));
 
   const svcFields = buildServiceFields(serviceBreakdown, "Services");
   if (svcFields.length > 0) {
@@ -1003,8 +996,7 @@ function inboxAioResultsEmbed({ total, hits, fails, locked, twoFA, elapsed, serv
     embed.addFields({ name: "Services", value: "No services detected.", inline: false });
   }
 
-  if (dmSent) embed.addFields({ name: "\u200b", value: "Results sent to your DMs.", inline: false });
-
+  if (dmSent) embed.addFields({ name: "\u200b", value: `${UI.mail} Results sent to your DMs.`, inline: false });
   return embed;
 }
 
@@ -1012,39 +1004,29 @@ function inboxAioResultsEmbed({ total, hits, fails, locked, twoFA, elapsed, serv
 
 function prsProgressEmbed({ done, total, codesFound, category, working, failed, elapsed, latestAccount, username }) {
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-  const barW = 20;
+  const barW = 18;
   const filled = Math.round((pct / 100) * barW);
-  const bar = "#".repeat(filled) + "-".repeat(barW - filled);
+  const bar = "█".repeat(filled) + "░".repeat(barW - filled);
   const elSec = elapsed ? Math.round(elapsed / 1000) : 0;
   const cpm = elSec > 0 ? Math.round((done / elSec) * 60) : 0;
 
   const lines = [
-    `PRS - ${(category || "All").toUpperCase()} SCRAPER`,
-    "----------------------------",
-    "",
-    `  [${bar}] ${pct}%`,
-    `  ${pad("Processed")}${done} / ${total}`,
-    `  ${pad("Codes Found")}${codesFound || 0}`,
-    "",
-    `  ${pad("Working")}${working || 0}`,
-    `  ${pad("Failed")}${failed || 0}`,
-    `  ${pad("Speed")}${cpm} accts/min`,
-    `  ${pad("Elapsed")}${elSec}s`,
+    `${UI.search} **PRS — ${(category || "All").toUpperCase()} Scraper**`,
+    `\`${bar}\` **${pct}%**`,
+    `${UI.bullet} **Processed:** ${done} / ${total}`,
+    `${UI.bullet} ${UI.gift} **Codes Found:** ${codesFound || 0}`,
+    `${UI.bullet} ${UI.ok} **Working:** ${working || 0}`,
+    `${UI.bullet} ${UI.fail} **Failed:** ${failed || 0}`,
+    `${UI.bullet} ${UI.bolt} **Speed:** ${cpm} accts/min`,
+    `${UI.bullet} ${UI.time} **Elapsed:** ${elSec}s`,
   ];
-
   if (latestAccount) {
     const masked = latestAccount.replace(/(.{3}).*(@.*)/, "$1***$2");
-    lines.push(`  ${pad("Latest")}${masked}`);
+    lines.push(`${UI.bullet} ${UI.user} **Latest:** ${masked}`);
   }
 
-  const embed = header({ thumbnail: false })
-    .setColor(COLORS.INFO)
-    .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
-
-  if (username) {
-    embed.setFooter({ text: `Scraped by ${username} | ${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` });
-  }
-
+  const embed = header({ thumbnail: false }).setColor(COLORS.INFO).setDescription(lines.join("\n"));
+  if (username) embed.setFooter({ text: _fmtFooter("Scraped by", username) });
   return embed;
 }
 
@@ -1052,41 +1034,33 @@ function prsResultsEmbed({ total, hits, valid, failed, twoFA, codesFound, catego
   const elSec = elapsed ? Math.round(elapsed / 1000) : 0;
   const cpm = elSec > 0 ? Math.round((total / elSec) * 60) : 0;
 
-  const block = [
-    `PRS - ${(category || "All").toUpperCase()} SCRAPER`,
-    "----------------------------",
-    "",
-    `  ${pad("Checked")}${total}`,
-    `  ${pad("With Codes")}${hits}`,
-    `  ${pad("Valid (empty)")}${valid}`,
-    `  ${pad("Failed")}${failed}`,
+  const lines = [
+    `${UI.search} **PRS — ${(category || "All").toUpperCase()} Scraper**`,
+    `${UI.bullet} **Checked:** ${total}`,
+    `${UI.bullet} ${UI.gift} **With Codes:** ${hits}`,
+    `${UI.bullet} ${UI.ok} **Valid (empty):** ${valid}`,
+    `${UI.bullet} ${UI.fail} **Failed:** ${failed}`,
   ];
-  if (twoFA > 0) block.push(`  ${pad("2FA")}${twoFA}`);
-  block.push(
-    "",
-    `  ${pad("Total Codes")}${codesFound}`,
-    `  ${pad("Speed")}${cpm} accts/min`,
-    `  ${pad("Elapsed")}${elSec}s`,
+  if (twoFA > 0) lines.push(`${UI.bullet} ${UI.shield} **2FA:** ${twoFA}`);
+  lines.push(
+    ``,
+    `${UI.flag} **Total Codes:** ${codesFound}`,
+    `${UI.bolt} **Speed:** ${cpm} accts/min`,
+    `${UI.time} **Elapsed:** ${elSec}s`,
   );
-
-  if (username) {
-    block.push("", `  Requested by ${username}`);
-  }
+  if (username) lines.push(``, `_Requested by ${username}_`);
 
   const embed = header()
     .setColor(codesFound > 0 ? COLORS.SUCCESS : COLORS.ERROR)
-    .setTitle("PRS  ─  Results")
-    .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\``);
+    .setDescription(lines.join("\n"));
 
-  // Category breakdown
   if (categoryBreakdown && Object.keys(categoryBreakdown).length > 0) {
     const sorted = Object.entries(categoryBreakdown).sort((a, b) => b[1] - a[1]);
-    const catLines = sorted.map(([cat, count]) => `> **${cat}**: ${count} codes`);
+    const catLines = sorted.map(([cat, count]) => `${UI.bullet} **${cat}** — ${count} codes`);
     embed.addFields({ name: "Categories", value: catLines.join("\n"), inline: false });
   }
 
-  if (dmSent) embed.addFields({ name: "\u200b", value: "Results sent to your DMs.", inline: false });
-
+  if (dmSent) embed.addFields({ name: "\u200b", value: `${UI.mail} Results sent to your DMs.`, inline: false });
   return embed;
 }
 
@@ -1094,36 +1068,28 @@ function prsResultsEmbed({ total, hits, valid, failed, twoFA, codesFound, catego
 
 function refundProgressEmbed(details) {
   const pct = details.total === 0 ? 0 : Math.round((details.done / details.total) * 100);
-  const barLen = 20;
+  const barLen = 18;
   const filled = Math.round((pct / 100) * barLen);
-  const bar = "#".repeat(filled) + "-".repeat(barLen - filled);
-  const elapsed = details.startTime ? ((Date.now() - details.startTime) / 1000).toFixed(1) : "...";
+  const bar = "█".repeat(filled) + "░".repeat(barLen - filled);
+  const elapsed = details.startTime ? ((Date.now() - details.startTime) / 1000).toFixed(1) : "0.0";
 
   const lines = [
-    "Refund Eligibility Check",
-    `  [${bar}] ${pct}%`,
-    "----------------------------",
-    "",
-    `  ${pad("Processed")}${details.done} / ${details.total}`,
-    `  ${pad("Eligible")}${details.hits || 0}`,
-    `  ${pad("Not Eligible")}${details.noRefund || 0}`,
-    `  ${pad("Locked/2FA")}${details.locked || 0}`,
-    `  ${pad("Failed")}${details.failed || 0}`,
+    `${UI.refund} **Refund Eligibility Check**`,
+    `\`${bar}\` **${pct}%**`,
+    `${UI.bullet} **Processed:** ${details.done} / ${details.total}`,
+    `${UI.bullet} ${UI.ok} **Eligible:** ${details.hits || 0}`,
+    `${UI.bullet} ${UI.fail} **Not Eligible:** ${details.noRefund || 0}`,
+    `${UI.bullet} ${UI.lock} **Locked / 2FA:** ${details.locked || 0}`,
+    `${UI.bullet} ${UI.warn} **Failed:** ${details.failed || 0}`,
   ];
-
   if (details.lastAccount) {
     const masked = details.lastAccount.replace(/(.{3}).*(@.*)/, "$1***$2");
-    lines.push("", `  ${pad("Latest")}${masked}`);
+    lines.push(`${UI.bullet} ${UI.user} **Latest:** ${masked}`);
   }
+  lines.push(``, `${UI.time} **Time:** ${elapsed}s`);
 
-  lines.push("", "----------------------------", `  Time: ${elapsed}s`);
-
-  const embed = header({ thumbnail: false }).setColor(COLORS.INFO).setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
-
-  if (details.username) {
-    embed.setFooter({ text: `Checked by ${details.username} | ${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` });
-  }
-
+  const embed = header({ thumbnail: false }).setColor(COLORS.INFO).setDescription(lines.join("\n"));
+  if (details.username) embed.setFooter({ text: _fmtFooter("Checked by", details.username) });
   return embed;
 }
 
@@ -1132,38 +1098,23 @@ function refundResultsEmbed(results, { elapsed, dmSent, username } = {}) {
   const noRefund = results.filter(r => r.status === "free");
   const locked = results.filter(r => r.status === "locked");
   const failed = results.filter(r => r.status === "fail");
-
   const totalRefundable = hits.reduce((sum, r) => sum + (r.refundable?.length || 0), 0);
 
   const lines = [
-    "Refund Eligibility Results",
-    "----------------------------",
-    "",
-    `  ${pad("Total Accounts")}${results.length}`,
-    `  ${pad("With Refundable")}${hits.length}`,
-    `  ${pad("No Refundable")}${noRefund.length}`,
-    `  ${pad("Locked/2FA")}${locked.length}`,
-    `  ${pad("Failed")}${failed.length}`,
-    "",
-    `  ${pad("Total Items")}${totalRefundable}`,
+    `${UI.refund} **Refund Eligibility — Results**`,
+    `${UI.bullet} **Total Accounts:** ${results.length}`,
+    `${UI.bullet} ${UI.ok} **With Refundable:** ${hits.length}`,
+    `${UI.bullet} ${UI.fail} **No Refundable:** ${noRefund.length}`,
+    `${UI.bullet} ${UI.lock} **Locked / 2FA:** ${locked.length}`,
+    `${UI.bullet} ${UI.warn} **Failed:** ${failed.length}`,
+    ``,
+    `${UI.flag} **Total Items:** ${totalRefundable}`,
   ];
+  if (elapsed) lines.push(`${UI.time} **Time:** ${elapsed}s`);
+  if (dmSent) lines.push(``, `> » Results sent to your DMs`);
 
-  if (elapsed) {
-    lines.push("", "----------------------------", `  Time: ${elapsed}s`);
-  }
-
-  const embed = header()
-    .setColor(COLORS.PRIMARY)
-    .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
-
-  if (dmSent) {
-    embed.addFields({ name: "\u200b", value: "```\n>> Results sent to your DMs\n```", inline: false });
-  }
-
-  if (username) {
-    embed.setFooter({ text: `Checked by ${username} | ${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` });
-  }
-
+  const embed = header().setColor(COLORS.PRIMARY).setDescription(lines.join("\n"));
+  if (username) embed.setFooter({ text: _fmtFooter("Checked by", username) });
   return embed;
 }
 
