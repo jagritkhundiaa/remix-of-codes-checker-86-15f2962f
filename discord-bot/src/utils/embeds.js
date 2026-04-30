@@ -8,6 +8,23 @@ const { COLORS, THUMBNAIL_URL, BANNER_URL } = require("../config");
 
 const FOOTER_TEXT = "AutizMens | TalkNeon";
 
+// ── Puller-specific animated emojis (exact IDs from spec) ────
+const PULLER_EMOJI = {
+  loading: "<a:Loading:1473740101367500918>",
+  working: "<a:Working:1473738927251914919>",
+  failed:  "<a:Failed:1473739301291561021>",
+  codes:   "<a:Codes:1473739526861226248>",
+  money:   "<a:Money2:1473744817270952161>",
+  claimed: "<:Claimed:1473747602708107525>",
+};
+
+function _fmtPullerFooter(username) {
+  const d = new Date();
+  const date = d.toLocaleDateString("en-GB");
+  const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  return `Pulled by ${username || "user"}. | ${date}, ${time}`;
+}
+
 function header(options = {}) {
   const embed = new EmbedBuilder()
     .setAuthor({ name: "AutizMens" })
