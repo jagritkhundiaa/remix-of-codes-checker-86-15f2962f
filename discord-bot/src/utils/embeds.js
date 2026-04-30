@@ -464,36 +464,33 @@ function rewardsResultsEmbed(results) {
 function errorEmbed(message) {
   return header({ thumbnail: false })
     .setColor(COLORS.ERROR)
-    .setDescription(`\`\`\`\nError\n----------------------------\n\n${message}\n\`\`\``);
+    .setDescription(`${UI.fail} **Error**\n${message}`);
 }
 
 function successEmbed(message) {
   return header({ thumbnail: false })
     .setColor(COLORS.SUCCESS)
-    .setDescription(`\`\`\`\nSuccess\n----------------------------\n\n${message}\n\`\`\``);
+    .setDescription(`${UI.ok} **Success**\n${message}`);
 }
 
 function infoEmbed(title, description) {
   return header({ thumbnail: false })
     .setColor(COLORS.INFO)
-    .setDescription(`\`\`\`\n${title}\n----------------------------\n\n${description}\n\`\`\``);
+    .setDescription(`${UI.info} **${title}**\n${description}`);
 }
 
 function ownerOnlyEmbed(featureName) {
-  const block = [
-    `${featureName}`,
-    "----------------------------",
-    "",
-    "Currently in a closed development phase.",
-    "Exclusively available to TalkNeon during testing.",
-    "",
-    "Access will be rolled out once the module has",
-    "been fully validated and stabilized.",
-  ];
-
   return header()
     .setColor(COLORS.PRIMARY)
-    .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\``);
+    .setDescription([
+      `${UI.lock} **${featureName}**`,
+      ``,
+      `Currently in a closed development phase.`,
+      `Exclusively available to **TalkNeon** during testing.`,
+      ``,
+      `Access will be rolled out once the module has`,
+      `been fully validated and stabilized.`,
+    ].join("\n"));
 }
 
 function authListEmbed(entries) {
