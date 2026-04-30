@@ -322,91 +322,76 @@ function promoPullerResultsEmbed(fetchResults, allLinks, { elapsed, dmSent, user
 
 function purchaseProgressEmbed(details) {
   const pct = details.total === 0 ? 0 : Math.round((details.done / details.total) * 100);
-  const barLen = 20;
+  const barLen = 18;
   const filled = Math.round((pct / 100) * barLen);
-  const bar = "#".repeat(filled) + "-".repeat(barLen - filled);
+  const bar = "█".repeat(filled) + "░".repeat(barLen - filled);
 
-  const stepIcons = { login: "[1/4]", cart: "[2/4]", purchase: "[3/4]", result: "[4/4]" };
   const stepLabels = { login: "Logging in", cart: "Loading cart", purchase: "Purchasing", result: "Done" };
+  const stepIdx   = { login: 1, cart: 2, purchase: 3, result: 4 };
 
   const lines = [
-    "Purchasing",
-    "----------------------------",
-    "",
-    `  Product    ${details.product}`,
-    `  Price      ${details.price}`,
-    "",
-    `  [${bar}] ${pct}%`,
-    `  ${details.done} / ${details.total} accounts`,
+    `**Purchasing...**`,
+    `${UI.shop} **Product:** ${details.product}`,
+    `${UI.card} **Price:** ${details.price}`,
+    ``,
+    `\`${bar}\` **${pct}%**`,
+    `${UI.bullet} ${details.done} / ${details.total} accounts`,
   ];
 
   if (details.currentAccount) {
-    lines.push("");
-    const step = stepIcons[details.phase] || "[--]";
+    const idx = stepIdx[details.phase] || "-";
     const label = stepLabels[details.phase] || "Processing";
-    lines.push(`  ${step} ${label}`);
-    lines.push(`  Account  ${details.currentAccount}`);
+    lines.push("", `${UI.bolt} **Step ${idx}/4:** ${label}`, `${UI.user} ${details.currentAccount}`);
   }
 
   if (details.purchased > 0 || details.failed > 0) {
-    lines.push("");
-    lines.push(`  Purchased  ${details.purchased || 0}`);
-    lines.push(`  Failed     ${details.failed || 0}`);
+    lines.push("",
+      `${UI.bullet} ${UI.ok} **Purchased:** ${details.purchased || 0}`,
+      `${UI.bullet} ${UI.fail} **Failed:** ${details.failed || 0}`,
+    );
   }
 
   if (details.lastResult) {
-    lines.push("");
-    const icon = details.lastResult.success ? "+" : "x";
+    const icon = details.lastResult.success ? UI.ok : UI.fail;
     const msg = details.lastResult.success
-      ? `Order: ${details.lastResult.orderId || "OK"}`
+      ? `Order: \`${details.lastResult.orderId || "OK"}\``
       : details.lastResult.error || "Failed";
-    lines.push(`  [${icon}] ${details.lastResult.email}`);
-    lines.push(`      ${msg}`);
+    lines.push("", `${icon} ${details.lastResult.email}`, `  ${UI.sub} ${msg}`);
   }
 
   return header({ thumbnail: false })
     .setColor(COLORS.INFO)
-    .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
+    .setDescription(lines.join("\n"));
 }
 
 function purchaseResultsEmbed(results, productTitle, price) {
   const success = results.filter(r => r.success).length;
   const failed = results.filter(r => !r.success).length;
 
-  const block = [
-    "Purchase Results",
-    "----------------------------",
-    "",
-    `  ${pad("Product")}${productTitle}`,
-    `  ${pad("Price")}${price}`,
-    "",
-    `  ${pad("Purchased")}${success}`,
-    `  ${pad("Failed")}${failed}`,
-    "",
-    "----------------------------",
-    `  ${pad("Total")}${results.length}`,
-  ];
-
   return header()
     .setColor(COLORS.PRIMARY)
-    .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\``);
+    .setDescription([
+      `**Purchase Results**`,
+      `${UI.shop} **Product:** ${productTitle}`,
+      `${UI.card} **Price:** ${price}`,
+      ``,
+      `${UI.bullet} ${UI.ok} **Purchased:** ${success}`,
+      `${UI.bullet} ${UI.fail} **Failed:** ${failed}`,
+      ``,
+      `${UI.flag} **Total:** ${results.length}`,
+    ].join("\n"));
 }
 
 function productSearchEmbed(results) {
-  const lines = results.map((r, i) =>
-    `  ${i + 1}. ${r.title}\n     ${r.productId || "N/A"} | ${r.type || "N/A"}`
-  );
-
-  const block = [
-    "Search Results",
-    "----------------------------",
-    "",
-    ...lines,
-  ];
-
-  return header()
-    .setColor(COLORS.INFO)
-    .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\`` || "No results found.");
+  if (!results || results.length === 0) {
+    return header().setColor(COLORS.INFO).setDescription(`${UI.search} **Search Results**\nNo results found.`);
+  }
+  const lines = [`${UI.search} **Search Results**`, ``];
+  results.forEach((r, i) => {
+    lines.push(`**${i + 1}.** ${r.title}`);
+    lines.push(`  ${UI.sub} \`${r.productId || "N/A"}\` ${UI.bullet} ${r.type || "N/A"}`);
+  });
+  return header().setColor(COLORS.INFO).setDescription(lines.join("\n"));
 }
 
 // ── Changer / Checker ────────────────────────────────────────
@@ -415,20 +400,15 @@ function changerResultsEmbed(results) {
   const success = results.filter(r => r.success).length;
   const failed = results.filter(r => !r.success).length;
 
-  const block = [
-    "Changer Results",
-    "----------------------------",
-    "",
-    `  ${pad("Changed")}${success}`,
-    `  ${pad("Failed")}${failed}`,
-    "",
-    "----------------------------",
-    `  ${pad("Total")}${results.length}`,
-  ];
-
   return header()
     .setColor(COLORS.PRIMARY)
-    .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\``);
+    .setDescription([
+      `**Changer Results**`,
+      `${UI.bullet} ${UI.ok} **Changed:** ${success}`,
+      `${UI.bullet} ${UI.fail} **Failed:** ${failed}`,
+      ``,
+      `${UI.flag} **Total:** ${results.length}`,
+    ].join("\n"));
 }
 
 function accountCheckerResultsEmbed(results) {
@@ -438,23 +418,18 @@ function accountCheckerResultsEmbed(results) {
   const rateLimited = results.filter((r) => r.status === "rate_limited").length;
   const errors = results.filter((r) => r.status === "error").length;
 
-  const block = [
-    "Account Checker",
-    "----------------------------",
-    "",
-    `  ${pad("Valid")}${valid}`,
-    `  ${pad("Locked")}${locked}`,
-    `  ${pad("Invalid")}${invalid}`,
-    `  ${pad("Rate Limited")}${rateLimited}`,
-    `  ${pad("Errors")}${errors}`,
-    "",
-    "----------------------------",
-    `  ${pad("Total")}${results.length}`,
-  ];
-
   return header()
     .setColor(COLORS.PRIMARY)
-    .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\``);
+    .setDescription([
+      `**Account Checker**`,
+      `${UI.bullet} ${UI.ok} **Valid:** ${valid}`,
+      `${UI.bullet} ${UI.lock} **Locked:** ${locked}`,
+      `${UI.bullet} ${UI.fail} **Invalid:** ${invalid}`,
+      `${UI.bullet} ${UI.warn} **Rate Limited:** ${rateLimited}`,
+      `${UI.bullet} ${UI.warn} **Errors:** ${errors}`,
+      ``,
+      `${UI.flag} **Total:** ${results.length}`,
+    ].join("\n"));
 }
 
 // ── Rewards ──────────────────────────────────────────────────
@@ -465,27 +440,23 @@ function rewardsResultsEmbed(results) {
   const totalPoints = success.reduce((sum, r) => sum + r.balance, 0);
   const avg = success.length > 0 ? Math.round(totalPoints / success.length).toLocaleString() : "0";
 
-  const block = [
-    "Rewards Balance",
-    "----------------------------",
-    "",
-    `  ${pad("Checked")}${results.length}`,
-    `  ${pad("Successful")}${success.length}`,
-    `  ${pad("Failed")}${failed.length}`,
-    "",
-    "  Points",
-    `  ${pad("Total")}${totalPoints.toLocaleString()}`,
-    `  ${pad("Average")}${avg}`,
+  const lines = [
+    `**Rewards Balance**`,
+    `${UI.bullet} ${UI.ok} **Checked:** ${results.length}`,
+    `${UI.bullet} ${UI.star} **Successful:** ${success.length}`,
+    `${UI.bullet} ${UI.fail} **Failed:** ${failed.length}`,
+    ``,
+    `${UI.coin} **Points**`,
+    `${UI.bullet} **Total:** ${totalPoints.toLocaleString()}`,
+    `${UI.bullet} **Average:** ${avg}`,
   ];
 
   if (success.length > 0) {
     const highest = success.reduce((max, r) => r.balance > max.balance ? r : max);
-    block.push(`  ${pad("Highest")}${highest.balance.toLocaleString()} (${highest.email.split("@")[0]}...)`);
+    lines.push(`${UI.bullet} ${UI.spark} **Highest:** ${highest.balance.toLocaleString()} (${highest.email.split("@")[0]}…)`);
   }
 
-  return header()
-    .setColor(COLORS.PRIMARY)
-    .setDescription(`\`\`\`\n${block.join("\n")}\n\`\`\``);
+  return header().setColor(COLORS.PRIMARY).setDescription(lines.join("\n"));
 }
 
 // ── Generic ──────────────────────────────────────────────────
