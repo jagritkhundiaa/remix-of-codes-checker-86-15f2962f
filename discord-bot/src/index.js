@@ -802,33 +802,46 @@ async function handleInboxAio(respond, userId, accountsRaw, accountsFile, thread
     const startTime = Date.now();
     const liveServiceBreakdown = {};
 
+    const tracker = require("./utils/progress-tracker");
+    const existing = tracker.load(tracker.fingerprint(userId, "inboxaio", accounts));
+    const resumedFrom = existing && existing.results ? existing.results.length : 0;
+    // pre-seed the live breakdown from already-collected hits so progress UI is accurate
+    if (existing && existing.results) {
+      for (const r of existing.results) {
+        for (const svc of Object.keys(r?.services || {})) liveServiceBreakdown[svc] = (liveServiceBreakdown[svc] || 0) + 1;
+      }
+    }
+
     const msg = await respond({
-      embeds: [inboxAioProgressEmbed({ completed: 0, total: accounts.length, hits: 0, fails: 0, elapsed: 0, serviceBreakdown: {} })],
+      embeds: [inboxAioProgressEmbed({ completed: resumedFrom, total: accounts.length, hits: 0, fails: 0, elapsed: 0, serviceBreakdown: liveServiceBreakdown })],
       components: [stopButton(userId)],
       fetchReply: true,
     });
 
     let lastUpdate = Date.now();
-    let totalHits = 0, totalFails = 0;
-    const results = await checkInboxAccounts(accounts, threads, (done, total, status, hits, fails, lastResult) => {
-      totalHits = hits || 0;
-      totalFails = fails || 0;
-      if (lastResult && lastResult.services) {
-        for (const svcName of Object.keys(lastResult.services)) {
-          liveServiceBreakdown[svcName] = (liveServiceBreakdown[svcName] || 0) + 1;
+    const { results } = await tracker.runChunked({
+      userId, command: "inboxaio", combos: accounts, signal: ac.signal,
+      onProgress: (done, total) => {
+        const collected = tracker.load(tracker.fingerprint(userId, "inboxaio", accounts))?.results || [];
+        const totalHits = collected.filter(r => r.status === "hit").length;
+        const totalFails = collected.filter(r => r.status === "fail").length;
+        const breakdown = { ...liveServiceBreakdown };
+        for (const r of collected) for (const svc of Object.keys(r?.services || {})) breakdown[svc] = (breakdown[svc] || 0) + 1;
+        const now = Date.now();
+        if (now - lastUpdate > 2500) {
+          lastUpdate = now;
+          updateProgress(msg, inboxAioProgressEmbed({
+            completed: done, total, hits: totalHits, fails: totalFails,
+            elapsed: Date.now() - startTime,
+            latestAccount: collected[collected.length - 1]?.user || "",
+            latestStatus: collected[collected.length - 1]?.status || "",
+            serviceBreakdown: breakdown,
+          }), userId);
         }
-      }
-      const now = Date.now();
-      if (now - lastUpdate > 2500) {
-        lastUpdate = now;
-        updateProgress(msg, inboxAioProgressEmbed({
-          completed: done, total, hits: totalHits, fails: totalFails,
-          elapsed: Date.now() - startTime,
-          latestAccount: lastResult?.user || "", latestStatus: status || "",
-          serviceBreakdown: { ...liveServiceBreakdown },
-        }), userId);
-      }
-    }, ac.signal);
+      },
+      runChunk: (chunk, _onChunkProgress, signal) =>
+        checkInboxAccounts(chunk, threads, () => {}, signal),
+    });
 
     const stopped = ac.signal.aborted;
     const elapsed = Date.now() - startTime;
