@@ -1815,7 +1815,7 @@ async function checkBan(name, uuid, token) {
 
 async function setMcName(token, currentName) {
   if (!config.setname) return null;
-  const nameFormat = config.name || "MeowMal";
+  const nameFormat = config.name || "Player";
   let newname = nameFormat;
   while (newname.includes("{random_letter}"))
     newname = newname.replace("{random_letter}", String.fromCharCode(97 + Math.floor(Math.random() * 26)));
@@ -1846,7 +1846,7 @@ async function setMcName(token, currentName) {
   return null;
 }
 
-// ── Set Skin (1:1 port from meow.py Capture.setskin) ─────────
+// ── Set Skin ─────────────────────────────────────────────────
 
 async function setMcSkin(token) {
   if (!config.setskin) return false;
@@ -1926,14 +1926,6 @@ async function handleCapture(email, password, name, capes, uuid, token, type, ja
       } else if (c.banned === "False") {
         stats.unbanned++;
         results_unbanned.push(`${email}:${password}`);
-      }
-    } catch { stats.errors++; }
-
-    // Donut SMP stats
-    try {
-      const donut = await checkDonutSmp(name);
-      if (donut && donut.lines && donut.lines.length) {
-        c.donut = donut;
       }
     } catch { stats.errors++; }
 
