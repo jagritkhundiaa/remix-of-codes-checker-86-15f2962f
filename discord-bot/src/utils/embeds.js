@@ -473,12 +473,16 @@ function rewardsResultsEmbed(results, username) {
 // ============================================================
 
 function errorEmbed(message, username) {
-  return pullerStyle({
-    title: "Error",
+  const E = PULLER_EMOJI;
+  return pullerLive({
+    title: `${E.error} Error`,
     username,
     color: COLORS.ERROR,
     thumbnail: false,
-    sections: [{ heading: "Details", lines: String(message).split("\n") }],
+    sections: [{
+      heading: `${E.redExcl} Details`,
+      lines: String(message).split("\n"),
+    }],
   });
 }
 
