@@ -54,6 +54,32 @@ module.exports = {
   // Set to false for direct connections
   USE_PROXIES: false,
 
+  // ── Gen System (v2) ────────────────────────────────────────
+  // Guild ID where /gen, /admin, /me, etc. are registered.
+  GEN_GUILD_ID: "",
+  // Channels where .gen / /gen is allowed (empty = any channel).
+  GEN_CHANNEL_IDS: [],
+  // Channel for audit log messages (low stock alerts, grants, etc.) — leave "" to disable.
+  GEN_LOG_CHANNEL_ID: "",
+  // Roles for per-tier gating.
+  GEN_ADMIN_ROLE_ID: "",
+  GEN_PREMIUM_ROLE_ID: "",
+  GEN_VIP_ROLE_ID: "",
+  GEN_FREE_ROLE_ID: "",
+  // Public proof channel link inserted into DM warning. Leave "" to disable warning.
+  GEN_PROOF_LINK: "",
+  // Per-tier defaults (cooldown in seconds, daily limit).
+  GEN_TIERS: {
+    ADMIN: { cooldownSeconds: 0,    dailyLimit: 0   },
+    FREE:  { cooldownSeconds: 300,  dailyLimit: 30  },
+    PREM:  { cooldownSeconds: 900,  dailyLimit: 100 },
+    VIP:   { cooldownSeconds: 120,  dailyLimit: 200 },
+  },
+  // Whitelist-only mode: if true, only .access-granted users can /gen.
+  GEN_WHITELIST_ONLY: false,
+  // Anti-spam thresholds (admins always bypass).
+  GEN_ANTISPAM: { minAccountAgeDays: 0, minServerJoinAgeHours: 0 },
+
   // Embed color palette — monochrome
   // Invisible dark embeds — matches Discord dark theme background
   COLORS: {
