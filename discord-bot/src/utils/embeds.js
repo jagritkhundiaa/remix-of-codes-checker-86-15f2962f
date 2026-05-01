@@ -936,9 +936,10 @@ function refundResultsEmbed(results, { elapsed, dmSent, username } = {}) {
 // ============================================================
 
 function aioProgressEmbed(done, total, live = {}, username) {
+  const E = PULLER_EMOJI;
   const pct = total === 0 ? 0 : Math.round((done / total) * 100);
-  return pullerStyle({
-    title: "AIO Checker",
+  return pullerLive({
+    title: `${E.loading} AIO Checker`,
     username,
     color: COLORS.PRIMARY,
     thumbnail: false,
@@ -946,13 +947,16 @@ function aioProgressEmbed(done, total, live = {}, username) {
       {
         heading: "Progress",
         lines: [
+          "```",
           `[${_bar(pct)}] ${pct}%`,
           `Checked : ${done} / ${total}`,
+          "```",
         ],
       },
       {
-        heading: "Live Stats",
+        heading: `${E.working} Live Stats`,
         lines: [
+          "```",
           `Hits        : ${live.hits || 0}`,
           `  XGP       : ${live.xgp || 0}`,
           `  XGPU      : ${live.xgpu || 0}`,
@@ -960,29 +964,36 @@ function aioProgressEmbed(done, total, live = {}, username) {
           `2FA         : ${live.twofa || 0}`,
           `Valid Mail  : ${live.valid_mail || 0}`,
           `Bad         : ${live.bad || 0}`,
+          "```",
         ],
       },
       {
-        heading: "Microsoft",
+        heading: `${E.xbox} Microsoft`,
         lines: [
+          "```",
           `Balance : ${live.ms_balance || 0}`,
           `Points  : ${live.ms_points || 0}`,
+          "```",
         ],
       },
       {
         heading: "Security",
         lines: [
+          "```",
           `MFA      : ${live.mfa || 0}`,
           `SFA      : ${live.sfa || 0}`,
           `Banned   : ${live.banned || 0}`,
           `Unbanned : ${live.unbanned || 0}`,
+          "```",
         ],
       },
       {
         heading: "Performance",
         lines: [
+          "```",
           `CPM    : ${live.cpm || 0}`,
           `Errors : ${live.errors || 0}`,
+          "```",
         ],
       },
     ],
