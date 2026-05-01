@@ -1,7 +1,7 @@
 // ============================================================
-//  MeowMal AIO Checker — 1:1 port of meow.py to Node.js
-//  Self-contained module: own proxy pool, own login, own logic.
-//  No modifications to original logic — exact copy+paste+integrate.
+//  AIO Checker — Microsoft / Xbox / Minecraft account checker
+//  Self-contained: own proxy pool, own login flow, own logic.
+//  Strict 1:1 parity with the upstream auth/payload formats.
 // ============================================================
 
 const fs = require("fs");
@@ -21,7 +21,7 @@ try {
 }
 const MINECRAFT_AVAILABLE = !!mc;
 
-const log = logger.child("meowmal-aio");
+const log = logger.child("aio-checker");
 
 // ── Globals (per-run state, reset each run) ──────────────────
 
@@ -92,7 +92,7 @@ function resetResults() {
   results_codes = [];
 }
 
-// ── Config (hardcoded defaults matching meow.py config.ini) ──
+// ── Config (hardcoded defaults) ──────────────────────────────
 
 const config = {
   timeout: 15,
@@ -129,15 +129,13 @@ const config = {
   setname: false,
   setskin: false,
   save_bad: true,
-  donut_stats: true,
-  donut_api_key: "",
   check_credit_cards: true,
   check_paypal: true,
   check_purchase_history: true,
   optimize_network: true,
 };
 
-// ── Regex patterns (exact from meow.py) ──────────────────────
+// ── Regex patterns ───────────────────────────────────────────
 
 const RE_SFTTAG_VALUE = /value=\\"(.+?)\\"|value="(.+?)"|sFTTag:'(.+?)'|sFTTag:"(.+?)"|name=\\"PPFT\\".*?value=\\"(.+?)\\"/s;
 const RE_URLPOST_VALUE = /"urlPost":"(.+?)"|urlPost:'(.+?)'|urlPost:"(.+?)"|<form.*?action=\\"(.+?)\\"/s;
@@ -295,7 +293,7 @@ function markProxySuccess(proxyStr) {
   }
 }
 
-// ── Cookie Jar (1:1 from meow.py CookieSession approach) ────
+// ── Cookie Jar ───────────────────────────────────────────────
 
 class CookieJar {
   constructor() {
@@ -382,7 +380,7 @@ async function sessionFetch(url, options, jar, timeoutMs = 15000) {
   return { text: lastText, finalUrl: currentUrl, status: lastStatus, jar };
 }
 
-// ── lr_parse (exact from meow.py) ────────────────────────────
+// ── lr_parse helper ──────────────────────────────────────────
 
 function lrParse(source, startDelim, endDelim, createEmpty = true) {
   const escaped = startDelim.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -395,7 +393,7 @@ function lrParse(source, startDelim, endDelim, createEmpty = true) {
   return createEmpty ? "" : null;
 }
 
-// ── format_number (exact from meow.py) ───────────────────────
+// ── format_number ────────────────────────────────────────────
 
 const FORMAT_THRESHOLDS = [
   [1000000000, "B", 2],
@@ -426,7 +424,7 @@ function formatCoins(num) {
   return String(Math.floor(num));
 }
 
-// ── clean_name (exact from meow.py) ──────────────────────────
+// ── clean_name ───────────────────────────────────────────────
 
 const DECORATIVE_RE = /[✪✿✦⚚➎★☆◆◇■□●○◎☀☁☂☃☄☾☽♛♕♚♔♤♡♢♧♠♥♦♣⚜⚡✨❖⬥⬦⬧⬨⬩⭐🌟🟊]+/g;
 
@@ -435,7 +433,7 @@ function cleanName(name) {
   return String(name).replace(DECORATIVE_RE, "").trim();
 }
 
-// ── fetch_meowapi_stats (exact from meow.py) ─────────────────
+// ── Hypixel/Skyblock stats lookup ────────────────────────────
 
 async function fetchMeowApiStats(username, uuid) {
   try {
@@ -552,7 +550,7 @@ async function fetchMeowApiStats(username, uuid) {
   }
 }
 
-// ── MicrosoftChecker class (exact from meow.py) ─────────────
+// ── MicrosoftChecker class ───────────────────────────────────
 
 class MicrosoftChecker {
   constructor(jar, email, password) {
@@ -891,7 +889,7 @@ class MicrosoftChecker {
   }
 }
 
-// ── check_microsoft_account (exact from meow.py) ────────────
+// ── check_microsoft_account ──────────────────────────────────
 
 async function checkMicrosoftAccount(jar, email, password) {
   try {
@@ -960,7 +958,7 @@ async function checkMicrosoftAccount(jar, email, password) {
   }
 }
 
-// ── checkownership (exact from meow.py) ──────────────────────
+// ── checkownership ───────────────────────────────────────────
 
 function checkOwnership(entitlementsResponse) {
   const items = entitlementsResponse.items || [];
@@ -986,7 +984,7 @@ function checkOwnership(entitlementsResponse) {
   return null;
 }
 
-// ── pre_check_combo (exact from meow.py) ─────────────────────
+// ── pre_check_combo ──────────────────────────────────────────
 
 async function preCheckCombo(email, password) {
   const url = "https://login.live.com/ppsecure/post.srf";
@@ -1095,7 +1093,7 @@ async function preCheckCombo(email, password) {
   return "ERROR";
 }
 
-// ── get_urlPost_sFTTag (exact from meow.py) ──────────────────
+// ── get_urlPost_sFTTag ───────────────────────────────────────
 
 async function getUrlPostSFTTag(jar) {
   let attempts = 0;
@@ -1135,7 +1133,7 @@ async function getUrlPostSFTTag(jar) {
   return { urlPost: null, sFTTag: null };
 }
 
-// ── get_xbox_rps (exact from meow.py) ────────────────────────
+// ── get_xbox_rps ─────────────────────────────────────────────
 
 async function getXboxRps(jar, email, password, urlPost, sFTTag) {
   let tries = 0;
@@ -1219,7 +1217,7 @@ async function getXboxRps(jar, email, password, urlPost, sFTTag) {
   return "None";
 }
 
-// ── mc_token (exact from meow.py) ────────────────────────────
+// ── mc_token ─────────────────────────────────────────────────
 
 async function getMcToken(jar, uhs, xstsToken) {
   let attempts = 0;
@@ -1246,7 +1244,7 @@ async function getMcToken(jar, uhs, xstsToken) {
   return null;
 }
 
-// ── payment (exact from meow.py) ─────────────────────────────
+// ── payment extraction ───────────────────────────────────────
 
 async function extractPayment(jar, email, password) {
   let attempts = 0;
@@ -1358,7 +1356,7 @@ async function extractPayment(jar, email, password) {
   return null;
 }
 
-// ── claim_buddypass_offers (exact from meow.py) ──────────────
+// ── claim_buddypass_offers ───────────────────────────────────
 
 async function claimBuddypassOffers(jar, xboxToken) {
   const codes = [];
@@ -1460,7 +1458,7 @@ async function claimBuddypassOffers(jar, xboxToken) {
   } catch {}
 }
 
-// ── Hypixel check (from Capture.hypixel in meow.py) ─────────
+// ── Hypixel check ────────────────────────────────────────────
 
 async function hypixelCheck(name, jar) {
   const result = { hypixl: null, level: null, firstlogin: null, lastlogin: null, bwstars: null };
@@ -1516,7 +1514,7 @@ async function hypixelCheck(name, jar) {
   return result;
 }
 
-// ── Optifine check (from Capture.optifine in meow.py) ────────
+// ── Optifine check ───────────────────────────────────────────
 
 async function optifineCheck(name) {
   if (!config.optifinecape || !config.optifine_cape) return "Unknown";
@@ -1630,7 +1628,7 @@ async function namechangeCheck(token) {
   return result;
 }
 
-// ── Capture builder (from Capture.builder in meow.py) ────────
+// ── Capture builder ──────────────────────────────────────────
 
 function buildCaptureLine(c) {
   let banStatus;
@@ -1673,9 +1671,7 @@ function buildCaptureLine(c) {
   return line;
 }
 
-// ── Hypixel Ban Check (1:1 port of Capture.ban from meow.py) ──
-
-const DONUT_API_URL = "https://api.donutsmp.net/v1/stats/";
+// ── Hypixel Ban Check ────────────────────────────────────────
 
 let banproxies = [];
 
