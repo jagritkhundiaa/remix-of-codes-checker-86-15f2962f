@@ -216,20 +216,29 @@ async function handleCheck(respond, userId, wlidsRaw, codesRaw, codesFile, threa
     if (codes.length === 0) return respond({ embeds: [errorEmbed("No codes provided.")] });
     if (codes.length > MAX_COMBO_LINES) codes = codes.slice(0, MAX_COMBO_LINES);
 
+    const tracker = require("./utils/progress-tracker");
+    const existing = tracker.load(tracker.fingerprint(userId, "check", codes));
+    const resumedFrom = existing && existing.results ? existing.results.length : 0;
+
     const msg = await respond({
-      embeds: [progressEmbed(0, codes.length, `Checking codes (${wlids.length} WLIDs)`)],
+      embeds: [progressEmbed(resumedFrom, codes.length, resumedFrom > 0 ? `Resuming check from line ${resumedFrom + 1}` : `Checking codes (${wlids.length} WLIDs)`)],
       components: [stopButton(userId)],
       fetchReply: true,
     });
 
     let lastUpdate = Date.now();
-    const results = await checkCodes(wlids, codes, threads, (done, total) => {
-      const now = Date.now();
-      if (now - lastUpdate > 2000) {
-        lastUpdate = now;
-        updateProgress(msg, progressEmbed(done, total, "Checking codes"), userId);
-      }
-    }, ac.signal);
+    const { results } = await tracker.runChunked({
+      userId, command: "check", combos: codes, signal: ac.signal,
+      onProgress: (done, total) => {
+        const now = Date.now();
+        if (now - lastUpdate > 2000) {
+          lastUpdate = now;
+          updateProgress(msg, progressEmbed(done, total, "Checking codes"), userId);
+        }
+      },
+      runChunk: (chunk, _onChunkProgress, signal) =>
+        checkCodes(wlids, chunk, threads, () => {}, signal),
+    });
 
     const stopped = ac.signal.aborted;
     const files = [];
@@ -256,6 +265,8 @@ async function handleCheck(respond, userId, wlidsRaw, codesRaw, codesFile, threa
     } else {
       await msg.edit({ embeds: [embed], files, components: [] });
     }
+
+    if (!stopped) tracker.clear(tracker.fingerprint(userId, "check", codes));
   } catch (err) {
     await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
   } finally {
