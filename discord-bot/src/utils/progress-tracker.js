@@ -18,7 +18,7 @@ const path = require("path");
 const crypto = require("crypto");
 
 const DATA_DIR = path.join(__dirname, "..", "..", "data", "progress");
-const CHUNK_SIZE = 50;
+const CHUNK_SIZE = 100;
 
 function ensureDir() { try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch {} }
 function fileFor(runId) { return path.join(DATA_DIR, `${runId}.json`); }
