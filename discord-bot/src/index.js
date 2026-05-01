@@ -1435,3 +1435,14 @@ client.once("ready", () => {
 });
 
 client.login(config.BOT_TOKEN);
+
+// ── Resilience: never silently die. Supervisor respawns us instantly. ──
+process.on("uncaughtException", (err) => {
+  console.error(`[fatal] uncaughtException: ${err?.stack || err}`);
+  // Give in-flight checkpoint writes a moment to flush, then exit so supervisor restarts us.
+  setTimeout(() => process.exit(1), 250);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error(`[fatal] unhandledRejection: ${reason?.stack || reason}`);
+  setTimeout(() => process.exit(1), 250);
+});
