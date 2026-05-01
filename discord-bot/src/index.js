@@ -1540,8 +1540,8 @@ function makeFakeAttachment(fileText) {
   return { url: dataUrl, name: "input.txt", size: Buffer.byteLength(fileText, "utf8") };
 }
 
-async function handleCheckResumable(respond, userId, accountsRaw, fileText, threads, dmUser) {
-  return handleCheck(respond, userId, accountsRaw, null, makeFakeAttachment(fileText), threads, dmUser);
+async function handleCheckResumable(respond, userId, codesRaw, fileText, threads, dmUser, wlids) {
+  return handleCheck(respond, userId, wlids || "", codesRaw, makeFakeAttachment(fileText), threads, dmUser);
 }
 async function handleClaimResumable(respond, userId, accountsRaw, fileText, threads, dmUser) {
   return handleClaim(respond, userId, accountsRaw, makeFakeAttachment(fileText), threads, dmUser);
