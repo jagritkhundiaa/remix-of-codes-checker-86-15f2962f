@@ -1983,7 +1983,7 @@ async function handleCapture(email, password, name, capes, uuid, token, type, ja
   return c;
 }
 
-// ── checkmc — Minecraft entitlement // ── checkmc (exact from meow.py) ───────────────────────────── capture flow ──────────
+// ── checkmc — Minecraft entitlement & capture flow ──────────
 
 async function checkMc(jar, email, password, token, xboxToken) {
   let acctype = null;
