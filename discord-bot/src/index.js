@@ -21,7 +21,7 @@ const { setWlids, getWlids, getWlidCount } = require("./utils/wlid-store");
 const { WelcomeStore } = require("./utils/welcome-store");
 const { AutopilotManager, TEN_DAYS_MS } = require("./utils/autopilot");
 const { AntiLink } = require("./utils/antilink");
-const { GenManager } = require("./utils/gen-manager");
+const genV2 = require("./utils/gen-v2");
 const { extractCombos } = require("./utils/combo-extract");
 const {
   progressEmbed,
@@ -50,8 +50,6 @@ const {
   adminPanelEmbed,
   detailedStatsEmbed,
   textAttachment,
-  genHelpEmbed,
-  stockListEmbed,
   unauthorisedEmbed,
 } = require("./utils/embeds");
 const { checkRewardsBalances } = require("./utils/microsoft-rewards");
@@ -74,7 +72,8 @@ const statsManager = new StatsManager();
 const welcomeStore = new WelcomeStore();
 const autopilot = new AutopilotManager();
 const antilink = new AntiLink();
-const gen = new GenManager();
+// Gen System v2 — slash + dot + admin UI, file-backed code stock
+genV2.register(client, config);
 
 let webhookUrl = "";
 const activeAborts = new Map();
@@ -871,77 +870,8 @@ async function handleBotStats(respond, callerId) {
   return respond({ embeds: [detailedStatsEmbed(statsManager.getSummary())] });
 }
 
-// ── Gen System ──────────────────────────────────────────────
+// ── Gen System v2 lives in utils/gen-v2.js (registered above) ──
 
-async function handleGen(respond, userId, args, attachment) {
-  // .gen help
-  if (args[0]?.toLowerCase() === "help") {
-    try { await respond({ embeds: [genHelpEmbed(config.PREFIX)] }); } catch {}
-    return;
-  }
-
-  const product = args[0];
-  const amount = parseInt(args[1] || "1", 10);
-  if (!product || isNaN(amount)) {
-    return respond({ embeds: [errorEmbed(`Usage: \`${config.PREFIX}gen <product> <amount>\` — see \`${config.PREFIX}gen help\``)] });
-  }
-
-  if (!canUse(userId)) return respond({ embeds: [errorEmbed("You are not authorized to use this bot.")] });
-
-  const result = gen.generate(userId, product, amount, isOwner(userId));
-  if (!result.ok) return respond({ embeds: [errorEmbed(result.reason)] });
-
-  const file = textAttachment(result.items, `${product}_${result.items.length}.txt`);
-  try {
-    const userObj = await client.users.fetch(userId);
-    await userObj.send({
-      embeds: [successEmbed(`Generated **${result.delivered}** × \`${product}\` (requested ${result.requested}).\nRemaining stock: \`${gen.count(product)}\``)],
-      files: [file],
-    });
-    return respond({ embeds: [infoEmbed("Gen Sent", `Sent **${result.delivered}** × \`${product}\` to your DMs.`)] });
-  } catch {
-    return respond({ embeds: [errorEmbed("Couldn't DM you. Enable DMs from server members.")] });
-  }
-}
-
-async function handleStock(respond) {
-  return respond({ embeds: [stockListEmbed(gen.list())] });
-}
-
-async function handleAddStock(respond, userId, product, attachment, inlineText) {
-  if (!product) return respond({ embeds: [errorEmbed(`Usage: \`${config.PREFIX}addstock <product>\` + attach .txt OR inline lines.`)] });
-  let text = inlineText || "";
-  if (attachment) text += "\n" + (await fetchAttachmentLines(attachment));
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  if (lines.length === 0) return respond({ embeds: [errorEmbed("No lines found.")] });
-  const added = gen.addStock(product, lines);
-  return respond({ embeds: [successEmbed(`Added **${added}** new line(s) to \`${product.toLowerCase()}\`.\nTotal stock: \`${gen.count(product)}\``)] });
-}
-
-async function handleReplaceStock(respond, userId, product, attachment, inlineText) {
-  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Only the bot owner can replace stock.")] });
-  if (!product) return respond({ embeds: [errorEmbed(`Usage: \`${config.PREFIX}replacegenstock <product>\` + attach .txt`)] });
-  let text = inlineText || "";
-  if (attachment) text += "\n" + (await fetchAttachmentLines(attachment));
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  if (lines.length === 0) return respond({ embeds: [errorEmbed("No lines found.")] });
-  const total = gen.replaceStock(product, lines);
-  return respond({ embeds: [successEmbed(`Replaced \`${product.toLowerCase()}\` stock — now **${total}** lines.`)] });
-}
-
-async function handleDownloadStock(respond, userId) {
-  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Only the bot owner can download stock.")] });
-  const dump = gen.dump();
-  if (!dump.trim()) return respond({ embeds: [infoEmbed("Gen Stock", "Stock is empty.")] });
-  const file = new AttachmentBuilder(Buffer.from(dump, "utf-8"), { name: "gen_stock.txt" });
-  try {
-    const userObj = await client.users.fetch(userId);
-    await userObj.send({ content: "Current gen stock:", files: [file] });
-    return respond({ embeds: [infoEmbed("Sent", "Stock dump sent to your DMs.")] });
-  } catch {
-    return respond({ files: [file] });
-  }
-}
 
 // ── Anti-Link + Autopilot helpers ───────────────────────────
 
@@ -1278,20 +1208,7 @@ client.on("messageCreate", async (message) => {
     return message.reply({ embeds: [removed ? successEmbed(`<@${targetId}> removed from anti-link whitelist.`) : errorEmbed("That user wasn't whitelisted.")] });
   }
 
-  // ── Gen system (hidden — works in any channel) ──
-  if (cmd === "gen") return handleGen((opts) => message.reply(opts), message.author.id, args, message.attachments.first());
-  if (cmd === "stock") return handleStock((opts) => message.reply(opts));
-  if (cmd === "addstock") {
-    const product = args.shift();
-    return handleAddStock((opts) => message.reply(opts), message.author.id, product, message.attachments.first(), args.join("\n"));
-  }
-  if (cmd === "replacegenstock") {
-    const product = args.shift();
-    return handleReplaceStock((opts) => message.reply(opts), message.author.id, product, message.attachments.first(), args.join("\n"));
-  }
-  if (cmd === "downloadgenstock") {
-    return handleDownloadStock((opts) => message.reply(opts), message.author.id);
-  }
+  // .gen / .stock / etc. handled by gen-v2 (registered separately)
 
   // ── Channel enforcement for normal commands ──
   const channelCheck = checkChannelAccess(message.channelId, cmd);
