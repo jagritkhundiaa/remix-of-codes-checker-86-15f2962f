@@ -221,7 +221,7 @@ async function handleCheck(respond, userId, wlidsRaw, codesRaw, codesFile, threa
     const resumedFrom = existing && existing.results ? existing.results.length : 0;
 
     const msg = await respond({
-      embeds: [progressEmbed(resumedFrom, codes.length, resumedFrom > 0 ? `Resuming check from line ${resumedFrom + 1}` : `Checking codes (${wlids.length} WLIDs)`)],
+      embeds: [progressEmbed(resumedFrom, codes.length, `Checking codes (${wlids.length} WLIDs)`)],
       components: [stopButton(userId)],
       fetchReply: true,
     });
@@ -295,7 +295,7 @@ async function handleClaim(respond, userId, accountsRaw, accountsFile, threads =
     const resumedFrom = existing && existing.results ? existing.results.length : 0;
 
     const msg = await respond({
-      embeds: [progressEmbed(resumedFrom, accounts.length, resumedFrom > 0 ? `Resuming claim from line ${resumedFrom + 1}` : "Claiming WLIDs")],
+      embeds: [progressEmbed(resumedFrom, accounts.length, "Claiming WLIDs")],
       components: [stopButton(userId)],
       fetchReply: true,
     });
@@ -729,7 +729,7 @@ async function handleRewards(respond, userId, accountsRaw, accountsFile, threads
     const resumedFrom = existing && existing.results ? existing.results.length : 0;
 
     const msg = await respond({
-      embeds: [progressEmbed(resumedFrom, accounts.length, resumedFrom > 0 ? `Resuming rewards from line ${resumedFrom + 1}` : "Checking Rewards Balances")],
+      embeds: [progressEmbed(resumedFrom, accounts.length, "Checking Rewards Balances")],
       components: [stopButton(userId)],
       fetchReply: true,
     });
@@ -1550,7 +1550,7 @@ async function replayRun(run) {
   const dmUser = await client.users.fetch(userId).catch(() => null);
   const respond = (opts) => channel.send(opts).catch(() => null);
 
-  try { await channel.send({ embeds: [infoEmbed("Resuming", `Re-running \`.${command}\` for <@${userId}> after restart. Already-checked entries will be re-processed from the top.`)] }); } catch {}
+  // Silent resume: do NOT announce to the channel. The user only sees the normal progress embed.
 
   const handlers = {
     check:       () => handleCheckResumable(respond, userId, args.accountsRaw || "", args.fileText || "", args.threads || 10, dmUser),
