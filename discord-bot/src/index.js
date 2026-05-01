@@ -555,27 +555,37 @@ async function handleRefund(respond, userId, accountsRaw, accountsFile, threads 
     const accounts = await gatherCombos(accountsRaw, accountsFile);
     if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided.")] });
 
+    const tracker = require("./utils/progress-tracker");
+    const existing = tracker.load(tracker.fingerprint(userId, "refund", accounts));
+    const resumedFrom = existing && existing.results ? existing.results.length : 0;
+
     const msg = await respond({
-      embeds: [refundProgressEmbed({ done: 0, total: accounts.length, hits: 0, noRefund: 0, locked: 0, failed: 0, startTime, username })],
+      embeds: [refundProgressEmbed({ done: resumedFrom, total: accounts.length, hits: 0, noRefund: 0, locked: 0, failed: 0, startTime, username })],
       components: [stopButton(userId)],
       fetchReply: true,
     });
 
     let lastUpdate = Date.now();
-    let hits = 0, noRefund = 0, locked = 0, failed = 0;
-
-    const results = await checkRefundAccounts(accounts, threads, (done, total, status) => {
-      if (status === "hit") hits++;
-      else if (status === "free") noRefund++;
-      else if (status === "locked") locked++;
-      else failed++;
-      const now = Date.now();
-      if (now - lastUpdate > 2000) {
-        lastUpdate = now;
-        const lastEmail = results.length > 0 ? results[results.length - 1]?.user : "";
-        updateProgress(msg, refundProgressEmbed({ done, total, hits, noRefund, locked, failed, lastAccount: lastEmail, startTime, username }), userId);
-      }
-    }, ac.signal);
+    const { results } = await tracker.runChunked({
+      userId, command: "refund", combos: accounts, signal: ac.signal,
+      onProgress: (done, total) => {
+        const now = Date.now();
+        if (now - lastUpdate > 2000) {
+          lastUpdate = now;
+          const cur = (state => state)(undefined); // placeholder
+          // recompute counters from already-collected results so resume shows accurate totals
+          const collected = tracker.load(tracker.fingerprint(userId, "refund", accounts))?.results || [];
+          const hits = collected.filter(r => r.status === "hit").length;
+          const noRefund = collected.filter(r => r.status === "free").length;
+          const locked = collected.filter(r => r.status === "locked").length;
+          const failed = collected.filter(r => r.status === "fail").length;
+          const lastEmail = collected.length > 0 ? collected[collected.length - 1]?.user : "";
+          updateProgress(msg, refundProgressEmbed({ done, total, hits, noRefund, locked, failed, lastAccount: lastEmail, startTime, username }), userId);
+        }
+      },
+      runChunk: (chunk, _onChunkProgress, signal) =>
+        checkRefundAccounts(chunk, threads, () => {}, signal),
+    });
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     const stopped = ac.signal.aborted;
@@ -611,6 +621,8 @@ async function handleRefund(respond, userId, accountsRaw, accountsFile, threads 
     } else {
       await msg.edit({ embeds: [embed], files, components: [] });
     }
+
+    if (!stopped) tracker.clear(tracker.fingerprint(userId, "refund", accounts));
   } catch (err) {
     await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
   } finally {
