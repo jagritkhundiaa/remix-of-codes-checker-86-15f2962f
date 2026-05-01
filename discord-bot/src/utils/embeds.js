@@ -1001,8 +1001,10 @@ function aioProgressEmbed(done, total, live = {}, username) {
 }
 
 function aioResultsEmbed(s, { dmSent, username } = {}) {
+  const E = PULLER_EMOJI;
   const sections = [
-    { heading: "Account Analysis", lines: [
+    { heading: `${E.working} Account Analysis`, lines: [
+      "```",
       `Total Checked : ${s.checked || 0}`,
       `Hits          : ${s.hits || 0}`,
       `  XGP         : ${s.xgp || 0}`,
@@ -1011,24 +1013,31 @@ function aioResultsEmbed(s, { dmSent, username } = {}) {
       `2FA           : ${s.twofa || 0}`,
       `Valid Mail    : ${s.valid_mail || 0}`,
       `Bad           : ${s.bad || 0}`,
+      "```",
     ]},
-    { heading: "Microsoft", lines: [
+    { heading: `${E.xbox} Microsoft`, lines: [
+      "```",
       `Balance : ${s.ms_balance || 0}`,
       `Points  : ${s.ms_points || 0}`,
+      "```",
     ]},
     { heading: "Security", lines: [
+      "```",
       `MFA      : ${s.mfa || 0}`,
       `SFA      : ${s.sfa || 0}`,
       `Banned   : ${s.banned || 0}`,
       `Unbanned : ${s.unbanned || 0}`,
+      "```",
     ]},
     { heading: "Performance", lines: [
+      "```",
       `CPM   : ${s.cpm || 0}`,
       `Time  : ${s.elapsed || "?"}`,
+      "```",
     ]},
   ];
-  if (dmSent) sections.push({ heading: "Output", lines: ["Results sent to your DMs."] });
-  return pullerStyle({
+  if (dmSent) sections.push({ heading: `${E.upload} Output`, lines: ["Results sent to your DMs."] });
+  return pullerLive({
     title: "AIO Checker",
     username,
     color: s.hits > 0 ? COLORS.SUCCESS : COLORS.ERROR,
