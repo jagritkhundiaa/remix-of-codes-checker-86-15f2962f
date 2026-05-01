@@ -102,4 +102,19 @@ async function runChunked({ userId, command, combos, runChunk, onProgress, signa
   return { results, runId, resumed, prevDone };
 }
 
-module.exports = { runChunked, fingerprint, load, clear, CHUNK_SIZE };
+function pruneStale(maxAgeMs = 7 * 24 * 3600 * 1000) {
+  ensureDir();
+  try {
+    const now = Date.now();
+    for (const f of fs.readdirSync(DATA_DIR)) {
+      if (!f.endsWith(".json")) continue;
+      const full = path.join(DATA_DIR, f);
+      try {
+        const st = fs.statSync(full);
+        if (now - st.mtimeMs > maxAgeMs) fs.unlinkSync(full);
+      } catch {}
+    }
+  } catch {}
+}
+
+module.exports = { runChunked, fingerprint, load, clear, pruneStale, CHUNK_SIZE };
