@@ -523,9 +523,13 @@ function register(client, config) {
         }
 
         if (name === "genadmin") {
-          const member = await interaction.guild.members.fetch(interaction.user.id);
-          if (!hasAdmin(member)) return interaction.reply({ content: "❌ Admins only.", ephemeral: true });
-          return interaction.reply({ embeds: [adminHomeEmbed()], components: adminHomeComponents(), ephemeral: true });
+          await interaction.deferReply({ ephemeral: true }).catch(() => {});
+          let member = interaction.member;
+          try {
+            if (!member?.roles?.cache) member = await interaction.guild.members.fetch(interaction.user.id);
+          } catch {}
+          if (!hasAdmin(member)) return interaction.editReply({ content: "❌ Admins only." });
+          return interaction.editReply({ embeds: [adminHomeEmbed()], components: adminHomeComponents() });
         }
 
         if (name === "me") {
