@@ -1271,11 +1271,13 @@ client.on("interactionCreate", async (interaction) => {
       await handleStats(respond);
     } else if (commandName === "refund") {
       await interaction.deferReply();
-      await handleRefund(respond, user.id,
-        interaction.options.getString("accounts"),
-        interaction.options.getAttachment("accounts_file"),
-        interaction.options.getInteger("threads") || 5,
-        user, user.username);
+      const accountsRaw = interaction.options.getString("accounts") || "";
+      const attachment = interaction.options.getAttachment("accounts_file");
+      const fileText = await resumeRegistry.attachmentToText(attachment);
+      const threads = interaction.options.getInteger("threads") || 5;
+      await withResume(user.id, interaction.channelId, "refund",
+        { accountsRaw, fileText, threads, username: user.username },
+        () => handleRefundResumable(respond, user.id, accountsRaw, fileText, threads, user, user.username));
     } else if (commandName === "aio") {
       await interaction.deferReply();
       const accountsRaw = interaction.options.getString("accounts") || "";
@@ -1289,11 +1291,13 @@ client.on("interactionCreate", async (interaction) => {
       await respond({ embeds: [helpOverviewEmbed("/")], components: [helpSelectMenu()] });
     } else if (commandName === "rewards") {
       await interaction.deferReply();
-      await handleRewards(respond, user.id,
-        interaction.options.getString("accounts"),
-        interaction.options.getAttachment("accounts_file"),
-        interaction.options.getInteger("threads") || 3,
-        user);
+      const accountsRaw = interaction.options.getString("accounts") || "";
+      const attachment = interaction.options.getAttachment("accounts_file");
+      const fileText = await resumeRegistry.attachmentToText(attachment);
+      const threads = interaction.options.getInteger("threads") || 3;
+      await withResume(user.id, interaction.channelId, "rewards",
+        { accountsRaw, fileText, threads },
+        () => handleRewardsResumable(respond, user.id, accountsRaw, fileText, threads, user));
     } else if (commandName === "admin") {
       await handleAdminPanel(respond, user.id);
     } else if (commandName === "setwebhook") {
