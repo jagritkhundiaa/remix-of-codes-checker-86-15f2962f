@@ -64,9 +64,15 @@ const resumeRegistry = require("./utils/resume-registry");
 async function withResume(userId, channelId, command, args, fn) {
   resumeRegistry.startRun({ userId, channelId, command, args });
   try {
-    return await fn();
-  } finally {
+    const result = await fn();
+    // Only clear on clean completion. If fn() throws (or the process dies
+    // before reaching here), the entry stays in active-runs.json so the
+    // next boot replays it.
     resumeRegistry.finishRun(userId, command);
+    return result;
+  } catch (err) {
+    console.error(`[resume] ${command}/${userId} threw — keeping registry entry for replay:`, err?.message || err);
+    throw err;
   }
 }
 
