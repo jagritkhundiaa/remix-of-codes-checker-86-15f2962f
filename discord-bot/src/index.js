@@ -1544,6 +1544,26 @@ client.once("ready", () => {
   }
   cyclePresence();
   setInterval(cyclePresence, 15000);
+
+  // ── Crash-resume: replay any runs that were active when the bot died ──
+  setTimeout(async () => {
+    try {
+      const runs = resumeRegistry.listRuns();
+      if (runs.length === 0) {
+        console.log("[resume] no active runs to replay");
+        return;
+      }
+      console.log(`[resume] replaying ${runs.length} active run(s) after restart`);
+      for (const run of runs) {
+        replayRun(run).catch((err) => {
+          console.error(`[resume] replay failed for ${run.command}/${run.userId}:`, err?.message || err);
+          resumeRegistry.finishRun(run.userId, run.command);
+        });
+      }
+    } catch (err) {
+      console.error("[resume] startup replay error:", err?.message || err);
+    }
+  }, 2000);
 });
 
 client.login(config.BOT_TOKEN);
