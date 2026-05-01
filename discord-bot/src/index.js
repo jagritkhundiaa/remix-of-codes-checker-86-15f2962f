@@ -56,6 +56,19 @@ const {
 } = require("./utils/embeds");
 const { checkRewardsBalances } = require("./utils/microsoft-rewards");
 const { runAioCheck, getStats: getAioStats } = require("./utils/meowmal-aio");
+const resumeRegistry = require("./utils/resume-registry");
+
+// ── Resume wrapper ───────────────────────────────────────────
+// Records the run before the handler starts; clears it on success/error.
+// On crash, the entry survives in data/active-runs.json and is replayed at boot.
+async function withResume(userId, channelId, command, args, fn) {
+  resumeRegistry.startRun({ userId, channelId, command, args });
+  try {
+    return await fn();
+  } finally {
+    resumeRegistry.finishRun(userId, command);
+  }
+}
 
 const client = new Client({
   intents: [
