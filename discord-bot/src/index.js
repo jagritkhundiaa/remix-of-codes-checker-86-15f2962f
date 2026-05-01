@@ -1550,7 +1550,7 @@ async function replayRun(run) {
   const dmUser = await client.users.fetch(userId).catch(() => null);
   const respond = (opts) => channel.send(opts).catch(() => null);
 
-  try { await channel.send({ embeds: [infoEmbed("Resuming", `Re-running \`.${command}\` for <@${userId}> after restart. Already-checked entries will be re-processed from the top.`)] }); } catch {}
+  // Silent resume: do NOT announce to the channel. The user only sees the normal progress embed.
 
   const handlers = {
     check:       () => handleCheckResumable(respond, userId, args.accountsRaw || "", args.fileText || "", args.threads || 10, dmUser),
