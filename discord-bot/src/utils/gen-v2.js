@@ -196,13 +196,17 @@ function minTierAllowed(s, userTier) {
 // ── Module factory: wires gen-v2 into the existing client ──
 
 function register(client, config) {
+  const genChannelIds = Array.isArray(config.GEN_CHANNEL_IDS)
+    ? config.GEN_CHANNEL_IDS.map(id => String(id).trim()).filter(Boolean)
+    : String(config.GEN_CHANNEL_IDS || "").split(",").map(id => id.trim()).filter(Boolean);
+
   const G = {
     adminRoleId:   config.GEN_ADMIN_ROLE_ID   || "",
     premiumRoleId: config.GEN_PREMIUM_ROLE_ID || "",
     vipRoleId:     config.GEN_VIP_ROLE_ID     || "",
     freeRoleId:    config.GEN_FREE_ROLE_ID    || "",
     logChannelId:  config.GEN_LOG_CHANNEL_ID  || "",
-    genChannelIds: config.GEN_CHANNEL_IDS     || [],
+    genChannelIds,
     proofLink:     config.GEN_PROOF_LINK      || "",
     tiers:         config.GEN_TIERS           || {},
     whitelistOnly: !!config.GEN_WHITELIST_ONLY,
@@ -505,7 +509,7 @@ function register(client, config) {
 
         if (name === "gen") {
           const allowed = G.genChannelIds;
-          if (allowed.length && !allowed.includes(interaction.channelId))
+          if (allowed.length && !allowed.includes(String(interaction.channelId)))
             return interaction.reply({ content: "❌ Use /gen only in the gen channel.", ephemeral: true });
 
           const item = normItem(interaction.options.getString("item", true));
@@ -891,7 +895,7 @@ function register(client, config) {
       // .gen <item> [amount]
       if (lc.startsWith(".gen ")) {
         const allowed = G.genChannelIds;
-        if (allowed.length && !allowed.includes(message.channel.id))
+        if (allowed.length && !allowed.includes(String(message.channel.id)))
           return message.reply("❌ Use .gen only in the gen channel.");
         const args = content.split(/\s+/);
         const item = normItem(args[1]);
