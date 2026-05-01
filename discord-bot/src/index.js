@@ -21,7 +21,7 @@ const { setWlids, getWlids, getWlidCount } = require("./utils/wlid-store");
 const { WelcomeStore } = require("./utils/welcome-store");
 const { AutopilotManager, TEN_DAYS_MS } = require("./utils/autopilot");
 const { AntiLink } = require("./utils/antilink");
-const { GenManager } = require("./utils/gen-manager");
+const genV2 = require("./utils/gen-v2");
 const { extractCombos } = require("./utils/combo-extract");
 const {
   progressEmbed,
@@ -50,8 +50,6 @@ const {
   adminPanelEmbed,
   detailedStatsEmbed,
   textAttachment,
-  genHelpEmbed,
-  stockListEmbed,
   unauthorisedEmbed,
 } = require("./utils/embeds");
 const { checkRewardsBalances } = require("./utils/microsoft-rewards");
@@ -74,7 +72,8 @@ const statsManager = new StatsManager();
 const welcomeStore = new WelcomeStore();
 const autopilot = new AutopilotManager();
 const antilink = new AntiLink();
-const gen = new GenManager();
+// Gen System v2 — slash + dot + admin UI, file-backed code stock
+genV2.register(client, config);
 
 let webhookUrl = "";
 const activeAborts = new Map();
