@@ -115,10 +115,9 @@ function canUse(userId) {
 /**
  * First-time welcome DM. Persisted across restarts via WelcomeStore.
  */
-async function sendWelcomeIfNeeded(userId, username, userObj) {
-  if (welcomeStore.has(userId)) return;
-  welcomeStore.mark(userId);
-  try { await userObj.send({ embeds: [welcomeEmbed(username)] }); } catch {}
+async function sendWelcomeIfNeeded(_userId, _username, _userObj) {
+  // Welcome DMs disabled — DMs now reserved for results + errors only.
+  return;
 }
 
 function splitInput(raw) {
