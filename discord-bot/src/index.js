@@ -1267,11 +1267,13 @@ client.on("interactionCreate", async (interaction) => {
         user, user.username);
     } else if (commandName === "aio") {
       await interaction.deferReply();
-      await handleAio(respond, user.id,
-        interaction.options.getString("accounts"),
-        interaction.options.getAttachment("accounts_file"),
-        interaction.options.getInteger("threads") || 30,
-        user);
+      const accountsRaw = interaction.options.getString("accounts") || "";
+      const attachment = interaction.options.getAttachment("accounts_file");
+      const fileText = await resumeRegistry.attachmentToText(attachment);
+      const threads = interaction.options.getInteger("threads") || 30;
+      await withResume(user.id, interaction.channelId, "aio",
+        { accountsRaw, fileText, threads },
+        () => handleAioResumable(respond, user.id, accountsRaw, fileText, threads, user));
     } else if (commandName === "help") {
       await respond({ embeds: [helpOverviewEmbed("/")], components: [helpSelectMenu()] });
     } else if (commandName === "rewards") {

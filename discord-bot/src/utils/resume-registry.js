@@ -37,7 +37,16 @@ function loadAll() {
 function saveAll(state) {
   ensureDir();
   try {
-    fs.writeFileSync(TMP, JSON.stringify(state));
+    // Write + fsync to guarantee it's on disk BEFORE the heavy run begins.
+    // Without fsync, a Windows kill (OOM, BSOD, supervisor SIGKILL) can lose
+    // the registry entry even though writeFileSync returned.
+    const fd = fs.openSync(TMP, "w");
+    try {
+      fs.writeSync(fd, JSON.stringify(state));
+      try { fs.fsyncSync(fd); } catch {}
+    } finally {
+      try { fs.closeSync(fd); } catch {}
+    }
     fs.renameSync(TMP, FILE);
   } catch {}
 }
