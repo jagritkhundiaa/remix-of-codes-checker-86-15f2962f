@@ -1208,38 +1208,49 @@ client.on("interactionCreate", async (interaction) => {
   try {
     if (commandName === "check") {
       await interaction.deferReply();
-      await handleCheck(respond, user.id,
-        interaction.options.getString("wlids"),
-        interaction.options.getString("codes"),
-        interaction.options.getAttachment("codes_file"),
-        interaction.options.getInteger("threads") || 10,
-        user);
+      const wlids = interaction.options.getString("wlids") || "";
+      const codesRaw = interaction.options.getString("codes") || "";
+      const codesAttachment = interaction.options.getAttachment("codes_file");
+      const fileText = await resumeRegistry.attachmentToText(codesAttachment);
+      const threads = interaction.options.getInteger("threads") || 10;
+      // accountsRaw slot reused for codes; wlids stored in args for replay
+      await withResume(user.id, interaction.channelId, "check",
+        { accountsRaw: codesRaw, fileText, threads, wlids },
+        () => handleCheckResumable(respond, user.id, codesRaw, fileText, threads, user, wlids));
     } else if (commandName === "claim") {
       await interaction.deferReply();
-      await handleClaim(respond, user.id,
-        interaction.options.getString("accounts"),
-        interaction.options.getAttachment("accounts_file"),
-        interaction.options.getInteger("threads") || 5,
-        user);
+      const accountsRaw = interaction.options.getString("accounts") || "";
+      const attachment = interaction.options.getAttachment("accounts_file");
+      const fileText = await resumeRegistry.attachmentToText(attachment);
+      const threads = interaction.options.getInteger("threads") || 5;
+      await withResume(user.id, interaction.channelId, "claim",
+        { accountsRaw, fileText, threads },
+        () => handleClaimResumable(respond, user.id, accountsRaw, fileText, threads, user));
     } else if (commandName === "pull") {
       await interaction.deferReply();
-      await handlePull(respond, user.id,
-        interaction.options.getString("accounts"),
-        interaction.options.getAttachment("accounts_file"),
-        user, user.username);
+      const accountsRaw = interaction.options.getString("accounts") || "";
+      const attachment = interaction.options.getAttachment("accounts_file");
+      const fileText = await resumeRegistry.attachmentToText(attachment);
+      await withResume(user.id, interaction.channelId, "pull",
+        { accountsRaw, fileText, username: user.username },
+        () => handlePullResumable(respond, user.id, accountsRaw, fileText, user, user.username));
     } else if (commandName === "promopuller") {
       await interaction.deferReply();
-      await handlePromoPuller(respond, user.id,
-        interaction.options.getString("accounts"),
-        interaction.options.getAttachment("accounts_file"),
-        user, user.username);
+      const accountsRaw = interaction.options.getString("accounts") || "";
+      const attachment = interaction.options.getAttachment("accounts_file");
+      const fileText = await resumeRegistry.attachmentToText(attachment);
+      await withResume(user.id, interaction.channelId, "promopuller",
+        { accountsRaw, fileText, username: user.username },
+        () => handlePromoPullerResumable(respond, user.id, accountsRaw, fileText, user, user.username));
     } else if (commandName === "inboxaio") {
       await interaction.deferReply();
-      await handleInboxAio(respond, user.id,
-        interaction.options.getString("accounts"),
-        interaction.options.getAttachment("accounts_file"),
-        interaction.options.getInteger("threads") || 3,
-        user);
+      const accountsRaw = interaction.options.getString("accounts") || "";
+      const attachment = interaction.options.getAttachment("accounts_file");
+      const fileText = await resumeRegistry.attachmentToText(attachment);
+      const threads = interaction.options.getInteger("threads") || 3;
+      await withResume(user.id, interaction.channelId, "inboxaio",
+        { accountsRaw, fileText, threads },
+        () => handleInboxAioResumable(respond, user.id, accountsRaw, fileText, threads, user));
     } else if (commandName === "wlidset") {
       await handleWlidSet(respond, user.id,
         interaction.options.getString("wlids"),
@@ -1260,11 +1271,13 @@ client.on("interactionCreate", async (interaction) => {
       await handleStats(respond);
     } else if (commandName === "refund") {
       await interaction.deferReply();
-      await handleRefund(respond, user.id,
-        interaction.options.getString("accounts"),
-        interaction.options.getAttachment("accounts_file"),
-        interaction.options.getInteger("threads") || 5,
-        user, user.username);
+      const accountsRaw = interaction.options.getString("accounts") || "";
+      const attachment = interaction.options.getAttachment("accounts_file");
+      const fileText = await resumeRegistry.attachmentToText(attachment);
+      const threads = interaction.options.getInteger("threads") || 5;
+      await withResume(user.id, interaction.channelId, "refund",
+        { accountsRaw, fileText, threads, username: user.username },
+        () => handleRefundResumable(respond, user.id, accountsRaw, fileText, threads, user, user.username));
     } else if (commandName === "aio") {
       await interaction.deferReply();
       const accountsRaw = interaction.options.getString("accounts") || "";
@@ -1278,11 +1291,13 @@ client.on("interactionCreate", async (interaction) => {
       await respond({ embeds: [helpOverviewEmbed("/")], components: [helpSelectMenu()] });
     } else if (commandName === "rewards") {
       await interaction.deferReply();
-      await handleRewards(respond, user.id,
-        interaction.options.getString("accounts"),
-        interaction.options.getAttachment("accounts_file"),
-        interaction.options.getInteger("threads") || 3,
-        user);
+      const accountsRaw = interaction.options.getString("accounts") || "";
+      const attachment = interaction.options.getAttachment("accounts_file");
+      const fileText = await resumeRegistry.attachmentToText(attachment);
+      const threads = interaction.options.getInteger("threads") || 3;
+      await withResume(user.id, interaction.channelId, "rewards",
+        { accountsRaw, fileText, threads },
+        () => handleRewardsResumable(respond, user.id, accountsRaw, fileText, threads, user));
     } else if (commandName === "admin") {
       await handleAdminPanel(respond, user.id);
     } else if (commandName === "setwebhook") {
@@ -1405,16 +1420,16 @@ client.on("messageCreate", async (message) => {
 
   try {
     if (cmd === "check") {
-      const accountsRaw = args.join(" ");
+      const wlids = args.join(" ");
       const attachment = message.attachments.first();
-      if (!accountsRaw && !attachment) {
+      if (!wlids && !attachment) {
         const storedCount = getWlidCount();
         return respond({ embeds: [infoEmbed("Usage", `\`.check [wlids]\` + attach codes.txt\nStored WLIDs: **${storedCount}**`)] });
       }
       const fileText = await resumeRegistry.attachmentToText(attachment);
       await withResume(message.author.id, message.channelId, "check",
-        { accountsRaw, fileText, threads: 10 },
-        () => handleCheckResumable(respond, message.author.id, accountsRaw, fileText, 10, message.author));
+        { accountsRaw: "", fileText, threads: 10, wlids },
+        () => handleCheckResumable(respond, message.author.id, "", fileText, 10, message.author, wlids));
     } else if (cmd === "claim") {
       const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
@@ -1525,8 +1540,8 @@ function makeFakeAttachment(fileText) {
   return { url: dataUrl, name: "input.txt", size: Buffer.byteLength(fileText, "utf8") };
 }
 
-async function handleCheckResumable(respond, userId, accountsRaw, fileText, threads, dmUser) {
-  return handleCheck(respond, userId, accountsRaw, null, makeFakeAttachment(fileText), threads, dmUser);
+async function handleCheckResumable(respond, userId, codesRaw, fileText, threads, dmUser, wlids) {
+  return handleCheck(respond, userId, wlids || "", codesRaw, makeFakeAttachment(fileText), threads, dmUser);
 }
 async function handleClaimResumable(respond, userId, accountsRaw, fileText, threads, dmUser) {
   return handleClaim(respond, userId, accountsRaw, makeFakeAttachment(fileText), threads, dmUser);
@@ -1561,7 +1576,7 @@ async function replayRun(run) {
   // Silent resume: do NOT announce to the channel. The user only sees the normal progress embed.
 
   const handlers = {
-    check:       () => handleCheckResumable(respond, userId, args.accountsRaw || "", args.fileText || "", args.threads || 10, dmUser),
+    check:       () => handleCheckResumable(respond, userId, args.accountsRaw || "", args.fileText || "", args.threads || 10, dmUser, args.wlids || ""),
     claim:       () => handleClaimResumable(respond, userId, args.accountsRaw || "", args.fileText || "", args.threads || 5, dmUser),
     pull:        () => handlePullResumable(respond, userId, args.accountsRaw || "", args.fileText || "", dmUser, args.username || ""),
     promopuller: () => handlePromoPullerResumable(respond, userId, args.accountsRaw || "", args.fileText || "", dmUser, args.username || ""),
