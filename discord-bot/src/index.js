@@ -724,20 +724,29 @@ async function handleRewards(respond, userId, accountsRaw, accountsFile, threads
     const accounts = await gatherCombos(accountsRaw, accountsFile);
     if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided.")] });
 
+    const tracker = require("./utils/progress-tracker");
+    const existing = tracker.load(tracker.fingerprint(userId, "rewards", accounts));
+    const resumedFrom = existing && existing.results ? existing.results.length : 0;
+
     const msg = await respond({
-      embeds: [progressEmbed(0, accounts.length, "Checking Rewards Balances")],
+      embeds: [progressEmbed(resumedFrom, accounts.length, resumedFrom > 0 ? `Resuming rewards from line ${resumedFrom + 1}` : "Checking Rewards Balances")],
       components: [stopButton(userId)],
       fetchReply: true,
     });
 
     let lastUpdate = Date.now();
-    const results = await checkRewardsBalances(accounts, threads, (done, total) => {
-      const now = Date.now();
-      if (now - lastUpdate > 2000) {
-        lastUpdate = now;
-        updateProgress(msg, progressEmbed(done, total, "Checking Rewards Balances"), userId);
-      }
-    }, ac.signal);
+    const { results } = await tracker.runChunked({
+      userId, command: "rewards", combos: accounts, signal: ac.signal,
+      onProgress: (done, total) => {
+        const now = Date.now();
+        if (now - lastUpdate > 2000) {
+          lastUpdate = now;
+          updateProgress(msg, progressEmbed(done, total, "Checking Rewards Balances"), userId);
+        }
+      },
+      runChunk: (chunk, _onChunkProgress, signal) =>
+        checkRewardsBalances(chunk, threads, () => {}, signal),
+    });
 
     const stopped = ac.signal.aborted;
     const files = [];
@@ -765,6 +774,8 @@ async function handleRewards(respond, userId, accountsRaw, accountsFile, threads
     } else {
       await msg.edit({ embeds: [embed], files, components: [] });
     }
+
+    if (!stopped) tracker.clear(tracker.fingerprint(userId, "rewards", accounts));
   } catch (err) {
     await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
   } finally {
