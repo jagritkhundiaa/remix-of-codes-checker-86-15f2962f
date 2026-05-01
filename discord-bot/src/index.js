@@ -140,6 +140,16 @@ function splitInput(raw) {
 
 async function fetchAttachmentLines(attachment) {
   if (!attachment) return "";
+  // Resume path: synthetic attachments use data: URLs so we can replay
+  // crashed runs without re-uploading the user's file.
+  if (typeof attachment.url === "string" && attachment.url.startsWith("data:")) {
+    const comma = attachment.url.indexOf(",");
+    if (comma === -1) return "";
+    const meta = attachment.url.slice(5, comma); // strip "data:"
+    const payload = attachment.url.slice(comma + 1);
+    if (meta.includes(";base64")) return Buffer.from(payload, "base64").toString("utf8");
+    try { return decodeURIComponent(payload); } catch { return payload; }
+  }
   const res = await fetch(attachment.url);
   return await res.text();
 }
