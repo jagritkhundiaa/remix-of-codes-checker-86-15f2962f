@@ -216,20 +216,29 @@ async function handleCheck(respond, userId, wlidsRaw, codesRaw, codesFile, threa
     if (codes.length === 0) return respond({ embeds: [errorEmbed("No codes provided.")] });
     if (codes.length > MAX_COMBO_LINES) codes = codes.slice(0, MAX_COMBO_LINES);
 
+    const tracker = require("./utils/progress-tracker");
+    const existing = tracker.load(tracker.fingerprint(userId, "check", codes));
+    const resumedFrom = existing && existing.results ? existing.results.length : 0;
+
     const msg = await respond({
-      embeds: [progressEmbed(0, codes.length, `Checking codes (${wlids.length} WLIDs)`)],
+      embeds: [progressEmbed(resumedFrom, codes.length, resumedFrom > 0 ? `Resuming check from line ${resumedFrom + 1}` : `Checking codes (${wlids.length} WLIDs)`)],
       components: [stopButton(userId)],
       fetchReply: true,
     });
 
     let lastUpdate = Date.now();
-    const results = await checkCodes(wlids, codes, threads, (done, total) => {
-      const now = Date.now();
-      if (now - lastUpdate > 2000) {
-        lastUpdate = now;
-        updateProgress(msg, progressEmbed(done, total, "Checking codes"), userId);
-      }
-    }, ac.signal);
+    const { results } = await tracker.runChunked({
+      userId, command: "check", combos: codes, signal: ac.signal,
+      onProgress: (done, total) => {
+        const now = Date.now();
+        if (now - lastUpdate > 2000) {
+          lastUpdate = now;
+          updateProgress(msg, progressEmbed(done, total, "Checking codes"), userId);
+        }
+      },
+      runChunk: (chunk, _onChunkProgress, signal) =>
+        checkCodes(wlids, chunk, threads, () => {}, signal),
+    });
 
     const stopped = ac.signal.aborted;
     const files = [];
@@ -256,6 +265,8 @@ async function handleCheck(respond, userId, wlidsRaw, codesRaw, codesFile, threa
     } else {
       await msg.edit({ embeds: [embed], files, components: [] });
     }
+
+    if (!stopped) tracker.clear(tracker.fingerprint(userId, "check", codes));
   } catch (err) {
     await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
   } finally {
@@ -279,20 +290,29 @@ async function handleClaim(respond, userId, accountsRaw, accountsFile, threads =
     const accounts = await gatherCombos(accountsRaw, accountsFile);
     if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided (email:password format).")] });
 
+    const tracker = require("./utils/progress-tracker");
+    const existing = tracker.load(tracker.fingerprint(userId, "claim", accounts));
+    const resumedFrom = existing && existing.results ? existing.results.length : 0;
+
     const msg = await respond({
-      embeds: [progressEmbed(0, accounts.length, "Claiming WLIDs")],
+      embeds: [progressEmbed(resumedFrom, accounts.length, resumedFrom > 0 ? `Resuming claim from line ${resumedFrom + 1}` : "Claiming WLIDs")],
       components: [stopButton(userId)],
       fetchReply: true,
     });
 
     let lastUpdate = Date.now();
-    const results = await claimWlids(accounts, threads, (done, total) => {
-      const now = Date.now();
-      if (now - lastUpdate > 2000) {
-        lastUpdate = now;
-        updateProgress(msg, progressEmbed(done, total, "Claiming WLIDs"), userId);
-      }
-    }, ac.signal);
+    const { results } = await tracker.runChunked({
+      userId, command: "claim", combos: accounts, signal: ac.signal,
+      onProgress: (done, total) => {
+        const now = Date.now();
+        if (now - lastUpdate > 2000) {
+          lastUpdate = now;
+          updateProgress(msg, progressEmbed(done, total, "Claiming WLIDs"), userId);
+        }
+      },
+      runChunk: (chunk, _onChunkProgress, signal) =>
+        claimWlids(chunk, threads, () => {}, signal),
+    });
 
     const stopped = ac.signal.aborted;
     const files = [];
@@ -315,6 +335,8 @@ async function handleClaim(respond, userId, accountsRaw, accountsFile, threads =
     } else {
       await msg.edit({ embeds: [embed], files, components: [] });
     }
+
+    if (!stopped) tracker.clear(tracker.fingerprint(userId, "claim", accounts));
   } catch (err) {
     await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
   } finally {
@@ -533,27 +555,37 @@ async function handleRefund(respond, userId, accountsRaw, accountsFile, threads 
     const accounts = await gatherCombos(accountsRaw, accountsFile);
     if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided.")] });
 
+    const tracker = require("./utils/progress-tracker");
+    const existing = tracker.load(tracker.fingerprint(userId, "refund", accounts));
+    const resumedFrom = existing && existing.results ? existing.results.length : 0;
+
     const msg = await respond({
-      embeds: [refundProgressEmbed({ done: 0, total: accounts.length, hits: 0, noRefund: 0, locked: 0, failed: 0, startTime, username })],
+      embeds: [refundProgressEmbed({ done: resumedFrom, total: accounts.length, hits: 0, noRefund: 0, locked: 0, failed: 0, startTime, username })],
       components: [stopButton(userId)],
       fetchReply: true,
     });
 
     let lastUpdate = Date.now();
-    let hits = 0, noRefund = 0, locked = 0, failed = 0;
-
-    const results = await checkRefundAccounts(accounts, threads, (done, total, status) => {
-      if (status === "hit") hits++;
-      else if (status === "free") noRefund++;
-      else if (status === "locked") locked++;
-      else failed++;
-      const now = Date.now();
-      if (now - lastUpdate > 2000) {
-        lastUpdate = now;
-        const lastEmail = results.length > 0 ? results[results.length - 1]?.user : "";
-        updateProgress(msg, refundProgressEmbed({ done, total, hits, noRefund, locked, failed, lastAccount: lastEmail, startTime, username }), userId);
-      }
-    }, ac.signal);
+    const { results } = await tracker.runChunked({
+      userId, command: "refund", combos: accounts, signal: ac.signal,
+      onProgress: (done, total) => {
+        const now = Date.now();
+        if (now - lastUpdate > 2000) {
+          lastUpdate = now;
+          const cur = (state => state)(undefined); // placeholder
+          // recompute counters from already-collected results so resume shows accurate totals
+          const collected = tracker.load(tracker.fingerprint(userId, "refund", accounts))?.results || [];
+          const hits = collected.filter(r => r.status === "hit").length;
+          const noRefund = collected.filter(r => r.status === "free").length;
+          const locked = collected.filter(r => r.status === "locked").length;
+          const failed = collected.filter(r => r.status === "fail").length;
+          const lastEmail = collected.length > 0 ? collected[collected.length - 1]?.user : "";
+          updateProgress(msg, refundProgressEmbed({ done, total, hits, noRefund, locked, failed, lastAccount: lastEmail, startTime, username }), userId);
+        }
+      },
+      runChunk: (chunk, _onChunkProgress, signal) =>
+        checkRefundAccounts(chunk, threads, () => {}, signal),
+    });
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     const stopped = ac.signal.aborted;
@@ -589,6 +621,8 @@ async function handleRefund(respond, userId, accountsRaw, accountsFile, threads 
     } else {
       await msg.edit({ embeds: [embed], files, components: [] });
     }
+
+    if (!stopped) tracker.clear(tracker.fingerprint(userId, "refund", accounts));
   } catch (err) {
     await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
   } finally {
@@ -690,20 +724,29 @@ async function handleRewards(respond, userId, accountsRaw, accountsFile, threads
     const accounts = await gatherCombos(accountsRaw, accountsFile);
     if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided.")] });
 
+    const tracker = require("./utils/progress-tracker");
+    const existing = tracker.load(tracker.fingerprint(userId, "rewards", accounts));
+    const resumedFrom = existing && existing.results ? existing.results.length : 0;
+
     const msg = await respond({
-      embeds: [progressEmbed(0, accounts.length, "Checking Rewards Balances")],
+      embeds: [progressEmbed(resumedFrom, accounts.length, resumedFrom > 0 ? `Resuming rewards from line ${resumedFrom + 1}` : "Checking Rewards Balances")],
       components: [stopButton(userId)],
       fetchReply: true,
     });
 
     let lastUpdate = Date.now();
-    const results = await checkRewardsBalances(accounts, threads, (done, total) => {
-      const now = Date.now();
-      if (now - lastUpdate > 2000) {
-        lastUpdate = now;
-        updateProgress(msg, progressEmbed(done, total, "Checking Rewards Balances"), userId);
-      }
-    }, ac.signal);
+    const { results } = await tracker.runChunked({
+      userId, command: "rewards", combos: accounts, signal: ac.signal,
+      onProgress: (done, total) => {
+        const now = Date.now();
+        if (now - lastUpdate > 2000) {
+          lastUpdate = now;
+          updateProgress(msg, progressEmbed(done, total, "Checking Rewards Balances"), userId);
+        }
+      },
+      runChunk: (chunk, _onChunkProgress, signal) =>
+        checkRewardsBalances(chunk, threads, () => {}, signal),
+    });
 
     const stopped = ac.signal.aborted;
     const files = [];
@@ -731,6 +774,8 @@ async function handleRewards(respond, userId, accountsRaw, accountsFile, threads
     } else {
       await msg.edit({ embeds: [embed], files, components: [] });
     }
+
+    if (!stopped) tracker.clear(tracker.fingerprint(userId, "rewards", accounts));
   } catch (err) {
     await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
   } finally {
@@ -757,33 +802,46 @@ async function handleInboxAio(respond, userId, accountsRaw, accountsFile, thread
     const startTime = Date.now();
     const liveServiceBreakdown = {};
 
+    const tracker = require("./utils/progress-tracker");
+    const existing = tracker.load(tracker.fingerprint(userId, "inboxaio", accounts));
+    const resumedFrom = existing && existing.results ? existing.results.length : 0;
+    // pre-seed the live breakdown from already-collected hits so progress UI is accurate
+    if (existing && existing.results) {
+      for (const r of existing.results) {
+        for (const svc of Object.keys(r?.services || {})) liveServiceBreakdown[svc] = (liveServiceBreakdown[svc] || 0) + 1;
+      }
+    }
+
     const msg = await respond({
-      embeds: [inboxAioProgressEmbed({ completed: 0, total: accounts.length, hits: 0, fails: 0, elapsed: 0, serviceBreakdown: {} })],
+      embeds: [inboxAioProgressEmbed({ completed: resumedFrom, total: accounts.length, hits: 0, fails: 0, elapsed: 0, serviceBreakdown: liveServiceBreakdown })],
       components: [stopButton(userId)],
       fetchReply: true,
     });
 
     let lastUpdate = Date.now();
-    let totalHits = 0, totalFails = 0;
-    const results = await checkInboxAccounts(accounts, threads, (done, total, status, hits, fails, lastResult) => {
-      totalHits = hits || 0;
-      totalFails = fails || 0;
-      if (lastResult && lastResult.services) {
-        for (const svcName of Object.keys(lastResult.services)) {
-          liveServiceBreakdown[svcName] = (liveServiceBreakdown[svcName] || 0) + 1;
+    const { results } = await tracker.runChunked({
+      userId, command: "inboxaio", combos: accounts, signal: ac.signal,
+      onProgress: (done, total) => {
+        const collected = tracker.load(tracker.fingerprint(userId, "inboxaio", accounts))?.results || [];
+        const totalHits = collected.filter(r => r.status === "hit").length;
+        const totalFails = collected.filter(r => r.status === "fail").length;
+        const breakdown = { ...liveServiceBreakdown };
+        for (const r of collected) for (const svc of Object.keys(r?.services || {})) breakdown[svc] = (breakdown[svc] || 0) + 1;
+        const now = Date.now();
+        if (now - lastUpdate > 2500) {
+          lastUpdate = now;
+          updateProgress(msg, inboxAioProgressEmbed({
+            completed: done, total, hits: totalHits, fails: totalFails,
+            elapsed: Date.now() - startTime,
+            latestAccount: collected[collected.length - 1]?.user || "",
+            latestStatus: collected[collected.length - 1]?.status || "",
+            serviceBreakdown: breakdown,
+          }), userId);
         }
-      }
-      const now = Date.now();
-      if (now - lastUpdate > 2500) {
-        lastUpdate = now;
-        updateProgress(msg, inboxAioProgressEmbed({
-          completed: done, total, hits: totalHits, fails: totalFails,
-          elapsed: Date.now() - startTime,
-          latestAccount: lastResult?.user || "", latestStatus: status || "",
-          serviceBreakdown: { ...liveServiceBreakdown },
-        }), userId);
-      }
-    }, ac.signal);
+      },
+      runChunk: (chunk, _onChunkProgress, signal) =>
+        checkInboxAccounts(chunk, threads, () => {}, signal),
+    });
 
     const stopped = ac.signal.aborted;
     const elapsed = Date.now() - startTime;
@@ -860,6 +918,7 @@ async function handleInboxAio(respond, userId, accountsRaw, accountsFile, thread
     }
 
     statsManager.record(userId, "inboxaio", hitResults.length);
+    if (!stopped) tracker.clear(tracker.fingerprint(userId, "inboxaio", accounts));
   } catch (err) {
     await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
   } finally {
@@ -1546,6 +1605,7 @@ client.once("ready", () => {
   setInterval(cyclePresence, 15000);
 
   // ── Crash-resume: replay any runs that were active when the bot died ──
+  try { require("./utils/progress-tracker").pruneStale(); } catch {}
   setTimeout(async () => {
     try {
       const runs = resumeRegistry.listRuns();
