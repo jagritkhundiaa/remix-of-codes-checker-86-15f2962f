@@ -1,15 +1,16 @@
 // ============================================================
-//  progress-tracker — line-level crash resume.
+//  progress-tracker — line-level crash resume via chunked execution.
 //
-//  Lives at the HANDLER layer (handle*() in index.js), NOT inside
-//  individual checkers. We:
-//    1. Capture full combo list once, hash it as the run fingerprint.
-//    2. Persist done-indices + per-line results to data/progress/<runId>.json
-//    3. On resume, filter combos to skip already-done indices and re-fire
-//       the handler with the remaining list. Already-collected results are
-//       merged back at the end.
+//  Strategy (preserves 1:1 checker logic — checkers are NOT modified):
+//    1. Split combos into chunks of CHUNK_SIZE.
+//    2. Run the checker on one chunk at a time.
+//    3. After each chunk completes, persist its results + done-index range.
+//    4. On crash, the next start-up filters out already-done chunks and
+//       only re-processes from the first incomplete chunk onwards.
 //
-//  Atomic: write-tmp + rename. Debounced flush every 300ms or 25 lines.
+//  Worst-case re-work on crash: <= CHUNK_SIZE lines.
+//
+//  Storage:  data/progress/<userId>_<command>_<hash>.json  (atomic writes).
 // ============================================================
 
 const fs = require("fs");
@@ -17,9 +18,9 @@ const path = require("path");
 const crypto = require("crypto");
 
 const DATA_DIR = path.join(__dirname, "..", "..", "data", "progress");
+const CHUNK_SIZE = 50;
 
 function ensureDir() { try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch {} }
-
 function fileFor(runId) { return path.join(DATA_DIR, `${runId}.json`); }
 
 function fingerprint(userId, command, combos) {
@@ -33,10 +34,8 @@ function load(runId) {
   ensureDir();
   try {
     const raw = fs.readFileSync(fileFor(runId), "utf8");
-    const obj = JSON.parse(raw);
-    if (obj && Array.isArray(obj.combos)) return obj;
-  } catch {}
-  return null;
+    return JSON.parse(raw);
+  } catch { return null; }
 }
 
 function saveAtomic(runId, state) {
@@ -54,91 +53,53 @@ function clear(runId) {
 }
 
 /**
- * Create or load a tracker for this run.
- *  - If a prior state exists with the same fingerprint, returns it (resume).
- *  - Otherwise creates a fresh one.
+ * Run a checker on `combos` chunk-by-chunk, persisting results between chunks.
+ *
+ * @param {object} opts
+ * @param {string} opts.userId
+ * @param {string} opts.command
+ * @param {string[]} opts.combos                   - full input list
+ * @param {(chunk: string[], onChunkProgress: (doneInChunk:number, totalInChunk:number) => void, signal: AbortSignal) => Promise<any[]>} opts.runChunk
+ *        - called once per chunk; must return one result per combo in the chunk, in order
+ * @param {(done:number, total:number) => void} [opts.onProgress] - aggregate progress callback
+ * @param {AbortSignal} [opts.signal]
+ * @returns {Promise<{ results: any[], runId: string, resumed: boolean, prevDone: number }>}
  */
-function open({ userId, command, combos }) {
+async function runChunked({ userId, command, combos, runChunk, onProgress, signal }) {
   const runId = fingerprint(userId, command, combos);
   let state = load(runId);
-  if (!state) {
-    state = {
-      runId,
-      userId,
-      command,
-      total: combos.length,
-      combos,                  // full original list (so we can hash on resume)
-      done: [],                // indices completed
-      results: { hits: [], free: [], fails: [], invalid: [], custom: [] },
-      startedAt: Date.now(),
-      updatedAt: Date.now(),
-    };
+  const resumed = !!(state && Array.isArray(state.results) && state.results.length > 0 && state.total === combos.length);
+
+  if (!resumed) {
+    state = { runId, userId, command, total: combos.length, results: [], chunkSize: CHUNK_SIZE, startedAt: Date.now(), updatedAt: Date.now() };
     saveAtomic(runId, state);
   }
 
-  let pending = null;
-  let dirtyCount = 0;
+  const prevDone = state.results.length;
+  const results = state.results.slice(); // copy of already-collected
 
-  function flush() {
-    if (pending) { clearTimeout(pending); pending = null; }
+  // Process remaining combos chunk-by-chunk
+  for (let start = prevDone; start < combos.length; start += CHUNK_SIZE) {
+    if (signal?.aborted) break;
+    const end = Math.min(start + CHUNK_SIZE, combos.length);
+    const chunk = combos.slice(start, end);
+
+    const chunkResults = await runChunk(chunk, (doneInChunk) => {
+      try { onProgress?.(start + doneInChunk, combos.length); } catch {}
+    }, signal);
+
+    // Merge — even if the chunk was aborted partway, push whatever the checker produced.
+    for (const r of (chunkResults || [])) results.push(r);
+
+    state.results = results;
     state.updatedAt = Date.now();
     saveAtomic(runId, state);
-    dirtyCount = 0;
-  }
-  function scheduleFlush() {
-    dirtyCount++;
-    if (dirtyCount >= 25) return flush();
-    if (pending) return;
-    pending = setTimeout(flush, 300);
+
+    try { onProgress?.(results.length, combos.length); } catch {}
+    if (signal?.aborted) break;
   }
 
-  return {
-    runId,
-    state,
-    /** Return only the combos that haven't been processed yet. */
-    remaining() {
-      const doneSet = new Set(state.done);
-      const out = [];
-      for (let i = 0; i < combos.length; i++) {
-        if (!doneSet.has(i)) out.push({ index: i, value: combos[i] });
-      }
-      return out;
-    },
-    /** Mark a combo (by its ORIGINAL index) as done, optionally bucketing a result line. */
-    markDone(originalIndex, bucket, line) {
-      if (!state.done.includes(originalIndex)) state.done.push(originalIndex);
-      if (bucket && line != null) {
-        if (!state.results[bucket]) state.results[bucket] = [];
-        state.results[bucket].push(line);
-      }
-      scheduleFlush();
-    },
-    /** Add a result without indexing (e.g. summary text). */
-    addResult(bucket, line) {
-      if (!state.results[bucket]) state.results[bucket] = [];
-      state.results[bucket].push(line);
-      scheduleFlush();
-    },
-    flush,
-    finish() { flush(); clear(runId); },
-    isResumed() {
-      return state.done.length > 0;
-    },
-    progress() {
-      return { done: state.done.length, total: state.total };
-    },
-  };
+  return { results, runId, resumed, prevDone };
 }
 
-/** Look up a tracker on disk by user+command (used by the dispatcher to detect resumes). */
-function findExistingForUserCommand(userId, command) {
-  ensureDir();
-  try {
-    const files = fs.readdirSync(DATA_DIR).filter(f => f.startsWith(`${userId}_${command}_`) && f.endsWith(".json"));
-    if (files.length === 0) return null;
-    const raw = fs.readFileSync(path.join(DATA_DIR, files[0]), "utf8");
-    return JSON.parse(raw);
-  } catch { return null; }
-}
-
-module.exports = { open, load, clear, fingerprint, findExistingForUserCommand };
+module.exports = { runChunked, fingerprint, load, clear, CHUNK_SIZE };
