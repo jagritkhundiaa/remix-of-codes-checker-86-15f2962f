@@ -1420,16 +1420,16 @@ client.on("messageCreate", async (message) => {
 
   try {
     if (cmd === "check") {
-      const accountsRaw = args.join(" ");
+      const wlids = args.join(" ");
       const attachment = message.attachments.first();
-      if (!accountsRaw && !attachment) {
+      if (!wlids && !attachment) {
         const storedCount = getWlidCount();
         return respond({ embeds: [infoEmbed("Usage", `\`.check [wlids]\` + attach codes.txt\nStored WLIDs: **${storedCount}**`)] });
       }
       const fileText = await resumeRegistry.attachmentToText(attachment);
       await withResume(message.author.id, message.channelId, "check",
-        { accountsRaw, fileText, threads: 10 },
-        () => handleCheckResumable(respond, message.author.id, accountsRaw, fileText, 10, message.author));
+        { accountsRaw: "", fileText, threads: 10, wlids },
+        () => handleCheckResumable(respond, message.author.id, "", fileText, 10, message.author, wlids));
     } else if (cmd === "claim") {
       const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
