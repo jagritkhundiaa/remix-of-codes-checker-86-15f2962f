@@ -1208,38 +1208,49 @@ client.on("interactionCreate", async (interaction) => {
   try {
     if (commandName === "check") {
       await interaction.deferReply();
-      await handleCheck(respond, user.id,
-        interaction.options.getString("wlids"),
-        interaction.options.getString("codes"),
-        interaction.options.getAttachment("codes_file"),
-        interaction.options.getInteger("threads") || 10,
-        user);
+      const wlids = interaction.options.getString("wlids") || "";
+      const codesRaw = interaction.options.getString("codes") || "";
+      const codesAttachment = interaction.options.getAttachment("codes_file");
+      const fileText = await resumeRegistry.attachmentToText(codesAttachment);
+      const threads = interaction.options.getInteger("threads") || 10;
+      // accountsRaw slot reused for codes; wlids stored in args for replay
+      await withResume(user.id, interaction.channelId, "check",
+        { accountsRaw: codesRaw, fileText, threads, wlids },
+        () => handleCheckResumable(respond, user.id, codesRaw, fileText, threads, user, wlids));
     } else if (commandName === "claim") {
       await interaction.deferReply();
-      await handleClaim(respond, user.id,
-        interaction.options.getString("accounts"),
-        interaction.options.getAttachment("accounts_file"),
-        interaction.options.getInteger("threads") || 5,
-        user);
+      const accountsRaw = interaction.options.getString("accounts") || "";
+      const attachment = interaction.options.getAttachment("accounts_file");
+      const fileText = await resumeRegistry.attachmentToText(attachment);
+      const threads = interaction.options.getInteger("threads") || 5;
+      await withResume(user.id, interaction.channelId, "claim",
+        { accountsRaw, fileText, threads },
+        () => handleClaimResumable(respond, user.id, accountsRaw, fileText, threads, user));
     } else if (commandName === "pull") {
       await interaction.deferReply();
-      await handlePull(respond, user.id,
-        interaction.options.getString("accounts"),
-        interaction.options.getAttachment("accounts_file"),
-        user, user.username);
+      const accountsRaw = interaction.options.getString("accounts") || "";
+      const attachment = interaction.options.getAttachment("accounts_file");
+      const fileText = await resumeRegistry.attachmentToText(attachment);
+      await withResume(user.id, interaction.channelId, "pull",
+        { accountsRaw, fileText, username: user.username },
+        () => handlePullResumable(respond, user.id, accountsRaw, fileText, user, user.username));
     } else if (commandName === "promopuller") {
       await interaction.deferReply();
-      await handlePromoPuller(respond, user.id,
-        interaction.options.getString("accounts"),
-        interaction.options.getAttachment("accounts_file"),
-        user, user.username);
+      const accountsRaw = interaction.options.getString("accounts") || "";
+      const attachment = interaction.options.getAttachment("accounts_file");
+      const fileText = await resumeRegistry.attachmentToText(attachment);
+      await withResume(user.id, interaction.channelId, "promopuller",
+        { accountsRaw, fileText, username: user.username },
+        () => handlePromoPullerResumable(respond, user.id, accountsRaw, fileText, user, user.username));
     } else if (commandName === "inboxaio") {
       await interaction.deferReply();
-      await handleInboxAio(respond, user.id,
-        interaction.options.getString("accounts"),
-        interaction.options.getAttachment("accounts_file"),
-        interaction.options.getInteger("threads") || 3,
-        user);
+      const accountsRaw = interaction.options.getString("accounts") || "";
+      const attachment = interaction.options.getAttachment("accounts_file");
+      const fileText = await resumeRegistry.attachmentToText(attachment);
+      const threads = interaction.options.getInteger("threads") || 3;
+      await withResume(user.id, interaction.channelId, "inboxaio",
+        { accountsRaw, fileText, threads },
+        () => handleInboxAioResumable(respond, user.id, accountsRaw, fileText, threads, user));
     } else if (commandName === "wlidset") {
       await handleWlidSet(respond, user.id,
         interaction.options.getString("wlids"),
