@@ -1209,7 +1209,7 @@ client.on("messageCreate", async (message) => {
   }
 
   // .gen / .stock / etc. handled by gen-v2 (registered separately) — skip here so we don't double-handle / trigger unauth warning
-  const GEN_V2_CMDS = new Set(["gen", "genhelp", "help", "stock", "bl", "ubl", "rlimit", "status", "mod"]);
+  const GEN_V2_CMDS = new Set(["gen", "genhelp", "stock", "bl", "ubl", "rlimit", "status", "mod"]);
   if (GEN_V2_CMDS.has(cmd)) return;
 
   // ── Channel enforcement for normal commands ──
