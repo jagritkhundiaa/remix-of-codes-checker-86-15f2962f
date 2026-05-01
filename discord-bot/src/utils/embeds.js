@@ -55,8 +55,8 @@ function _footer(username) {
  *  thumbnail — show right-side thumb (default true)
  */
 function pullerStyle({ title, sections = [], username, color = COLORS.PRIMARY, thumbnail = true }) {
-  const eq = "=".repeat(40);
-  const dash = "-".repeat(40);
+  const eq = "=".repeat(28);
+  const dash = "-".repeat(28);
 
   const body = [];
   body.push(title);
@@ -64,7 +64,6 @@ function pullerStyle({ title, sections = [], username, color = COLORS.PRIMARY, t
   for (const sec of sections) {
     body.push("");
     body.push(`  ${sec.heading}`);
-    body.push("");
     body.push(`  ${dash}`);
     for (const ln of sec.lines) {
       body.push(`  ${ln}`);
