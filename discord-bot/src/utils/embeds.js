@@ -13,12 +13,17 @@ const { COLORS, THUMBNAIL_URL, BANNER_URL } = require("../config");
 
 // ── Puller-specific animated emojis (only approved custom IDs) ──
 const PULLER_EMOJI = {
-  loading: "<a:Loading:1473740101367500918>",
-  working: "<a:Working:1473738927251914919>",
-  failed:  "<a:Failed:1473739301291561021>",
-  codes:   "<a:Codes:1473739526861226248>",
-  money:   "<a:Money2:1473744817270952161>",
-  claimed: "<:Claimed:1473747602708107525>",
+  loading:   "<a:Loading:1473740101367500918>",
+  working:   "<a:Working:1473738927251914919>",
+  failed:    "<a:Failed:1473739301291561021>",
+  codes:     "<a:Codes:1473739526861226248>",
+  money:     "<a:Money2:1473744817270952161>",
+  claimed:   "<:Claimed:1473747602708107525>",
+  upload:    "<a:upload:1477644848638197784>",
+  xbox:      "<:xbox:1475397643671830550>",
+  minecraft: "<:Minecraft:1475397784801640500>",
+  redExcl:   "<a:red_excl:1477645134932738212>",
+  error:     "<:Error:1467644306272686238>",
 };
 
 // Plain unicode symbols (no custom Discord emojis)
