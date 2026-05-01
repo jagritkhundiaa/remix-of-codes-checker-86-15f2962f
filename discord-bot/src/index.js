@@ -56,6 +56,19 @@ const {
 } = require("./utils/embeds");
 const { checkRewardsBalances } = require("./utils/microsoft-rewards");
 const { runAioCheck, getStats: getAioStats } = require("./utils/meowmal-aio");
+const resumeRegistry = require("./utils/resume-registry");
+
+// ── Resume wrapper ───────────────────────────────────────────
+// Records the run before the handler starts; clears it on success/error.
+// On crash, the entry survives in data/active-runs.json and is replayed at boot.
+async function withResume(userId, channelId, command, args, fn) {
+  resumeRegistry.startRun({ userId, channelId, command, args });
+  try {
+    return await fn();
+  } finally {
+    resumeRegistry.finishRun(userId, command);
+  }
+}
 
 const client = new Client({
   intents: [
@@ -127,6 +140,16 @@ function splitInput(raw) {
 
 async function fetchAttachmentLines(attachment) {
   if (!attachment) return "";
+  // Resume path: synthetic attachments use data: URLs so we can replay
+  // crashed runs without re-uploading the user's file.
+  if (typeof attachment.url === "string" && attachment.url.startsWith("data:")) {
+    const comma = attachment.url.indexOf(",");
+    if (comma === -1) return "";
+    const meta = attachment.url.slice(5, comma); // strip "data:"
+    const payload = attachment.url.slice(comma + 1);
+    if (meta.includes(";base64")) return Buffer.from(payload, "base64").toString("utf8");
+    try { return decodeURIComponent(payload); } catch { return payload; }
+  }
   const res = await fetch(attachment.url);
   return await res.text();
 }
@@ -1321,27 +1344,42 @@ client.on("messageCreate", async (message) => {
         const storedCount = getWlidCount();
         return respond({ embeds: [infoEmbed("Usage", `\`.check [wlids]\` + attach codes.txt\nStored WLIDs: **${storedCount}**`)] });
       }
-      await handleCheck(respond, message.author.id, accountsRaw, null, attachment, 10, message.author);
+      const fileText = await resumeRegistry.attachmentToText(attachment);
+      await withResume(message.author.id, message.channelId, "check",
+        { accountsRaw, fileText, threads: 10 },
+        () => handleCheckResumable(respond, message.author.id, accountsRaw, fileText, 10, message.author));
     } else if (cmd === "claim") {
       const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.claim <accounts>` or attach a `.txt` file.")] });
-      await handleClaim(respond, message.author.id, accountsRaw, attachment, 5, message.author);
+      const fileText = await resumeRegistry.attachmentToText(attachment);
+      await withResume(message.author.id, message.channelId, "claim",
+        { accountsRaw, fileText, threads: 5 },
+        () => handleClaimResumable(respond, message.author.id, accountsRaw, fileText, 5, message.author));
     } else if (cmd === "pull") {
       const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.pull <accounts>` or attach a `.txt` file.")] });
-      await handlePull(respond, message.author.id, accountsRaw, attachment, message.author, message.author.username);
+      const fileText = await resumeRegistry.attachmentToText(attachment);
+      await withResume(message.author.id, message.channelId, "pull",
+        { accountsRaw, fileText, username: message.author.username },
+        () => handlePullResumable(respond, message.author.id, accountsRaw, fileText, message.author, message.author.username));
     } else if (cmd === "promopuller") {
       const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.promopuller <accounts>` or attach a `.txt` file.")] });
-      await handlePromoPuller(respond, message.author.id, accountsRaw, attachment, message.author, message.author.username);
+      const fileText = await resumeRegistry.attachmentToText(attachment);
+      await withResume(message.author.id, message.channelId, "promopuller",
+        { accountsRaw, fileText, username: message.author.username },
+        () => handlePromoPullerResumable(respond, message.author.id, accountsRaw, fileText, message.author, message.author.username));
     } else if (cmd === "inboxaio") {
       const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", `\`.inboxaio <accounts>\` or attach .txt — scans ${getServiceCount()}+ services.`)] });
-      await handleInboxAio(respond, message.author.id, accountsRaw, attachment, 3, message.author);
+      const fileText = await resumeRegistry.attachmentToText(attachment);
+      await withResume(message.author.id, message.channelId, "inboxaio",
+        { accountsRaw, fileText, threads: 3 },
+        () => handleInboxAioResumable(respond, message.author.id, accountsRaw, fileText, 3, message.author));
     } else if (cmd === "wlidset") {
       const wlidsRaw = args.join(" ");
       const attachment = message.attachments.first();
@@ -1370,19 +1408,28 @@ client.on("messageCreate", async (message) => {
       const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.aio <accounts>` or attach .txt — AIO Checker.")] });
-      await handleAio(respond, message.author.id, accountsRaw, attachment, 30, message.author);
+      const fileText = await resumeRegistry.attachmentToText(attachment);
+      await withResume(message.author.id, message.channelId, "aio",
+        { accountsRaw, fileText, threads: 30 },
+        () => handleAioResumable(respond, message.author.id, accountsRaw, fileText, 30, message.author));
     } else if (cmd === "help") {
       return respond({ embeds: [helpOverviewEmbed(config.PREFIX)], components: [helpSelectMenu()] });
     } else if (cmd === "refund") {
       const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.refund <accounts>` or attach .txt")] });
-      await handleRefund(respond, message.author.id, accountsRaw, attachment, 5, message.author, message.author.username);
+      const fileText = await resumeRegistry.attachmentToText(attachment);
+      await withResume(message.author.id, message.channelId, "refund",
+        { accountsRaw, fileText, threads: 5, username: message.author.username },
+        () => handleRefundResumable(respond, message.author.id, accountsRaw, fileText, 5, message.author, message.author.username));
     } else if (cmd === "rewards") {
       const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.rewards <accounts>` or attach .txt")] });
-      await handleRewards(respond, message.author.id, accountsRaw, attachment, 3, message.author);
+      const fileText = await resumeRegistry.attachmentToText(attachment);
+      await withResume(message.author.id, message.channelId, "rewards",
+        { accountsRaw, fileText, threads: 3 },
+        () => handleRewardsResumable(respond, message.author.id, accountsRaw, fileText, 3, message.author));
     } else if (cmd === "admin") {
       await handleAdminPanel(respond, message.author.id);
     } else if (cmd === "setwebhook") {
@@ -1397,6 +1444,71 @@ client.on("messageCreate", async (message) => {
     try { await respond({ embeds: [errorEmbed(err.message)] }); } catch {}
   }
 });
+
+// ── Resumable handler shims ──────────────────────────────────
+// Each shim accepts pre-materialized fileText (string) instead of a live
+// Discord Attachment object, then forges a minimal attachment-like object
+// that handle*() functions already understand (they call .url + fetch).
+// This way the original handlers — and the checkers they call — are NOT
+// modified, preserving 1:1 logic parity.
+
+function makeFakeAttachment(fileText) {
+  if (!fileText) return null;
+  const dataUrl = "data:text/plain;base64," + Buffer.from(fileText, "utf8").toString("base64");
+  return { url: dataUrl, name: "input.txt", size: Buffer.byteLength(fileText, "utf8") };
+}
+
+async function handleCheckResumable(respond, userId, accountsRaw, fileText, threads, dmUser) {
+  return handleCheck(respond, userId, accountsRaw, null, makeFakeAttachment(fileText), threads, dmUser);
+}
+async function handleClaimResumable(respond, userId, accountsRaw, fileText, threads, dmUser) {
+  return handleClaim(respond, userId, accountsRaw, makeFakeAttachment(fileText), threads, dmUser);
+}
+async function handlePullResumable(respond, userId, accountsRaw, fileText, dmUser, username) {
+  return handlePull(respond, userId, accountsRaw, makeFakeAttachment(fileText), dmUser, username);
+}
+async function handlePromoPullerResumable(respond, userId, accountsRaw, fileText, dmUser, username) {
+  return handlePromoPuller(respond, userId, accountsRaw, makeFakeAttachment(fileText), dmUser, username);
+}
+async function handleInboxAioResumable(respond, userId, accountsRaw, fileText, threads, dmUser) {
+  return handleInboxAio(respond, userId, accountsRaw, makeFakeAttachment(fileText), threads, dmUser);
+}
+async function handleAioResumable(respond, userId, accountsRaw, fileText, threads, dmUser) {
+  return handleAio(respond, userId, accountsRaw, makeFakeAttachment(fileText), threads, dmUser);
+}
+async function handleRefundResumable(respond, userId, accountsRaw, fileText, threads, dmUser, username) {
+  return handleRefund(respond, userId, accountsRaw, makeFakeAttachment(fileText), threads, dmUser, username);
+}
+async function handleRewardsResumable(respond, userId, accountsRaw, fileText, threads, dmUser) {
+  return handleRewards(respond, userId, accountsRaw, makeFakeAttachment(fileText), threads, dmUser);
+}
+
+// Dispatcher used at startup to replay an active run by command name.
+async function replayRun(run) {
+  const { userId, channelId, command, args } = run;
+  const channel = await client.channels.fetch(channelId).catch(() => null);
+  if (!channel) { console.warn(`[resume] channel ${channelId} unreachable, dropping ${command} for ${userId}`); return; }
+  const dmUser = await client.users.fetch(userId).catch(() => null);
+  const respond = (opts) => channel.send(opts).catch(() => null);
+
+  try { await channel.send({ embeds: [infoEmbed("Resuming", `Re-running \`.${command}\` for <@${userId}> after restart. Already-checked entries will be re-processed from the top.`)] }); } catch {}
+
+  const handlers = {
+    check:       () => handleCheckResumable(respond, userId, args.accountsRaw || "", args.fileText || "", args.threads || 10, dmUser),
+    claim:       () => handleClaimResumable(respond, userId, args.accountsRaw || "", args.fileText || "", args.threads || 5, dmUser),
+    pull:        () => handlePullResumable(respond, userId, args.accountsRaw || "", args.fileText || "", dmUser, args.username || ""),
+    promopuller: () => handlePromoPullerResumable(respond, userId, args.accountsRaw || "", args.fileText || "", dmUser, args.username || ""),
+    inboxaio:    () => handleInboxAioResumable(respond, userId, args.accountsRaw || "", args.fileText || "", args.threads || 3, dmUser),
+    aio:         () => handleAioResumable(respond, userId, args.accountsRaw || "", args.fileText || "", args.threads || 30, dmUser),
+    refund:      () => handleRefundResumable(respond, userId, args.accountsRaw || "", args.fileText || "", args.threads || 5, dmUser, args.username || ""),
+    rewards:     () => handleRewardsResumable(respond, userId, args.accountsRaw || "", args.fileText || "", args.threads || 3, dmUser),
+  };
+
+  const fn = handlers[command];
+  if (!fn) { console.warn(`[resume] unknown command ${command}`); resumeRegistry.finishRun(userId, command); return; }
+
+  await withResume(userId, channelId, command, args, fn);
+}
 
 // ── Ready ────────────────────────────────────────────────────
 
@@ -1432,6 +1544,26 @@ client.once("ready", () => {
   }
   cyclePresence();
   setInterval(cyclePresence, 15000);
+
+  // ── Crash-resume: replay any runs that were active when the bot died ──
+  setTimeout(async () => {
+    try {
+      const runs = resumeRegistry.listRuns();
+      if (runs.length === 0) {
+        console.log("[resume] no active runs to replay");
+        return;
+      }
+      console.log(`[resume] replaying ${runs.length} active run(s) after restart`);
+      for (const run of runs) {
+        replayRun(run).catch((err) => {
+          console.error(`[resume] replay failed for ${run.command}/${run.userId}:`, err?.message || err);
+          resumeRegistry.finishRun(run.userId, run.command);
+        });
+      }
+    } catch (err) {
+      console.error("[resume] startup replay error:", err?.message || err);
+    }
+  }, 2000);
 });
 
 client.login(config.BOT_TOKEN);
