@@ -1605,6 +1605,7 @@ client.once("ready", () => {
   setInterval(cyclePresence, 15000);
 
   // ── Crash-resume: replay any runs that were active when the bot died ──
+  try { require("./utils/progress-tracker").pruneStale(); } catch {}
   setTimeout(async () => {
     try {
       const runs = resumeRegistry.listRuns();
