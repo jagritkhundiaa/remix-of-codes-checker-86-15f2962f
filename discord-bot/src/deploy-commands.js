@@ -5,6 +5,7 @@
 
 const { REST, Routes, SlashCommandBuilder } = require("discord.js");
 const { BOT_TOKEN, CLIENT_ID } = require("./config");
+const genV2 = require("./utils/gen-v2");
 
 const commands = [
   new SlashCommandBuilder()
@@ -102,6 +103,9 @@ const commands = [
     .addAttachmentOption((o) => o.setName("accounts_file").setDescription("Text file with email:password per line").setRequired(false))
     .addStringOption((o) => o.setName("accounts").setDescription("Accounts (comma-separated)").setRequired(false))
     .addIntegerOption((o) => o.setName("threads").setDescription("Threads (1-30, default 30)").setMinValue(1).setMaxValue(30)),
+
+  // Gen System v2 slash commands
+  ...genV2.buildSlashCommands(),
 ].map((c) => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(BOT_TOKEN);
