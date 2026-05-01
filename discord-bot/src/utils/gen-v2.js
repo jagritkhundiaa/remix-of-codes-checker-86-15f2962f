@@ -518,7 +518,7 @@ function register(client, config) {
           });
         }
 
-        if (name === "admin") {
+        if (name === "genadmin") {
           const member = await interaction.guild.members.fetch(interaction.user.id);
           if (!hasAdmin(member)) return interaction.reply({ content: "❌ Admins only.", ephemeral: true });
           return interaction.reply({ embeds: [adminHomeEmbed()], components: adminHomeComponents(), ephemeral: true });
@@ -1016,7 +1016,7 @@ function buildSlashCommands() {
   return [
     new SlashCommandBuilder().setName("gen").setDescription("DM you one code from an item.")
       .addStringOption(o => o.setName("item").setDescription("Item name").setRequired(true)),
-    new SlashCommandBuilder().setName("admin").setDescription("Open the gen admin menu (admins only)."),
+    new SlashCommandBuilder().setName("genadmin").setDescription("Open the gen admin menu (admins only)."),
     new SlashCommandBuilder().setName("me").setDescription("Check your tier and access status."),
     new SlashCommandBuilder().setName("genhelp").setDescription("How generation works."),
     new SlashCommandBuilder().setName("exportlogs").setDescription("Export gen audit logs (admins).")
