@@ -13,12 +13,17 @@ const { COLORS, THUMBNAIL_URL, BANNER_URL } = require("../config");
 
 // ── Puller-specific animated emojis (only approved custom IDs) ──
 const PULLER_EMOJI = {
-  loading: "<a:Loading:1473740101367500918>",
-  working: "<a:Working:1473738927251914919>",
-  failed:  "<a:Failed:1473739301291561021>",
-  codes:   "<a:Codes:1473739526861226248>",
-  money:   "<a:Money2:1473744817270952161>",
-  claimed: "<:Claimed:1473747602708107525>",
+  loading:   "<a:Loading:1473740101367500918>",
+  working:   "<a:Working:1473738927251914919>",
+  failed:    "<a:Failed:1473739301291561021>",
+  codes:     "<a:Codes:1473739526861226248>",
+  money:     "<a:Money2:1473744817270952161>",
+  claimed:   "<:Claimed:1473747602708107525>",
+  upload:    "<a:upload:1477644848638197784>",
+  xbox:      "<:xbox:1475397643671830550>",
+  minecraft: "<:Minecraft:1475397784801640500>",
+  redExcl:   "<a:red_excl:1477645134932738212>",
+  error:     "<:Error:1467644306272686238>",
 };
 
 // Plain unicode symbols (no custom Discord emojis)
@@ -468,12 +473,16 @@ function rewardsResultsEmbed(results, username) {
 // ============================================================
 
 function errorEmbed(message, username) {
-  return pullerStyle({
-    title: "Error",
+  const E = PULLER_EMOJI;
+  return pullerLive({
+    title: `${E.error} Error`,
     username,
     color: COLORS.ERROR,
     thumbnail: false,
-    sections: [{ heading: "Details", lines: String(message).split("\n") }],
+    sections: [{
+      heading: `${E.redExcl} Details`,
+      lines: String(message).split("\n"),
+    }],
   });
 }
 
@@ -927,9 +936,10 @@ function refundResultsEmbed(results, { elapsed, dmSent, username } = {}) {
 // ============================================================
 
 function aioProgressEmbed(done, total, live = {}, username) {
+  const E = PULLER_EMOJI;
   const pct = total === 0 ? 0 : Math.round((done / total) * 100);
-  return pullerStyle({
-    title: "AIO Checker",
+  return pullerLive({
+    title: `${E.loading} AIO Checker`,
     username,
     color: COLORS.PRIMARY,
     thumbnail: false,
@@ -937,13 +947,16 @@ function aioProgressEmbed(done, total, live = {}, username) {
       {
         heading: "Progress",
         lines: [
+          "```",
           `[${_bar(pct)}] ${pct}%`,
           `Checked : ${done} / ${total}`,
+          "```",
         ],
       },
       {
-        heading: "Live Stats",
+        heading: `${E.working} Live Stats`,
         lines: [
+          "```",
           `Hits        : ${live.hits || 0}`,
           `  XGP       : ${live.xgp || 0}`,
           `  XGPU      : ${live.xgpu || 0}`,
@@ -951,29 +964,36 @@ function aioProgressEmbed(done, total, live = {}, username) {
           `2FA         : ${live.twofa || 0}`,
           `Valid Mail  : ${live.valid_mail || 0}`,
           `Bad         : ${live.bad || 0}`,
+          "```",
         ],
       },
       {
-        heading: "Microsoft",
+        heading: `${E.xbox} Microsoft`,
         lines: [
+          "```",
           `Balance : ${live.ms_balance || 0}`,
           `Points  : ${live.ms_points || 0}`,
+          "```",
         ],
       },
       {
         heading: "Security",
         lines: [
+          "```",
           `MFA      : ${live.mfa || 0}`,
           `SFA      : ${live.sfa || 0}`,
           `Banned   : ${live.banned || 0}`,
           `Unbanned : ${live.unbanned || 0}`,
+          "```",
         ],
       },
       {
         heading: "Performance",
         lines: [
+          "```",
           `CPM    : ${live.cpm || 0}`,
           `Errors : ${live.errors || 0}`,
+          "```",
         ],
       },
     ],
@@ -981,8 +1001,10 @@ function aioProgressEmbed(done, total, live = {}, username) {
 }
 
 function aioResultsEmbed(s, { dmSent, username } = {}) {
+  const E = PULLER_EMOJI;
   const sections = [
-    { heading: "Account Analysis", lines: [
+    { heading: `${E.working} Account Analysis`, lines: [
+      "```",
       `Total Checked : ${s.checked || 0}`,
       `Hits          : ${s.hits || 0}`,
       `  XGP         : ${s.xgp || 0}`,
@@ -991,24 +1013,31 @@ function aioResultsEmbed(s, { dmSent, username } = {}) {
       `2FA           : ${s.twofa || 0}`,
       `Valid Mail    : ${s.valid_mail || 0}`,
       `Bad           : ${s.bad || 0}`,
+      "```",
     ]},
-    { heading: "Microsoft", lines: [
+    { heading: `${E.xbox} Microsoft`, lines: [
+      "```",
       `Balance : ${s.ms_balance || 0}`,
       `Points  : ${s.ms_points || 0}`,
+      "```",
     ]},
     { heading: "Security", lines: [
+      "```",
       `MFA      : ${s.mfa || 0}`,
       `SFA      : ${s.sfa || 0}`,
       `Banned   : ${s.banned || 0}`,
       `Unbanned : ${s.unbanned || 0}`,
+      "```",
     ]},
     { heading: "Performance", lines: [
+      "```",
       `CPM   : ${s.cpm || 0}`,
       `Time  : ${s.elapsed || "?"}`,
+      "```",
     ]},
   ];
-  if (dmSent) sections.push({ heading: "Output", lines: ["Results sent to your DMs."] });
-  return pullerStyle({
+  if (dmSent) sections.push({ heading: `${E.upload} Output`, lines: ["Results sent to your DMs."] });
+  return pullerLive({
     title: "AIO Checker",
     username,
     color: s.hits > 0 ? COLORS.SUCCESS : COLORS.ERROR,
