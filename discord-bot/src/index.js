@@ -1576,7 +1576,7 @@ async function replayRun(run) {
   // Silent resume: do NOT announce to the channel. The user only sees the normal progress embed.
 
   const handlers = {
-    check:       () => handleCheckResumable(respond, userId, args.accountsRaw || "", args.fileText || "", args.threads || 10, dmUser),
+    check:       () => handleCheckResumable(respond, userId, args.accountsRaw || "", args.fileText || "", args.threads || 10, dmUser, args.wlids || ""),
     claim:       () => handleClaimResumable(respond, userId, args.accountsRaw || "", args.fileText || "", args.threads || 5, dmUser),
     pull:        () => handlePullResumable(respond, userId, args.accountsRaw || "", args.fileText || "", dmUser, args.username || ""),
     promopuller: () => handlePromoPullerResumable(respond, userId, args.accountsRaw || "", args.fileText || "", dmUser, args.username || ""),
