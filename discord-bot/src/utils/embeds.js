@@ -1,14 +1,17 @@
 // ============================================================
-//  Embed builders — monochrome, premium, no emojis
-//  Uses code blocks for cross-platform consistency (PC + mobile)
+//  Embed builders — Puller-style, monochrome, classy
+//  Every embed renders as the AutizMens "Puller" UI:
+//    - AutizMens author header (outside the box)
+//    - Code-block body with Title === sections === Commands/Output
+//    - Footer: "AutizMens | <username> | Today at HH:MM"
+//  Only approved custom emojis allowed (PULLER_EMOJI). Unicode
+//  symbols (•, └, ✅, ❌, ⚠️, ⏱️) are used as plain markers.
 // ============================================================
 
 const { EmbedBuilder, AttachmentBuilder, StringSelectMenuBuilder, ActionRowBuilder } = require("discord.js");
 const { COLORS, THUMBNAIL_URL, BANNER_URL } = require("../config");
 
-const FOOTER_TEXT = "AutizMens | TalkNeon";
-
-// ── Puller-specific animated emojis (exact IDs from spec) ────
+// ── Puller-specific animated emojis (only approved custom IDs) ──
 const PULLER_EMOJI = {
   loading: "<a:Loading:1473740101367500918>",
   working: "<a:Working:1473738927251914919>",
@@ -18,500 +21,525 @@ const PULLER_EMOJI = {
   claimed: "<:Claimed:1473747602708107525>",
 };
 
-// ── Reusable unicode glyphs for the rest of the bot ──────────
-// (no random clutter — only meaningful, classy markers)
+// Plain unicode symbols (no custom Discord emojis)
 const UI = {
-  // status
-  ok:    "✅",
-  fail:  "❌",
-  warn:  "⚠️",
-  info:  "🔹",
-  // counters
-  bullet:"•",
-  sub:   "└",
-  // categories
-  user:  "👤",
-  lock:  "🔒",
-  key:   "🔑",
-  star:  "⭐",
-  card:  "💳",
-  coin:  "🪙",
-  gift:  "🎁",
-  link:  "🔗",
-  mail:  "📬",
-  shield:"🛡️",
-  shop:  "🛒",
-  refund:"💸",
-  // meta
-  time:  "⏱️",
-  bolt:  "⚡",
-  flag:  "🏁",
-  search:"🔍",
-  spark: "✨",
+  ok: "✅", fail: "❌", warn: "⚠️", info: "•",
+  bullet: "•", sub: "└",
 };
 
-function _fmtFooter(prefix, username) {
+// Author / thumbnail rendered outside the code block, like the screenshot
+const AUTHOR_NAME = "AutizMens";
+
+function _todayTime() {
   const d = new Date();
-  const date = d.toLocaleDateString("en-GB");
-  const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-  return `${prefix} ${username || "user"}. | ${date}, ${time}`;
+  const h = String(d.getHours()).padStart(2, "0");
+  const m = String(d.getMinutes()).padStart(2, "0");
+  return `Today at ${h}:${m}`;
 }
 
-function _fmtPullerFooter(username) {
-  return _fmtFooter("Pulled by", username);
+function _footer(username) {
+  return `${AUTHOR_NAME} | ${username || "TalkNeon"} | ${_todayTime()}`;
 }
 
-function header(options = {}) {
+/**
+ * Core puller-style embed.
+ *  title     — header line (e.g. "Puller", "Checker", "Admin")
+ *  sections  — [{ heading, lines: [] }, ...]
+ *  username  — footer username
+ *  color     — embed color
+ *  thumbnail — show right-side thumb (default true)
+ */
+function pullerStyle({ title, sections = [], username, color = COLORS.PRIMARY, thumbnail = true }) {
+  const eq = "=".repeat(40);
+  const dash = "-".repeat(40);
+
+  const body = [];
+  body.push(title);
+  body.push(eq);
+  for (const sec of sections) {
+    body.push("");
+    body.push(`  ${sec.heading}`);
+    body.push("");
+    body.push(`  ${dash}`);
+    for (const ln of sec.lines) {
+      body.push(`  ${ln}`);
+    }
+  }
+
   const embed = new EmbedBuilder()
-    .setAuthor({ name: "AutizMens" })
-    .setFooter({ text: FOOTER_TEXT })
-    .setTimestamp();
+    .setAuthor({ name: AUTHOR_NAME })
+    .setColor(color)
+    .setDescription("```\n" + body.join("\n") + "\n```")
+    .setFooter({ text: _footer(username) });
 
-  if (options.thumbnail !== false && THUMBNAIL_URL) {
-    embed.setThumbnail(THUMBNAIL_URL);
-  }
-  if (options.banner && BANNER_URL) {
-    embed.setImage(BANNER_URL);
-  }
-
+  if (thumbnail && THUMBNAIL_URL) embed.setThumbnail(THUMBNAIL_URL);
   return embed;
 }
 
 /**
- * Pad a label to a fixed width for monospace alignment inside code blocks.
+ * Animated/live puller embed: same shape but uses real markdown so
+ * custom puller emojis render. Keeps the title === eq and -- dash
+ * dividers as in the screenshot.
  */
-function pad(label, width = 16) {
-  return label.padEnd(width);
+function pullerLive({ title, sections = [], username, color = COLORS.INFO, thumbnail = false }) {
+  const eq = "═".repeat(28);
+  const dash = "─".repeat(28);
+
+  const body = [`**${title}**`, eq];
+  for (const sec of sections) {
+    body.push("");
+    body.push(`**${sec.heading}**`);
+    body.push(dash);
+    for (const ln of sec.lines) body.push(ln);
+  }
+
+  const embed = new EmbedBuilder()
+    .setAuthor({ name: AUTHOR_NAME })
+    .setColor(color)
+    .setDescription(body.join("\n"))
+    .setFooter({ text: _footer(username) });
+
+  if (thumbnail && THUMBNAIL_URL) embed.setThumbnail(THUMBNAIL_URL);
+  return embed;
 }
 
-// ── Progress ─────────────────────────────────────────────────
+function _bar(pct, len = 18) {
+  const filled = Math.round((pct / 100) * len);
+  return "█".repeat(filled) + "░".repeat(len - filled);
+}
 
-function progressEmbed(completed, total, label = "Processing") {
+// ============================================================
+//  Generic progress / result embeds
+// ============================================================
+
+function progressEmbed(completed, total, label = "Processing", username) {
   const pct = total === 0 ? 0 : Math.round((completed / total) * 100);
-  const barLen = 18;
-  const filled = Math.round((pct / 100) * barLen);
-  const bar = "█".repeat(filled) + "░".repeat(barLen - filled);
-
-  return header({ thumbnail: false })
-    .setColor(COLORS.INFO)
-    .setDescription([
-      `**${label}...**`,
-      `\`${bar}\` **${pct}%**`,
-      `${UI.bullet} ${completed.toLocaleString()} / ${total.toLocaleString()}`,
-    ].join("\n"));
+  return pullerStyle({
+    title: label,
+    username,
+    color: COLORS.INFO,
+    thumbnail: false,
+    sections: [{
+      heading: "Progress",
+      lines: [
+        `[${_bar(pct)}] ${pct}%`,
+        `${completed.toLocaleString()} / ${total.toLocaleString()}`,
+      ],
+    }],
+  });
 }
 
-// ── Check Results ────────────────────────────────────────────
-
-function checkResultsEmbed(results) {
+function checkResultsEmbed(results, username) {
   const valid = results.filter((r) => r.status === "valid").length;
   const used = results.filter((r) => r.status === "used").length;
   const expired = results.filter((r) => r.status === "expired").length;
   const invalid = results.filter((r) => r.status === "invalid" || r.status === "error").length;
 
-  return header()
-    .setColor(COLORS.PRIMARY)
-    .setDescription([
-      `**Check Results**`,
-      `${UI.bullet} ${UI.ok} **Valid:** ${valid}`,
-      `${UI.bullet} ${UI.coin} **Claimed:** ${used}`,
-      `${UI.bullet} ${UI.warn} **Expired:** ${expired}`,
-      `${UI.bullet} ${UI.fail} **Invalid:** ${invalid}`,
-      ``,
-      `${UI.flag} **Total:** ${results.length}`,
-    ].join("\n"));
+  return pullerStyle({
+    title: "Checker",
+    username,
+    sections: [{
+      heading: "Results",
+      lines: [
+        `Valid    : ${valid}`,
+        `Claimed  : ${used}`,
+        `Expired  : ${expired}`,
+        `Invalid  : ${invalid}`,
+        ``,
+        `Total    : ${results.length}`,
+      ],
+    }],
+  });
 }
 
-// ── Claim Results ────────────────────────────────────────────
-
-function claimResultsEmbed(results) {
+function claimResultsEmbed(results, username) {
   const success = results.filter((r) => r.success).length;
   const failed = results.filter((r) => !r.success).length;
-
-  return header()
-    .setColor(COLORS.PRIMARY)
-    .setDescription([
-      `**Claim Results**`,
-      `${UI.bullet} ${UI.ok} **Success:** ${success}`,
-      `${UI.bullet} ${UI.fail} **Failed:** ${failed}`,
-      ``,
-      `${UI.flag} **Total:** ${results.length}`,
-    ].join("\n"));
+  return pullerStyle({
+    title: "Claimer",
+    username,
+    sections: [{
+      heading: "Results",
+      lines: [
+        `Success  : ${success}`,
+        `Failed   : ${failed}`,
+        ``,
+        `Total    : ${results.length}`,
+      ],
+    }],
+  });
 }
 
-// ── Pull Progress (Fetch Phase) — matches screenshot 1:1 ─────
+// ============================================================
+//  Puller-specific embeds (use animated emojis — markdown form)
+// ============================================================
 
 function pullFetchProgressEmbed(details) {
   const E = PULLER_EMOJI;
-  const total = details.total || 0;
-  const working = details.working || 0;
-  const failed = details.failed || 0;
-  const withCodes = details.withCodes || 0;
-  const noCodes = details.noCodes || 0;
-  const totalCodes = details.totalCodes || 0;
   const elapsed = details.startTime ? ((Date.now() - details.startTime) / 1000).toFixed(1) : "0.0";
-
-  const lines = [
-    `**Fetching Codes...**`,
-    `${E.loading} **Account Analysis:**`,
-    `• **Total Accounts:** ${total}`,
-    `• ${E.working} **Working Accounts:** ${working}`,
-    `  └ With Codes: ${withCodes}`,
-    `  └ No Codes: ${noCodes}`,
-    `• ${E.failed} **Failed Accounts:** ${failed}`,
-    `• ${E.codes} **Codes Found:** ${totalCodes}`,
-    ``,
-    `:stopwatch: **Time:** ${elapsed}s`,
-  ];
-
-  const embed = header({ thumbnail: false })
-    .setColor(COLORS.INFO)
-    .setDescription(lines.join("\n"));
-
-  if (details.username) {
-    embed.setFooter({ text: _fmtPullerFooter(details.username) });
-  }
-  return embed;
+  return pullerLive({
+    title: "Fetching Codes...",
+    username: details.username,
+    color: COLORS.INFO,
+    sections: [{
+      heading: `${E.loading} Account Analysis`,
+      lines: [
+        `• Total Accounts: ${details.total || 0}`,
+        `• ${E.working} Working: ${details.working || 0}`,
+        `  └ With Codes: ${details.withCodes || 0}`,
+        `  └ No Codes: ${details.noCodes || 0}`,
+        `• ${E.failed} Failed: ${details.failed || 0}`,
+        `• ${E.codes} Codes Found: ${details.totalCodes || 0}`,
+        ``,
+        `⏱️ Time: ${elapsed}s`,
+      ],
+    }],
+  });
 }
-
-// ── Pull Live Progress (Validate Phase) — matches screenshot ─
 
 function pullLiveProgressEmbed(fetchResults, validateProgress, { username, startTime } = {}) {
   const E = PULLER_EMOJI;
   const totalAccounts = fetchResults.length;
-  const workingAccounts = fetchResults.filter((r) => !r.error);
-  const failedAccounts = fetchResults.filter((r) => r.error);
-  const withCodes = workingAccounts.filter((r) => r.codes.length > 0);
-  const noCodes = workingAccounts.filter((r) => r.codes.length === 0);
-  const totalCodesFetched = fetchResults.reduce((sum, r) => sum + r.codes.length, 0);
-
+  const working = fetchResults.filter((r) => !r.error);
+  const failed = fetchResults.filter((r) => r.error);
+  const withCodes = working.filter((r) => r.codes.length > 0);
+  const noCodes = working.filter((r) => r.codes.length === 0);
+  const totalCodesFetched = fetchResults.reduce((s, r) => s + r.codes.length, 0);
   const valid = validateProgress.valid || 0;
   const used = validateProgress.used || 0;
   const balance = validateProgress.balance || 0;
-
   const elapsed = startTime ? ((Date.now() - startTime) / 1000).toFixed(1) : "0.0";
 
-  const lines = [
-    `**Validating Codes...**`,
-    `${E.loading} **Account Analysis:**`,
-    `• **Total Accounts:** ${totalAccounts}`,
-    `• ${E.working} **Working Accounts:** ${workingAccounts.length}`,
-    `  └ With Codes: ${withCodes.length}`,
-    `  └ No Codes: ${noCodes.length}`,
-    `• ${E.failed} **Failed Accounts:** ${failedAccounts.length}`,
-    `• ${E.codes} **Codes Found:** ${totalCodesFetched}`,
-    `  └ Working: ${valid}`,
-    `  └ ${E.claimed} Claimed: ${used}`,
-    `  └ ${E.money} Balance: ${balance}`,
-    ``,
-    `:stopwatch: **Time:** ${elapsed}s`,
-  ];
-
-  const embed = header({ thumbnail: false })
-    .setColor(COLORS.INFO)
-    .setDescription(lines.join("\n"));
-
-  if (username) {
-    embed.setFooter({ text: _fmtPullerFooter(username) });
-  }
-  return embed;
+  return pullerLive({
+    title: "Validating Codes...",
+    username,
+    color: COLORS.INFO,
+    sections: [{
+      heading: `${E.loading} Account Analysis`,
+      lines: [
+        `• Total Accounts: ${totalAccounts}`,
+        `• ${E.working} Working: ${working.length}`,
+        `  └ With Codes: ${withCodes.length}`,
+        `  └ No Codes: ${noCodes.length}`,
+        `• ${E.failed} Failed: ${failed.length}`,
+        `• ${E.codes} Codes Found: ${totalCodesFetched}`,
+        `  └ Working: ${valid}`,
+        `  └ ${E.claimed} Claimed: ${used}`,
+        `  └ ${E.money} Balance: ${balance}`,
+        ``,
+        `⏱️ Time: ${elapsed}s`,
+      ],
+    }],
+  });
 }
-
-// ── Pull Results (Final) — matches screenshot 1:1 ────────────
 
 function pullResultsEmbed(fetchResults, validateResults, { elapsed, dmSent, username } = {}) {
   const E = PULLER_EMOJI;
   const totalAccounts = fetchResults.length;
-  const workingAccounts = fetchResults.filter((r) => !r.error);
-  const failedAccounts = fetchResults.filter((r) => r.error);
-  const withCodes = workingAccounts.filter((r) => r.codes.length > 0);
-  const noCodes = workingAccounts.filter((r) => r.codes.length === 0);
-  const totalCodesFetched = fetchResults.reduce((sum, r) => sum + r.codes.length, 0);
-
+  const working = fetchResults.filter((r) => !r.error);
+  const failed = fetchResults.filter((r) => r.error);
+  const withCodes = working.filter((r) => r.codes.length > 0);
+  const noCodes = working.filter((r) => r.codes.length === 0);
+  const totalCodesFetched = fetchResults.reduce((s, r) => s + r.codes.length, 0);
   const valid = validateResults.filter((r) => r.status === "valid").length;
   const used = validateResults.filter((r) => r.status === "used" || r.status === "REDEEMED").length;
   const balance = validateResults.filter((r) => r.status === "BALANCE_CODE").length;
 
   const lines = [
-    `**Fetching Complete!**`,
-    `${E.loading} **Account Analysis:**`,
-    `• **Total Accounts:** ${totalAccounts}`,
-    `• ${E.working} **Working Accounts:** ${workingAccounts.length}`,
+    `• Total Accounts: ${totalAccounts}`,
+    `• ${E.working} Working: ${working.length}`,
     `  └ With Codes: ${withCodes.length}`,
     `  └ No Codes: ${noCodes.length}`,
-    `• ${E.failed} **Failed Accounts:** ${failedAccounts.length}`,
-    `• ${E.codes} **Codes Found:** ${totalCodesFetched}`,
+    `• ${E.failed} Failed: ${failed.length}`,
+    `• ${E.codes} Codes Found: ${totalCodesFetched}`,
     `  └ Working: ${valid}`,
     `  └ ${E.claimed} Claimed: ${used}`,
     `  └ ${E.money} Balance: ${balance}`,
     ``,
-    `:stopwatch: **Time:** ${elapsed || "0.0"}s`,
+    `⏱️ Time: ${elapsed || "0.0"}s`,
   ];
+  if (dmSent) lines.push("", "» Codes sent to your DMs");
 
-  if (dmSent) {
-    lines.push("", "> » Codes sent to your DMs");
-  }
-
-  const embed = header({ thumbnail: false })
-    .setColor(COLORS.PRIMARY)
-    .setDescription(lines.join("\n"));
-
-  embed.setFooter({ text: _fmtPullerFooter(username) });
-  return embed;
+  return pullerLive({
+    title: "Fetching Complete!",
+    username,
+    color: COLORS.PRIMARY,
+    sections: [{ heading: `${E.loading} Account Analysis`, lines }],
+  });
 }
 
 function promoPullerFetchProgressEmbed(details) {
   const E = PULLER_EMOJI;
-  const total = details.total || 0;
-  const working = details.working || 0;
-  const failed = details.failed || 0;
-  const withLinks = details.withLinks || 0;
-  const noLinks = details.noLinks || 0;
-  const totalLinks = details.totalLinks || 0;
   const elapsed = details.startTime ? ((Date.now() - details.startTime) / 1000).toFixed(1) : "0.0";
-
-  const lines = [
-    `**Fetching Promo Links...**`,
-    `${E.loading} **Account Analysis:**`,
-    `${UI.bullet} **Total Accounts:** ${total}`,
-    `${UI.bullet} ${E.working} **Working Accounts:** ${working}`,
-    `  ${UI.sub} With Links: ${withLinks}`,
-    `  ${UI.sub} No Links: ${noLinks}`,
-    `${UI.bullet} ${E.failed} **Failed Accounts:** ${failed}`,
-    `${UI.bullet} ${UI.link} **Links Found:** ${totalLinks}`,
-    ``,
-    `${UI.time} **Time:** ${elapsed}s`,
-  ];
-
-  const embed = header({ thumbnail: false }).setColor(COLORS.INFO).setDescription(lines.join("\n"));
-  if (details.username) embed.setFooter({ text: _fmtPullerFooter(details.username) });
-  return embed;
+  return pullerLive({
+    title: "Fetching Promo Links...",
+    username: details.username,
+    color: COLORS.INFO,
+    sections: [{
+      heading: `${E.loading} Account Analysis`,
+      lines: [
+        `• Total Accounts: ${details.total || 0}`,
+        `• ${E.working} Working: ${details.working || 0}`,
+        `  └ With Links: ${details.withLinks || 0}`,
+        `  └ No Links: ${details.noLinks || 0}`,
+        `• ${E.failed} Failed: ${details.failed || 0}`,
+        `• ${E.codes} Links Found: ${details.totalLinks || 0}`,
+        ``,
+        `⏱️ Time: ${elapsed}s`,
+      ],
+    }],
+  });
 }
 
 function promoPullerResultsEmbed(fetchResults, allLinks, { elapsed, dmSent, username } = {}) {
   const E = PULLER_EMOJI;
   const totalAccounts = fetchResults.length;
-  const workingAccounts = fetchResults.filter((r) => !r.error);
-  const failedAccounts = fetchResults.filter((r) => r.error);
-  const withLinks = workingAccounts.filter((r) => r.links.length > 0);
-  const noLinks = workingAccounts.filter((r) => r.links.length === 0);
-  const totalLinkCount = allLinks.length;
-  const uniqueLinks = [...new Set(allLinks)];
+  const working = fetchResults.filter((r) => !r.error);
+  const failed = fetchResults.filter((r) => r.error);
+  const withLinks = working.filter((r) => r.links.length > 0);
+  const noLinks = working.filter((r) => r.links.length === 0);
+  const unique = [...new Set(allLinks)];
 
   const lines = [
-    `**Promo Puller Complete!**`,
-    `${E.loading} **Account Analysis:**`,
-    `${UI.bullet} **Total Accounts:** ${totalAccounts}`,
-    `${UI.bullet} ${E.working} **Working Accounts:** ${workingAccounts.length}`,
-    `  ${UI.sub} With Links: ${withLinks.length}`,
-    `  ${UI.sub} No Links: ${noLinks.length}`,
-    `${UI.bullet} ${E.failed} **Failed Accounts:** ${failedAccounts.length}`,
-    `${UI.bullet} ${UI.link} **Links Found:** ${totalLinkCount}`,
-    `  ${UI.sub} ${UI.spark} Unique: ${uniqueLinks.length}`,
+    `• Total Accounts: ${totalAccounts}`,
+    `• ${E.working} Working: ${working.length}`,
+    `  └ With Links: ${withLinks.length}`,
+    `  └ No Links: ${noLinks.length}`,
+    `• ${E.failed} Failed: ${failed.length}`,
+    `• ${E.codes} Links Found: ${allLinks.length}`,
+    `  └ Unique: ${unique.length}`,
     ``,
-    `${UI.time} **Time:** ${elapsed || "0.0"}s`,
+    `⏱️ Time: ${elapsed || "0.0"}s`,
   ];
+  if (dmSent) lines.push("", "» Links sent to your DMs");
 
-  if (dmSent) lines.push("", "> » Links sent to your DMs");
-
-  const embed = header({ thumbnail: false }).setColor(COLORS.PRIMARY).setDescription(lines.join("\n"));
-  embed.setFooter({ text: _fmtPullerFooter(username) });
-  return embed;
+  return pullerLive({
+    title: "Promo Puller Complete!",
+    username,
+    color: COLORS.PRIMARY,
+    sections: [{ heading: `${E.loading} Account Analysis`, lines }],
+  });
 }
 
+// ============================================================
+//  Purchase / Changer / Account / Rewards / Refund / AIO
+//  All rendered in pure puller-style code block
+// ============================================================
 
 function purchaseProgressEmbed(details) {
   const pct = details.total === 0 ? 0 : Math.round((details.done / details.total) * 100);
-  const barLen = 18;
-  const filled = Math.round((pct / 100) * barLen);
-  const bar = "█".repeat(filled) + "░".repeat(barLen - filled);
-
-  const stepLabels = { login: "Logging in", cart: "Loading cart", purchase: "Purchasing", result: "Done" };
-  const stepIdx   = { login: 1, cart: 2, purchase: 3, result: 4 };
-
   const lines = [
-    `**Purchasing...**`,
-    `${UI.shop} **Product:** ${details.product}`,
-    `${UI.card} **Price:** ${details.price}`,
+    `Product  : ${details.product}`,
+    `Price    : ${details.price}`,
     ``,
-    `\`${bar}\` **${pct}%**`,
-    `${UI.bullet} ${details.done} / ${details.total} accounts`,
+    `[${_bar(pct)}] ${pct}%`,
+    `${details.done} / ${details.total} accounts`,
   ];
-
-  if (details.currentAccount) {
-    const idx = stepIdx[details.phase] || "-";
-    const label = stepLabels[details.phase] || "Processing";
-    lines.push("", `${UI.bolt} **Step ${idx}/4:** ${label}`, `${UI.user} ${details.currentAccount}`);
-  }
-
   if (details.purchased > 0 || details.failed > 0) {
-    lines.push("",
-      `${UI.bullet} ${UI.ok} **Purchased:** ${details.purchased || 0}`,
-      `${UI.bullet} ${UI.fail} **Failed:** ${details.failed || 0}`,
-    );
+    lines.push("", `Purchased: ${details.purchased || 0}`, `Failed   : ${details.failed || 0}`);
   }
-
   if (details.lastResult) {
-    const icon = details.lastResult.success ? UI.ok : UI.fail;
+    const tag = details.lastResult.success ? "OK" : "ERR";
     const msg = details.lastResult.success
-      ? `Order: \`${details.lastResult.orderId || "OK"}\``
+      ? `Order ${details.lastResult.orderId || "OK"}`
       : details.lastResult.error || "Failed";
-    lines.push("", `${icon} ${details.lastResult.email}`, `  ${UI.sub} ${msg}`);
+    lines.push("", `[${tag}] ${details.lastResult.email}`, `  -> ${msg}`);
   }
-
-  return header({ thumbnail: false })
-    .setColor(COLORS.INFO)
-    .setDescription(lines.join("\n"));
-}
-
-function purchaseResultsEmbed(results, productTitle, price) {
-  const success = results.filter(r => r.success).length;
-  const failed = results.filter(r => !r.success).length;
-
-  return header()
-    .setColor(COLORS.PRIMARY)
-    .setDescription([
-      `**Purchase Results**`,
-      `${UI.shop} **Product:** ${productTitle}`,
-      `${UI.card} **Price:** ${price}`,
-      ``,
-      `${UI.bullet} ${UI.ok} **Purchased:** ${success}`,
-      `${UI.bullet} ${UI.fail} **Failed:** ${failed}`,
-      ``,
-      `${UI.flag} **Total:** ${results.length}`,
-    ].join("\n"));
-}
-
-function productSearchEmbed(results) {
-  if (!results || results.length === 0) {
-    return header().setColor(COLORS.INFO).setDescription(`${UI.search} **Search Results**\nNo results found.`);
-  }
-  const lines = [`${UI.search} **Search Results**`, ``];
-  results.forEach((r, i) => {
-    lines.push(`**${i + 1}.** ${r.title}`);
-    lines.push(`  ${UI.sub} \`${r.productId || "N/A"}\` ${UI.bullet} ${r.type || "N/A"}`);
+  return pullerStyle({
+    title: "Purchaser",
+    username: details.username,
+    color: COLORS.INFO,
+    thumbnail: false,
+    sections: [{ heading: "Progress", lines }],
   });
-  return header().setColor(COLORS.INFO).setDescription(lines.join("\n"));
 }
 
-// ── Changer / Checker ────────────────────────────────────────
-
-function changerResultsEmbed(results) {
+function purchaseResultsEmbed(results, productTitle, price, username) {
   const success = results.filter(r => r.success).length;
   const failed = results.filter(r => !r.success).length;
-
-  return header()
-    .setColor(COLORS.PRIMARY)
-    .setDescription([
-      `**Changer Results**`,
-      `${UI.bullet} ${UI.ok} **Changed:** ${success}`,
-      `${UI.bullet} ${UI.fail} **Failed:** ${failed}`,
-      ``,
-      `${UI.flag} **Total:** ${results.length}`,
-    ].join("\n"));
+  return pullerStyle({
+    title: "Purchaser",
+    username,
+    sections: [{
+      heading: "Results",
+      lines: [
+        `Product  : ${productTitle}`,
+        `Price    : ${price}`,
+        ``,
+        `Purchased: ${success}`,
+        `Failed   : ${failed}`,
+        ``,
+        `Total    : ${results.length}`,
+      ],
+    }],
+  });
 }
 
-function accountCheckerResultsEmbed(results) {
+function productSearchEmbed(results, username) {
+  if (!results || results.length === 0) {
+    return pullerStyle({
+      title: "Product Search",
+      username,
+      color: COLORS.INFO,
+      sections: [{ heading: "Results", lines: ["No results found."] }],
+    });
+  }
+  const lines = [];
+  results.forEach((r, i) => {
+    lines.push(`${i + 1}. ${r.title}`);
+    lines.push(`   ID: ${r.productId || "N/A"}  Type: ${r.type || "N/A"}`);
+  });
+  return pullerStyle({
+    title: "Product Search",
+    username,
+    color: COLORS.INFO,
+    sections: [{ heading: "Results", lines }],
+  });
+}
+
+function changerResultsEmbed(results, username) {
+  const success = results.filter(r => r.success).length;
+  const failed = results.filter(r => !r.success).length;
+  return pullerStyle({
+    title: "Changer",
+    username,
+    sections: [{
+      heading: "Results",
+      lines: [
+        `Changed  : ${success}`,
+        `Failed   : ${failed}`,
+        ``,
+        `Total    : ${results.length}`,
+      ],
+    }],
+  });
+}
+
+function accountCheckerResultsEmbed(results, username) {
   const valid = results.filter((r) => r.status === "valid").length;
   const locked = results.filter((r) => r.status === "locked").length;
   const invalid = results.filter((r) => r.status === "invalid").length;
   const rateLimited = results.filter((r) => r.status === "rate_limited").length;
   const errors = results.filter((r) => r.status === "error").length;
-
-  return header()
-    .setColor(COLORS.PRIMARY)
-    .setDescription([
-      `**Account Checker**`,
-      `${UI.bullet} ${UI.ok} **Valid:** ${valid}`,
-      `${UI.bullet} ${UI.lock} **Locked:** ${locked}`,
-      `${UI.bullet} ${UI.fail} **Invalid:** ${invalid}`,
-      `${UI.bullet} ${UI.warn} **Rate Limited:** ${rateLimited}`,
-      `${UI.bullet} ${UI.warn} **Errors:** ${errors}`,
-      ``,
-      `${UI.flag} **Total:** ${results.length}`,
-    ].join("\n"));
+  return pullerStyle({
+    title: "Account Checker",
+    username,
+    sections: [{
+      heading: "Results",
+      lines: [
+        `Valid       : ${valid}`,
+        `Locked      : ${locked}`,
+        `Invalid     : ${invalid}`,
+        `Rate Limited: ${rateLimited}`,
+        `Errors      : ${errors}`,
+        ``,
+        `Total       : ${results.length}`,
+      ],
+    }],
+  });
 }
 
-// ── Rewards ──────────────────────────────────────────────────
-
-function rewardsResultsEmbed(results) {
+function rewardsResultsEmbed(results, username) {
   const success = results.filter(r => r.success);
   const failed = results.filter(r => !r.success);
-  const totalPoints = success.reduce((sum, r) => sum + r.balance, 0);
-  const avg = success.length > 0 ? Math.round(totalPoints / success.length).toLocaleString() : "0";
-
+  const totalPoints = success.reduce((s, r) => s + r.balance, 0);
+  const avg = success.length > 0 ? Math.round(totalPoints / success.length) : 0;
   const lines = [
-    `**Rewards Balance**`,
-    `${UI.bullet} ${UI.ok} **Checked:** ${results.length}`,
-    `${UI.bullet} ${UI.star} **Successful:** ${success.length}`,
-    `${UI.bullet} ${UI.fail} **Failed:** ${failed.length}`,
+    `Checked     : ${results.length}`,
+    `Successful  : ${success.length}`,
+    `Failed      : ${failed.length}`,
     ``,
-    `${UI.coin} **Points**`,
-    `${UI.bullet} **Total:** ${totalPoints.toLocaleString()}`,
-    `${UI.bullet} **Average:** ${avg}`,
+    `Total Points: ${totalPoints.toLocaleString()}`,
+    `Average     : ${avg.toLocaleString()}`,
   ];
-
   if (success.length > 0) {
-    const highest = success.reduce((max, r) => r.balance > max.balance ? r : max);
-    lines.push(`${UI.bullet} ${UI.spark} **Highest:** ${highest.balance.toLocaleString()} (${highest.email.split("@")[0]}…)`);
+    const highest = success.reduce((m, r) => r.balance > m.balance ? r : m);
+    lines.push(`Highest     : ${highest.balance.toLocaleString()}`);
   }
-
-  return header().setColor(COLORS.PRIMARY).setDescription(lines.join("\n"));
+  return pullerStyle({
+    title: "Rewards",
+    username,
+    sections: [{ heading: "Results", lines }],
+  });
 }
 
-// ── Generic ──────────────────────────────────────────────────
+// ============================================================
+//  Generic helpers
+// ============================================================
 
-function errorEmbed(message) {
-  return header({ thumbnail: false })
-    .setColor(COLORS.ERROR)
-    .setDescription(`${UI.fail} **Error**\n${message}`);
+function errorEmbed(message, username) {
+  return pullerStyle({
+    title: "Error",
+    username,
+    color: COLORS.ERROR,
+    thumbnail: false,
+    sections: [{ heading: "Details", lines: String(message).split("\n") }],
+  });
 }
 
-function successEmbed(message) {
-  return header({ thumbnail: false })
-    .setColor(COLORS.SUCCESS)
-    .setDescription(`${UI.ok} **Success**\n${message}`);
+function successEmbed(message, username) {
+  return pullerStyle({
+    title: "Success",
+    username,
+    color: COLORS.SUCCESS,
+    thumbnail: false,
+    sections: [{ heading: "Details", lines: String(message).split("\n") }],
+  });
 }
 
-function infoEmbed(title, description) {
-  return header({ thumbnail: false })
-    .setColor(COLORS.INFO)
-    .setDescription(`${UI.info} **${title}**\n${description}`);
+function infoEmbed(title, description, username) {
+  return pullerStyle({
+    title: title || "Info",
+    username,
+    color: COLORS.INFO,
+    thumbnail: false,
+    sections: [{ heading: "Details", lines: String(description).split("\n") }],
+  });
 }
 
-function ownerOnlyEmbed(featureName) {
-  return header()
-    .setColor(COLORS.PRIMARY)
-    .setDescription([
-      `${UI.lock} **${featureName}**`,
-      ``,
-      `Currently in a closed development phase.`,
-      `Exclusively available to **TalkNeon** during testing.`,
-      ``,
-      `Access will be rolled out once the module has`,
-      `been fully validated and stabilized.`,
-    ].join("\n"));
+function ownerOnlyEmbed(featureName, username) {
+  return pullerStyle({
+    title: featureName,
+    username,
+    sections: [{
+      heading: "Locked",
+      lines: [
+        "Currently in a closed development phase.",
+        "Exclusively available to TalkNeon during testing.",
+        "",
+        "Access will roll out once the module has",
+        "been fully validated and stabilized.",
+      ],
+    }],
+  });
 }
 
-function authListEmbed(entries) {
+function authListEmbed(entries, username) {
   if (entries.length === 0) {
-    return header().setColor(COLORS.MUTED).setDescription("```\nAuthorized Users\n----------------------------\n\nNo authorized users.\n```");
+    return pullerStyle({
+      title: "Authorized Users",
+      username,
+      color: COLORS.MUTED,
+      sections: [{ heading: "Users", lines: ["No authorized users."] }],
+    });
   }
-
   const lines = entries.map((e, i) => {
     const expiry = e.expiresAt === "Infinity" ? "Permanent" : `<t:${Math.floor(e.expiresAt / 1000)}:R>`;
-    return `\`${i + 1}.\` <@${e.userId}> -- ${expiry}`;
+    return `${i + 1}. <@${e.userId}> -- ${expiry}`;
   });
-
-  return header()
-    .setColor(COLORS.INFO)
-    .setTitle("Authorized Users")
-    .setDescription(lines.join("\n"));
+  // markdown form so user mentions render
+  return pullerLive({
+    title: "Authorized Users",
+    username,
+    color: COLORS.INFO,
+    sections: [{ heading: "Users", lines }],
+  });
 }
 
-// ── Help System -- Category Select Menu ─────────────────────
+// ============================================================
+//  Help System (puller-style code block + select dropdown)
+// ============================================================
 
-// Section groupings for the help dropdown
 const HELP_SECTIONS = {
   core: { label: "-- Core Tools --", categories: ["checker", "claimer", "puller", "promopuller"] },
   account: { label: "-- Account Tools --", categories: ["inbox", "rewards", "refund"] },
@@ -521,293 +549,107 @@ const HELP_SECTIONS = {
 
 const HELP_CATEGORIES = {
   checker: {
-    label: "Checker",
-    description: "Check codes against WLID tokens",
-    section: "core",
-    content: (p) => [
-      "Checker",
-      "========================================",
-      "",
-      "  Commands",
-      "  ----------------------------------------",
-      `  ${p}check [wlids] + attach codes.txt`,
-      "    Check codes against WLID tokens.",
-      "    Uses stored WLIDs if none provided.",
-      "",
-      "  Output",
-      "  ----------------------------------------",
-      "  All results sent to your DMs.",
-    ].join("\n"),
+    label: "Checker", description: "Check codes against WLID tokens", section: "core",
+    commands: (p) => [`${p}check [wlids] + attach codes.txt`, "  Check codes against WLID tokens.", "  Uses stored WLIDs if none provided."],
   },
   claimer: {
-    label: "Claimer",
-    description: "Claim WLID tokens from accounts",
-    section: "core",
-    content: (p) => [
-      "Claimer",
-      "========================================",
-      "",
-      "  Commands",
-      "  ----------------------------------------",
-      `  ${p}claim <email:pass> or attach .txt`,
-      "    Extract WLID tokens from MS accounts.",
-      "",
-      "  Output",
-      "  ----------------------------------------",
-      "  All results sent to your DMs.",
-    ].join("\n"),
+    label: "Claimer", description: "Claim WLID tokens from accounts", section: "core",
+    commands: (p) => [`${p}claim <email:pass> or attach .txt`, "  Extract WLID tokens from MS accounts."],
   },
   puller: {
-    label: "Puller",
-    description: "Fetch & validate Game Pass codes",
-    section: "core",
-    content: (p) => [
-      "Puller",
-      "========================================",
-      "",
-      "  Commands",
-      "  ----------------------------------------",
-      `  ${p}pull <email:pass> or attach .txt`,
-      "    Fetches codes from Game Pass accounts,",
-      "    then validates them automatically.",
-      "",
-      "  Output",
-      "  ----------------------------------------",
-      "  All results sent to your DMs.",
-    ].join("\n"),
+    label: "Puller", description: "Fetch & validate Game Pass codes", section: "core",
+    commands: (p) => [`${p}pull <email:pass> or attach .txt`, "  Fetches codes from Game Pass accounts,", "  then validates them automatically."],
   },
   promopuller: {
-    label: "Promo Puller",
-    description: "Pull & validate Discord promo links",
-    section: "core",
-    content: (p) => [
-      "Promo Puller",
-      "========================================",
-      "",
-      "  Commands",
-      "  ----------------------------------------",
-      `  ${p}promopuller <email:pass> or attach .txt`,
-      "  /promopuller <email:pass> or attach .txt",
-      "    Pulls Discord promo links from Game",
-      "    Pass perks and validates each gift",
-      "    code via the Discord API.",
-      "",
-      "  Notes",
-      "  ----------------------------------------",
-      "    100 threads, direct connections,",
-      "    isolated from the global proxy pool.",
-      "    Working hits saved to promos.txt.",
-      "",
-      "  Output",
-      "  ----------------------------------------",
-      "  All results sent to your DMs.",
-    ].join("\n"),
+    label: "Promo Puller", description: "Pull & validate Discord promo links", section: "core",
+    commands: (p) => [`${p}promopuller <email:pass> or attach .txt`, "  Pulls Discord promo links from Game Pass", "  perks and validates each gift code."],
   },
   rewards: {
-    label: "Rewards",
-    description: "Check Microsoft Rewards balances",
-    section: "account",
-    content: (p) => [
-      "Rewards",
-      "========================================",
-      "",
-      "  Commands",
-      "  ----------------------------------------",
-      `  ${p}rewards <email:pass> or attach .txt`,
-      "    Check Rewards point balances.",
-      "    Shows balance, lifetime points, level.",
-      "",
-      "  Output",
-      "  ----------------------------------------",
-      "  All results sent to your DMs.",
-    ].join("\n"),
+    label: "Rewards", description: "Check Microsoft Rewards balances", section: "account",
+    commands: (p) => [`${p}rewards <email:pass> or attach .txt`, "  Check Rewards point balances.", "  Shows balance, lifetime points, level."],
   },
   refund: {
-    label: "Refund",
-    description: "Check refund eligibility (14-day)",
-    section: "account",
-    content: (p) => [
-      "Refund Checker",
-      "========================================",
-      "",
-      "  Commands",
-      "  ----------------------------------------",
-      `  ${p}refund <email:pass> or attach .txt`,
-      "    Checks if purchases are within the",
-      "    14-day refund window.",
-      "",
-      "  Output",
-      "  ----------------------------------------",
-      "  All results sent to your DMs.",
-    ].join("\n"),
+    label: "Refund", description: "Check refund eligibility (14-day)", section: "account",
+    commands: (p) => [`${p}refund <email:pass> or attach .txt`, "  Checks if purchases are within the", "  14-day refund window."],
   },
   inbox: {
-    label: "Inbox AIO",
-    description: "Scan inboxes for 50+ services",
-    section: "account",
-    content: (p) => [
-      "Inbox AIO Scanner",
-      "========================================",
-      "",
-      "  Commands",
-      "  ----------------------------------------",
-      `  ${p}inboxaio <email:pass> or attach .txt`,
-      "    Scans Hotmail/Outlook inboxes for 50+",
-      "    services (Netflix, Spotify, PayPal...)",
-      "",
-      "  Output",
-      "  ----------------------------------------",
-      "  Results delivered as ZIP with per-",
-      "  service folders in your DMs.",
-      "",
-      "  Notes",
-      "  ----------------------------------------",
-      "    Controlled concurrency, no skipped hits.",
-    ].join("\n"),
+    label: "Inbox AIO", description: "Scan inboxes for 50+ services", section: "account",
+    commands: (p) => [`${p}inboxaio <email:pass> or attach .txt`, "  Scans Hotmail/Outlook for 50+ services", "  (Netflix, Spotify, PayPal, ...)."],
   },
   aio: {
-    label: "AIO",
-    description: "Full Microsoft account analysis",
-    section: "checkers",
-    content: (p) => [
-      "AIO Checker",
-      "========================================",
-      "",
-      "  Commands",
-      "  ----------------------------------------",
-      `  ${p}aio <email:pass> or attach .txt`,
-      "    Full Microsoft account analysis:",
-      "    XGP, cards, MFA, bans, Minecraft,",
-      "    rewards, and more.",
-      "",
-      "  Output",
-      "  ----------------------------------------",
-      "  All results sent to your DMs.",
-    ].join("\n"),
+    label: "AIO", description: "Full Microsoft account analysis", section: "checkers",
+    commands: (p) => [`${p}aio <email:pass> or attach .txt`, "  Full Microsoft account analysis:", "  XGP, cards, MFA, bans, Minecraft,", "  rewards, and more."],
   },
   admin: {
-    label: "Admin",
-    description: "Authorization, blacklist & settings [Owner]",
-    section: "owner",
-    content: (p) => [
-      "Admin  [Owner Only]",
-      "========================================",
-      "",
-      "  WLID Storage",
-      "  ----------------------------------------",
-      `    ${p}wlidset <tokens> or attach .txt`,
-      "",
-      "  Authorization",
-      "  ----------------------------------------",
-      `    ${p}auth <@user> <duration>`,
-      `    ${p}deauth <@user>`,
-      `    ${p}authlist`,
-      "",
-      "  Blacklist",
-      "  ----------------------------------------",
-      `    ${p}blacklist <@user> [reason]`,
-      `    ${p}unblacklist <@user>`,
-      `    ${p}blacklistshow`,
-      "",
-      "  Tools",
-      "  ----------------------------------------",
-      `    ${p}admin | ${p}setwebhook <url>`,
-      `    ${p}botstats | ${p}stats`,
-    ].join("\n"),
+    label: "Admin", description: "Authorization, blacklist & settings", section: "owner",
+    commands: (p) => [
+      `${p}wlidset <tokens> or attach .txt`,
+      `${p}auth <@user> <duration>`,
+      `${p}deauth <@user>`,
+      `${p}authlist`,
+      `${p}blacklist <@user> [reason]`,
+      `${p}unblacklist <@user>`,
+      `${p}blacklistshow`,
+      `${p}admin | ${p}setwebhook <url>`,
+      `${p}botstats | ${p}stats`,
+    ],
   },
 };
 
-// ── Gen system embeds (hidden from main help) ─────────────────
-
-function genHelpEmbed(prefix) {
-  return header()
-    .setColor(COLORS.PRIMARY)
-    .setDescription([
-      `${UI.gift} **Gen System** _(Hidden)_`,
-      ``,
-      `**User Commands**`,
-      `${UI.bullet} \`${prefix}gen <product> <amount>\``,
-      `  ${UI.sub} Pull stock items. Users: 1 per request, 200s cooldown. Admins: 50.`,
-      `${UI.bullet} \`${prefix}stock\``,
-      `  ${UI.sub} List all products and stock counts.`,
-      ``,
-      `**Stock Management**`,
-      `${UI.bullet} \`${prefix}addstock <product>\` + attach .txt`,
-      `${UI.bullet} \`${prefix}replacegenstock <product>\` + attach .txt`,
-      `${UI.bullet} \`${prefix}downloadgenstock\``,
-      ``,
-      `${UI.mail} Items delivered via DM.`,
-    ].join("\n"));
+function helpOverviewEmbed(prefix, username) {
+  // Matches the screenshot: title + === + Commands section + Output section
+  return pullerStyle({
+    title: "AutizMens",
+    username,
+    sections: [
+      {
+        heading: "Commands",
+        lines: [
+          `${prefix}help`,
+          "  Browse every category via the menu below.",
+          "",
+          "Use the dropdown to view command groups:",
+          "  • Checker     • Claimer",
+          "  • Puller      • Promo Puller",
+          "  • Rewards     • Refund",
+          "  • Inbox AIO   • AIO",
+        ],
+      },
+      {
+        heading: "Output",
+        lines: ["All results sent to your DMs."],
+      },
+    ],
+  });
 }
 
-function stockListEmbed(entries) {
-  if (entries.length === 0) {
-    return header()
-      .setColor(COLORS.MUTED)
-      .setDescription(`${UI.shop} **Stock**\nNo products yet. Use \`.addstock\` to add some.`);
-  }
-  const lines = [`${UI.shop} **Stock**`, ``];
-  for (const e of entries) {
-    lines.push(`${UI.bullet} **${e.name}** — ${e.count}`);
-  }
-  lines.push(``, `${UI.flag} **Total products:** ${entries.length}`);
-  return header().setColor(COLORS.INFO).setDescription(lines.join("\n"));
-}
-
-function unauthorisedEmbed() {
-  return header()
-    .setColor(COLORS.WARNING)
-    .setDescription(`${UI.lock} **Unauthorised**\nReply **\`milk\`** to this chat to gain auto access — otherwise wait for the owner.`);
-}
-
-function helpOverviewEmbed(prefix) {
-  const sectionLines = [];
-
-  for (const [, section] of Object.entries(HELP_SECTIONS)) {
-    sectionLines.push(`\n**${section.label}**`);
-    for (const catKey of section.categories) {
-      const cat = HELP_CATEGORIES[catKey];
-      if (cat) {
-        sectionLines.push(`  **${cat.label}** -- ${cat.description}`);
-      }
-    }
-  }
-
-  return header({ banner: true })
-    .setColor(COLORS.PRIMARY)
-    .setTitle("Command Reference")
-    .setDescription([
-      `Select a category below to view commands.`,
-      `All results are sent to your DMs automatically.`,
-      ...sectionLines,
-    ].join("\n"));
-}
-
-function helpCategoryEmbed(categoryKey, prefix) {
+function helpCategoryEmbed(categoryKey, prefix, username) {
   const cat = HELP_CATEGORIES[categoryKey];
-  if (!cat) return errorEmbed("Unknown category.");
-
-  return header()
-    .setColor(COLORS.PRIMARY)
-    .setDescription(`\`\`\`\n${cat.content(prefix)}\n\`\`\``);
+  if (!cat) return errorEmbed("Unknown category.", username);
+  return pullerStyle({
+    title: cat.label,
+    username,
+    sections: [
+      { heading: "Commands", lines: cat.commands(prefix) },
+      { heading: "Output", lines: ["All results sent to your DMs."] },
+    ],
+  });
 }
 
 function helpSelectMenu() {
   const options = [];
-
   for (const [, section] of Object.entries(HELP_SECTIONS)) {
     for (const catKey of section.categories) {
       const cat = HELP_CATEGORIES[catKey];
       if (cat) {
         options.push({
-          label: `${cat.label}`,
-          description: `${section.label.replace(/^-- | --$/g, '')} > ${cat.description}`,
+          label: cat.label,
+          description: `${section.label.replace(/^-- | --$/g, "")} > ${cat.description}`,
           value: catKey,
         });
       }
     }
   }
-
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId("help_category")
@@ -816,281 +658,244 @@ function helpSelectMenu() {
   );
 }
 
-// ── Welcome Embed ────────────────────────────────────────────
-
+// ============================================================
+//  Welcome — DISABLED (DMs are results+errors only)
+// ============================================================
 function welcomeEmbed(username) {
-  return header({ banner: true })
-    .setColor(COLORS.PRIMARY)
-    .setDescription([
-      `${UI.spark} **Welcome, ${username}**`,
-      ``,
-      `You now have access to **AutizMens**.`,
-      ``,
-      `${UI.bolt} **Quick Start**`,
-      `${UI.bullet} \`.help\` — view all commands`,
-      `${UI.bullet} \`.pull\` — fetch & validate codes`,
-      `${UI.bullet} \`.check\` — check codes`,
-      `${UI.bullet} \`.rewards\` — check point balances`,
-      ``,
-      `${UI.mail} All results are sent to your DMs.`,
-      `${UI.info} Attach a \`.txt\` file for bulk operations.`,
-      ``,
-      `_Type_ \`.help\` _to get started._`,
-    ].join("\n"));
+  // Intentionally returns null; index.js no-ops the welcome path.
+  return null;
 }
 
-// ── Admin Panels ─────────────────────────────────────────────
+// ============================================================
+//  Admin / Stats
+// ============================================================
 
-function adminPanelEmbed(stats, authCount, activeOtpSessions, activeProcesses, webhookSet) {
-  return header()
-    .setColor(COLORS.PRIMARY)
-    .setDescription([
-      `${UI.shield} **Admin Control Panel**`,
-      ``,
-      `${UI.user} **Users**`,
-      `${UI.bullet} **Authorized:** ${authCount}`,
-      `${UI.bullet} **OTP Sessions:** ${activeOtpSessions}`,
-      `${UI.bullet} **Active Tasks:** ${activeProcesses}`,
-      ``,
-      `${UI.bolt} **Processing**`,
-      `${UI.bullet} **Total:** ${stats.total_processed}`,
-      `${UI.bullet} ${UI.ok} **Success:** ${stats.total_success}`,
-      `${UI.bullet} ${UI.fail} **Failed:** ${stats.total_failed}`,
-      ``,
-      `${UI.info} **Status**`,
-      `${UI.bullet} **Bot:** ${UI.ok} Online`,
-      `${UI.bullet} **Webhook:** ${webhookSet ? `${UI.ok} Set` : `${UI.fail} Not Set`}`,
-    ].join("\n"));
-}
-
-function detailedStatsEmbed(stats, topUsers) {
-  const rate = stats.total_processed > 0
-    ? Math.round((stats.total_success / stats.total_processed) * 100)
-    : 0;
-
-  const embed = header()
-    .setColor(COLORS.PRIMARY)
-    .setDescription([
-      `${UI.bolt} **Detailed Statistics**`,
-      `${UI.bullet} **Processed:** ${stats.total_processed}`,
-      `${UI.bullet} ${UI.ok} **Success:** ${stats.total_success}`,
-      `${UI.bullet} ${UI.fail} **Failed:** ${stats.total_failed}`,
-      `${UI.bullet} ${UI.star} **Rate:** ${rate}%`,
-    ].join("\n"));
-
-  if (topUsers.length > 0) {
-    const topText = topUsers.map(([uid, d]) => `${UI.bullet} <@${uid}> — ${d.processed} processed (${d.success} success)`).join("\n");
-    embed.addFields({ name: "Top Users", value: topText, inline: false });
-  }
-
-  return embed;
-}
-
-// ── Utilities ────────────────────────────────────────────────
-
-function textAttachment(lines, filename) {
-  const buffer = Buffer.from(lines.join("\n"), "utf-8");
-  return new AttachmentBuilder(buffer, { name: filename });
-}
-
-function recoverProgressEmbed(email, status) {
-  return header({ thumbnail: false })
-    .setColor(COLORS.INFO)
-    .setDescription([
-      `${UI.key} **Account Recovery**`,
-      `${UI.bullet} **Account:** \`${email}\``,
-      ``,
-      status,
-    ].join("\n"));
-}
-
-function recoverResultEmbed(email, success, message) {
-  return header()
-    .setColor(success ? COLORS.SUCCESS : COLORS.ERROR)
-    .setDescription([
-      `${success ? UI.ok : UI.fail} **${success ? "Recovery Successful" : "Recovery Failed"}**`,
-      `${UI.bullet} **Account:** \`${email}\``,
-      ``,
-      message || (success ? "Password has been reset." : "Recovery failed."),
-    ].join("\n"));
-}
-
-// ── Inbox AIO Embeds ─────────────────────────────────────────
-
-/**
- * Build paginated service fields (20 per page) with clean formatting
- */
-function buildServiceFields(serviceBreakdown, labelPrefix = "Services") {
-  if (!serviceBreakdown || Object.keys(serviceBreakdown).length === 0) return [];
-
-  const sorted = Object.entries(serviceBreakdown)
-    .sort((a, b) => b[1] - a[1]);
-
-  const PAGE_SIZE = 20;
-  const pages = [];
-  for (let i = 0; i < sorted.length; i += PAGE_SIZE) {
-    pages.push(sorted.slice(i, i + PAGE_SIZE));
-  }
-
-  return pages.map((page, idx) => {
-    const lines = page.map(([svc, count]) => `> **${svc}**: ${count}`);
-    const title = pages.length > 1
-      ? `${labelPrefix} (${idx + 1})`
-      : `${labelPrefix}`;
-    return { name: title, value: lines.join("\n"), inline: false };
+function adminPanelEmbed(stats, authCount, activeOtpSessions, activeProcesses, webhookSet, username) {
+  return pullerStyle({
+    title: "Admin Panel",
+    username,
+    sections: [
+      {
+        heading: "Users",
+        lines: [
+          `Authorized   : ${authCount}`,
+          `OTP Sessions : ${activeOtpSessions}`,
+          `Active Tasks : ${activeProcesses}`,
+        ],
+      },
+      {
+        heading: "Processing",
+        lines: [
+          `Total   : ${stats.total_processed}`,
+          `Success : ${stats.total_success}`,
+          `Failed  : ${stats.total_failed}`,
+        ],
+      },
+      {
+        heading: "Status",
+        lines: [
+          `Bot     : Online`,
+          `Webhook : ${webhookSet ? "Set" : "Not Set"}`,
+        ],
+      },
+    ],
   });
 }
 
-function inboxAioProgressEmbed({ completed, total, hits, fails, elapsed, latestAccount, latestStatus, servicesFound, serviceBreakdown }) {
+function detailedStatsEmbed(stats, topUsers, username) {
+  const rate = stats.total_processed > 0
+    ? Math.round((stats.total_success / stats.total_processed) * 100)
+    : 0;
+  const sections = [{
+    heading: "Statistics",
+    lines: [
+      `Processed : ${stats.total_processed}`,
+      `Success   : ${stats.total_success}`,
+      `Failed    : ${stats.total_failed}`,
+      `Rate      : ${rate}%`,
+    ],
+  }];
+  if (topUsers.length > 0) {
+    sections.push({
+      heading: "Top Users",
+      lines: topUsers.map(([uid, d]) => `<@${uid}> -- ${d.processed} (${d.success} ok)`),
+    });
+  }
+  // Use live-style so user mentions render
+  return pullerLive({ title: "Detailed Stats", username, sections, color: COLORS.PRIMARY });
+}
+
+// ============================================================
+//  Recovery
+// ============================================================
+
+function recoverProgressEmbed(email, status, username) {
+  return pullerStyle({
+    title: "Account Recovery",
+    username,
+    color: COLORS.INFO,
+    thumbnail: false,
+    sections: [{ heading: "Progress", lines: [`Account: ${email}`, ``, status] }],
+  });
+}
+
+function recoverResultEmbed(email, success, message, username) {
+  return pullerStyle({
+    title: success ? "Recovery Successful" : "Recovery Failed",
+    username,
+    color: success ? COLORS.SUCCESS : COLORS.ERROR,
+    sections: [{
+      heading: "Result",
+      lines: [
+        `Account: ${email}`,
+        ``,
+        message || (success ? "Password has been reset." : "Recovery failed."),
+      ],
+    }],
+  });
+}
+
+// ============================================================
+//  Inbox AIO
+// ============================================================
+
+function _serviceLines(serviceBreakdown, max = 30) {
+  if (!serviceBreakdown || Object.keys(serviceBreakdown).length === 0) return ["No services detected."];
+  const sorted = Object.entries(serviceBreakdown).sort((a, b) => b[1] - a[1]).slice(0, max);
+  return sorted.map(([svc, count]) => `${svc.padEnd(18)} : ${count}`);
+}
+
+function inboxAioProgressEmbed({ completed, total, hits, fails, elapsed, latestAccount, latestStatus, serviceBreakdown, username }) {
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
-  const barW = 18;
-  const filled = Math.round((pct / 100) * barW);
-  const bar = "█".repeat(filled) + "░".repeat(barW - filled);
   const elSec = elapsed ? Math.round(elapsed / 1000) : 0;
   const cpm = elSec > 0 ? Math.round((completed / elSec) * 60) : 0;
-
   const lines = [
-    `${UI.mail} **Inbox AIO — Live**`,
-    `\`${bar}\` **${pct}%**`,
-    `${UI.bullet} **Processed:** ${completed} / ${total}`,
-    `${UI.bullet} ${UI.ok} **Hits:** ${hits}`,
-    `${UI.bullet} ${UI.fail} **Failed:** ${fails}`,
-    `${UI.bullet} ${UI.bolt} **Speed:** ${cpm} c/min`,
-    `${UI.bullet} ${UI.time} **Elapsed:** ${elSec}s`,
+    `[${_bar(pct)}] ${pct}%`,
+    `Processed : ${completed} / ${total}`,
+    `Hits      : ${hits}`,
+    `Failed    : ${fails}`,
+    `Speed     : ${cpm} c/min`,
+    `Elapsed   : ${elSec}s`,
   ];
   if (latestAccount) {
     const masked = latestAccount.replace(/(.{3}).*(@.*)/, "$1***$2");
-    lines.push(`${UI.bullet} ${UI.user} **Latest:** ${masked} _(${latestStatus || "…"})_`);
+    lines.push(`Latest    : ${masked} (${latestStatus || "..."})`);
   }
-
-  const embed = header().setColor(COLORS.PRIMARY).setDescription(lines.join("\n"));
-  const svcFields = buildServiceFields(serviceBreakdown, "Services");
-  for (const f of svcFields) embed.addFields(f);
-  return embed;
+  const sections = [{ heading: "Progress", lines }];
+  if (serviceBreakdown && Object.keys(serviceBreakdown).length > 0) {
+    sections.push({ heading: "Services", lines: _serviceLines(serviceBreakdown) });
+  }
+  return pullerStyle({ title: "Inbox AIO", username, color: COLORS.PRIMARY, thumbnail: false, sections });
 }
 
 function inboxAioResultsEmbed({ total, hits, fails, locked, twoFA, elapsed, serviceBreakdown, dmSent, username }) {
   const elSec = elapsed ? Math.round(elapsed / 1000) : 0;
   const cpm = elSec > 0 ? Math.round((total / elSec) * 60) : 0;
-
   const lines = [
-    `${UI.mail} **Inbox AIO — Results**`,
-    `${UI.bullet} **Checked:** ${total}`,
-    `${UI.bullet} ${UI.ok} **Valid:** ${hits}`,
-    `${UI.bullet} ${UI.fail} **Invalid:** ${fails}`,
-    `${UI.bullet} ${UI.lock} **Locked:** ${locked || 0}`,
-    `${UI.bullet} ${UI.shield} **2FA:** ${twoFA || 0}`,
-    `${UI.bullet} ${UI.bolt} **Speed:** ${cpm} c/min`,
-    `${UI.bullet} ${UI.time} **Elapsed:** ${elSec}s`,
+    `Checked  : ${total}`,
+    `Valid    : ${hits}`,
+    `Invalid  : ${fails}`,
+    `Locked   : ${locked || 0}`,
+    `2FA      : ${twoFA || 0}`,
+    `Speed    : ${cpm} c/min`,
+    `Elapsed  : ${elSec}s`,
   ];
-  if (username) lines.push(``, `_Requested by ${username}_`);
-
-  const embed = header()
-    .setColor(hits > 0 ? COLORS.SUCCESS : COLORS.ERROR)
-    .setDescription(lines.join("\n"));
-
-  const svcFields = buildServiceFields(serviceBreakdown, "Services");
-  if (svcFields.length > 0) {
-    for (const f of svcFields) embed.addFields(f);
-  } else {
-    embed.addFields({ name: "Services", value: "No services detected.", inline: false });
-  }
-
-  if (dmSent) embed.addFields({ name: "\u200b", value: `${UI.mail} Results sent to your DMs.`, inline: false });
-  return embed;
+  if (dmSent) lines.push("", "Results sent to your DMs.");
+  const sections = [{ heading: "Results", lines }];
+  sections.push({ heading: "Services", lines: _serviceLines(serviceBreakdown) });
+  return pullerStyle({
+    title: "Inbox AIO",
+    username,
+    color: hits > 0 ? COLORS.SUCCESS : COLORS.ERROR,
+    sections,
+  });
 }
 
-// ── PRS (Rewards Scraper) Embeds ─────────────────────────────
+// ============================================================
+//  PRS
+// ============================================================
 
 function prsProgressEmbed({ done, total, codesFound, category, working, failed, elapsed, latestAccount, username }) {
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-  const barW = 18;
-  const filled = Math.round((pct / 100) * barW);
-  const bar = "█".repeat(filled) + "░".repeat(barW - filled);
   const elSec = elapsed ? Math.round(elapsed / 1000) : 0;
   const cpm = elSec > 0 ? Math.round((done / elSec) * 60) : 0;
-
   const lines = [
-    `${UI.search} **PRS — ${(category || "All").toUpperCase()} Scraper**`,
-    `\`${bar}\` **${pct}%**`,
-    `${UI.bullet} **Processed:** ${done} / ${total}`,
-    `${UI.bullet} ${UI.gift} **Codes Found:** ${codesFound || 0}`,
-    `${UI.bullet} ${UI.ok} **Working:** ${working || 0}`,
-    `${UI.bullet} ${UI.fail} **Failed:** ${failed || 0}`,
-    `${UI.bullet} ${UI.bolt} **Speed:** ${cpm} accts/min`,
-    `${UI.bullet} ${UI.time} **Elapsed:** ${elSec}s`,
+    `[${_bar(pct)}] ${pct}%`,
+    `Processed   : ${done} / ${total}`,
+    `Codes Found : ${codesFound || 0}`,
+    `Working     : ${working || 0}`,
+    `Failed      : ${failed || 0}`,
+    `Speed       : ${cpm} accts/min`,
+    `Elapsed     : ${elSec}s`,
   ];
   if (latestAccount) {
     const masked = latestAccount.replace(/(.{3}).*(@.*)/, "$1***$2");
-    lines.push(`${UI.bullet} ${UI.user} **Latest:** ${masked}`);
+    lines.push(`Latest      : ${masked}`);
   }
-
-  const embed = header({ thumbnail: false }).setColor(COLORS.INFO).setDescription(lines.join("\n"));
-  if (username) embed.setFooter({ text: _fmtFooter("Scraped by", username) });
-  return embed;
+  return pullerStyle({
+    title: `PRS - ${(category || "All").toUpperCase()}`,
+    username,
+    color: COLORS.INFO,
+    thumbnail: false,
+    sections: [{ heading: "Progress", lines }],
+  });
 }
 
 function prsResultsEmbed({ total, hits, valid, failed, twoFA, codesFound, category, elapsed, categoryBreakdown, username, dmSent }) {
   const elSec = elapsed ? Math.round(elapsed / 1000) : 0;
   const cpm = elSec > 0 ? Math.round((total / elSec) * 60) : 0;
-
   const lines = [
-    `${UI.search} **PRS — ${(category || "All").toUpperCase()} Scraper**`,
-    `${UI.bullet} **Checked:** ${total}`,
-    `${UI.bullet} ${UI.gift} **With Codes:** ${hits}`,
-    `${UI.bullet} ${UI.ok} **Valid (empty):** ${valid}`,
-    `${UI.bullet} ${UI.fail} **Failed:** ${failed}`,
+    `Checked      : ${total}`,
+    `With Codes   : ${hits}`,
+    `Valid Empty  : ${valid}`,
+    `Failed       : ${failed}`,
   ];
-  if (twoFA > 0) lines.push(`${UI.bullet} ${UI.shield} **2FA:** ${twoFA}`);
-  lines.push(
-    ``,
-    `${UI.flag} **Total Codes:** ${codesFound}`,
-    `${UI.bolt} **Speed:** ${cpm} accts/min`,
-    `${UI.time} **Elapsed:** ${elSec}s`,
-  );
-  if (username) lines.push(``, `_Requested by ${username}_`);
-
-  const embed = header()
-    .setColor(codesFound > 0 ? COLORS.SUCCESS : COLORS.ERROR)
-    .setDescription(lines.join("\n"));
-
+  if (twoFA > 0) lines.push(`2FA          : ${twoFA}`);
+  lines.push(``, `Total Codes  : ${codesFound}`, `Speed        : ${cpm} accts/min`, `Elapsed      : ${elSec}s`);
+  if (dmSent) lines.push(``, `Results sent to your DMs.`);
+  const sections = [{ heading: "Results", lines }];
   if (categoryBreakdown && Object.keys(categoryBreakdown).length > 0) {
     const sorted = Object.entries(categoryBreakdown).sort((a, b) => b[1] - a[1]);
-    const catLines = sorted.map(([cat, count]) => `${UI.bullet} **${cat}** — ${count} codes`);
-    embed.addFields({ name: "Categories", value: catLines.join("\n"), inline: false });
+    sections.push({
+      heading: "Categories",
+      lines: sorted.map(([cat, c]) => `${cat.padEnd(18)} : ${c}`),
+    });
   }
-
-  if (dmSent) embed.addFields({ name: "\u200b", value: `${UI.mail} Results sent to your DMs.`, inline: false });
-  return embed;
+  return pullerStyle({
+    title: `PRS - ${(category || "All").toUpperCase()}`,
+    username,
+    color: codesFound > 0 ? COLORS.SUCCESS : COLORS.ERROR,
+    sections,
+  });
 }
 
-// ── Refund Checker Embeds ─────────────────────────────────────
+// ============================================================
+//  Refund
+// ============================================================
 
 function refundProgressEmbed(details) {
   const pct = details.total === 0 ? 0 : Math.round((details.done / details.total) * 100);
-  const barLen = 18;
-  const filled = Math.round((pct / 100) * barLen);
-  const bar = "█".repeat(filled) + "░".repeat(barLen - filled);
   const elapsed = details.startTime ? ((Date.now() - details.startTime) / 1000).toFixed(1) : "0.0";
-
   const lines = [
-    `${UI.refund} **Refund Eligibility Check**`,
-    `\`${bar}\` **${pct}%**`,
-    `${UI.bullet} **Processed:** ${details.done} / ${details.total}`,
-    `${UI.bullet} ${UI.ok} **Eligible:** ${details.hits || 0}`,
-    `${UI.bullet} ${UI.fail} **Not Eligible:** ${details.noRefund || 0}`,
-    `${UI.bullet} ${UI.lock} **Locked / 2FA:** ${details.locked || 0}`,
-    `${UI.bullet} ${UI.warn} **Failed:** ${details.failed || 0}`,
+    `[${_bar(pct)}] ${pct}%`,
+    `Processed    : ${details.done} / ${details.total}`,
+    `Eligible     : ${details.hits || 0}`,
+    `Not Eligible : ${details.noRefund || 0}`,
+    `Locked / 2FA : ${details.locked || 0}`,
+    `Failed       : ${details.failed || 0}`,
   ];
   if (details.lastAccount) {
     const masked = details.lastAccount.replace(/(.{3}).*(@.*)/, "$1***$2");
-    lines.push(`${UI.bullet} ${UI.user} **Latest:** ${masked}`);
+    lines.push(`Latest       : ${masked}`);
   }
-  lines.push(``, `${UI.time} **Time:** ${elapsed}s`);
-
-  const embed = header({ thumbnail: false }).setColor(COLORS.INFO).setDescription(lines.join("\n"));
-  if (details.username) embed.setFooter({ text: _fmtFooter("Checked by", details.username) });
-  return embed;
+  lines.push(``, `Time         : ${elapsed}s`);
+  return pullerStyle({
+    title: "Refund Checker",
+    username: details.username,
+    color: COLORS.INFO,
+    thumbnail: false,
+    sections: [{ heading: "Progress", lines }],
+  });
 }
 
 function refundResultsEmbed(results, { elapsed, dmSent, username } = {}) {
@@ -1098,136 +903,247 @@ function refundResultsEmbed(results, { elapsed, dmSent, username } = {}) {
   const noRefund = results.filter(r => r.status === "free");
   const locked = results.filter(r => r.status === "locked");
   const failed = results.filter(r => r.status === "fail");
-  const totalRefundable = hits.reduce((sum, r) => sum + (r.refundable?.length || 0), 0);
-
+  const totalRefundable = hits.reduce((s, r) => s + (r.refundable?.length || 0), 0);
   const lines = [
-    `${UI.refund} **Refund Eligibility — Results**`,
-    `${UI.bullet} **Total Accounts:** ${results.length}`,
-    `${UI.bullet} ${UI.ok} **With Refundable:** ${hits.length}`,
-    `${UI.bullet} ${UI.fail} **No Refundable:** ${noRefund.length}`,
-    `${UI.bullet} ${UI.lock} **Locked / 2FA:** ${locked.length}`,
-    `${UI.bullet} ${UI.warn} **Failed:** ${failed.length}`,
+    `Total Accounts  : ${results.length}`,
+    `With Refundable : ${hits.length}`,
+    `No Refundable   : ${noRefund.length}`,
+    `Locked / 2FA    : ${locked.length}`,
+    `Failed          : ${failed.length}`,
     ``,
-    `${UI.flag} **Total Items:** ${totalRefundable}`,
+    `Total Items     : ${totalRefundable}`,
   ];
-  if (elapsed) lines.push(`${UI.time} **Time:** ${elapsed}s`);
-  if (dmSent) lines.push(``, `> » Results sent to your DMs`);
-
-  const embed = header().setColor(COLORS.PRIMARY).setDescription(lines.join("\n"));
-  if (username) embed.setFooter({ text: _fmtFooter("Checked by", username) });
-  return embed;
+  if (elapsed) lines.push(`Time            : ${elapsed}s`);
+  if (dmSent) lines.push(``, `Results sent to your DMs.`);
+  return pullerStyle({
+    title: "Refund Checker",
+    username,
+    sections: [{ heading: "Results", lines }],
+  });
 }
 
+// ============================================================
+//  AIO
+// ============================================================
 
-// ── AIO Checker Embeds ───────────────────────────────────────
-
-function aioProgressEmbed(done, total, live = {}) {
+function aioProgressEmbed(done, total, live = {}, username) {
   const pct = total === 0 ? 0 : Math.round((done / total) * 100);
-  const barLen = 18;
-  const filled = Math.round((pct / 100) * barLen);
-  const bar = "█".repeat(filled) + "░".repeat(barLen - filled);
-
-  const lines = [
-    `${UI.bolt} **Checking Accounts...**`,
-    `\`${bar}\` **${pct}%**`,
-    `${UI.bullet} **Checked:** ${done} / ${total}`,
-    ``,
-    `${UI.star} **Live Stats**`,
-    `${UI.bullet} ${UI.ok} **Hits:** ${live.hits || 0}`,
-    `  ${UI.sub} XGP: ${live.xgp || 0}`,
-    `  ${UI.sub} XGPU: ${live.xgpu || 0}`,
-    `  ${UI.sub} ${UI.card} Cards: ${live.payment_methods || 0}`,
-    `${UI.bullet} ${UI.shield} **2FA:** ${live.twofa || 0}`,
-    `${UI.bullet} ${UI.mail} **Valid Mail:** ${live.valid_mail || 0}`,
-    `${UI.bullet} ${UI.fail} **Bad:** ${live.bad || 0}`,
-    ``,
-    `${UI.coin} **Microsoft**`,
-    `${UI.bullet} **Balance:** ${live.ms_balance || 0}`,
-    `${UI.bullet} **Points:** ${live.ms_points || 0}`,
-    ``,
-    `${UI.lock} **Security**`,
-    `${UI.bullet} **MFA:** ${live.mfa || 0} ${UI.bullet} **SFA:** ${live.sfa || 0}`,
-    `${UI.bullet} **Banned:** ${live.banned || 0} ${UI.bullet} **Unbanned:** ${live.unbanned || 0}`,
-    ``,
-    `${UI.bolt} **CPM:** ${live.cpm || 0} ${UI.bullet} ${UI.warn} **Errors:** ${live.errors || 0}`,
-  ];
-
-  return header().setColor(COLORS.PRIMARY).setDescription(lines.join("\n"));
+  return pullerStyle({
+    title: "AIO Checker",
+    username,
+    color: COLORS.PRIMARY,
+    thumbnail: false,
+    sections: [
+      {
+        heading: "Progress",
+        lines: [
+          `[${_bar(pct)}] ${pct}%`,
+          `Checked : ${done} / ${total}`,
+        ],
+      },
+      {
+        heading: "Live Stats",
+        lines: [
+          `Hits        : ${live.hits || 0}`,
+          `  XGP       : ${live.xgp || 0}`,
+          `  XGPU      : ${live.xgpu || 0}`,
+          `  Cards     : ${live.payment_methods || 0}`,
+          `2FA         : ${live.twofa || 0}`,
+          `Valid Mail  : ${live.valid_mail || 0}`,
+          `Bad         : ${live.bad || 0}`,
+        ],
+      },
+      {
+        heading: "Microsoft",
+        lines: [
+          `Balance : ${live.ms_balance || 0}`,
+          `Points  : ${live.ms_points || 0}`,
+        ],
+      },
+      {
+        heading: "Security",
+        lines: [
+          `MFA      : ${live.mfa || 0}`,
+          `SFA      : ${live.sfa || 0}`,
+          `Banned   : ${live.banned || 0}`,
+          `Unbanned : ${live.unbanned || 0}`,
+        ],
+      },
+      {
+        heading: "Performance",
+        lines: [
+          `CPM    : ${live.cpm || 0}`,
+          `Errors : ${live.errors || 0}`,
+        ],
+      },
+    ],
+  });
 }
 
 function aioResultsEmbed(s, { dmSent, username } = {}) {
-  const lines = [
-    `${UI.flag} **Checking Complete!**`,
-    `${UI.bullet} **Total Checked:** ${s.checked || 0}`,
-    ``,
-    `${UI.star} **Account Analysis**`,
-    `${UI.bullet} ${UI.ok} **Hits:** ${s.hits || 0}`,
-    `  ${UI.sub} XGP: ${s.xgp || 0}`,
-    `  ${UI.sub} XGPU: ${s.xgpu || 0}`,
-    `  ${UI.sub} ${UI.card} Cards: ${s.payment_methods || 0}`,
-    `${UI.bullet} ${UI.shield} **2FA:** ${s.twofa || 0}`,
-    `${UI.bullet} ${UI.mail} **Valid Mail:** ${s.valid_mail || 0}`,
-    `${UI.bullet} ${UI.fail} **Bad:** ${s.bad || 0}`,
-    ``,
-    `${UI.coin} **Microsoft**`,
-    `${UI.bullet} **Balance:** ${s.ms_balance || 0}`,
-    `${UI.bullet} **Points:** ${s.ms_points || 0}`,
-    ``,
-    `${UI.lock} **Security**`,
-    `${UI.bullet} **MFA:** ${s.mfa || 0} ${UI.bullet} **SFA:** ${s.sfa || 0}`,
-    `${UI.bullet} **Banned:** ${s.banned || 0} ${UI.bullet} **Unbanned:** ${s.unbanned || 0}`,
-    ``,
-    `${UI.bolt} **CPM:** ${s.cpm || 0}`,
-    `${UI.time} **Time:** ${s.elapsed || "?"}`,
+  const sections = [
+    { heading: "Account Analysis", lines: [
+      `Total Checked : ${s.checked || 0}`,
+      `Hits          : ${s.hits || 0}`,
+      `  XGP         : ${s.xgp || 0}`,
+      `  XGPU        : ${s.xgpu || 0}`,
+      `  Cards       : ${s.payment_methods || 0}`,
+      `2FA           : ${s.twofa || 0}`,
+      `Valid Mail    : ${s.valid_mail || 0}`,
+      `Bad           : ${s.bad || 0}`,
+    ]},
+    { heading: "Microsoft", lines: [
+      `Balance : ${s.ms_balance || 0}`,
+      `Points  : ${s.ms_points || 0}`,
+    ]},
+    { heading: "Security", lines: [
+      `MFA      : ${s.mfa || 0}`,
+      `SFA      : ${s.sfa || 0}`,
+      `Banned   : ${s.banned || 0}`,
+      `Unbanned : ${s.unbanned || 0}`,
+    ]},
+    { heading: "Performance", lines: [
+      `CPM   : ${s.cpm || 0}`,
+      `Time  : ${s.elapsed || "?"}`,
+    ]},
   ];
-  if (dmSent) lines.push(``, `> » Results sent to your DMs`);
+  if (dmSent) sections.push({ heading: "Output", lines: ["Results sent to your DMs."] });
+  return pullerStyle({
+    title: "AIO Checker",
+    username,
+    color: s.hits > 0 ? COLORS.SUCCESS : COLORS.ERROR,
+    sections,
+  });
+}
 
-  const embed = header()
-    .setColor(s.hits > 0 ? COLORS.SUCCESS : COLORS.ERROR)
-    .setDescription(lines.join("\n"));
+// ============================================================
+//  Gen / Stock / Misc
+// ============================================================
 
-  if (username) embed.setFooter({ text: _fmtFooter("Checked by", username) });
-  return embed;
+function genHelpEmbed(prefix, username) {
+  return pullerStyle({
+    title: "Gen System",
+    username,
+    sections: [
+      {
+        heading: "User",
+        lines: [
+          `${prefix}gen <product> <amount>`,
+          "  Pull stock items.",
+          "  Users: 1/req, 200s cooldown. Admins: 50.",
+          `${prefix}stock`,
+          "  List all products and stock counts.",
+        ],
+      },
+      {
+        heading: "Stock Management",
+        lines: [
+          `${prefix}addstock <product> + attach .txt`,
+          `${prefix}replacegenstock <product> + attach .txt`,
+          `${prefix}downloadgenstock`,
+        ],
+      },
+      { heading: "Output", lines: ["Items delivered via DM."] },
+    ],
+  });
+}
+
+function stockListEmbed(entries, username) {
+  if (entries.length === 0) {
+    return pullerStyle({
+      title: "Stock",
+      username,
+      color: COLORS.MUTED,
+      sections: [{ heading: "Products", lines: ["No products yet. Use .addstock to add some."] }],
+    });
+  }
+  const lines = entries.map(e => `${e.name.padEnd(20)} : ${e.count}`);
+  lines.push(``, `Total products : ${entries.length}`);
+  return pullerStyle({
+    title: "Stock",
+    username,
+    color: COLORS.INFO,
+    sections: [{ heading: "Products", lines }],
+  });
+}
+
+function unauthorisedEmbed(username) {
+  return pullerStyle({
+    title: "Unauthorised",
+    username,
+    color: COLORS.WARNING,
+    sections: [{
+      heading: "Access",
+      lines: [
+        "Reply 'milk' to this chat to gain auto access",
+        "-- otherwise wait for the owner.",
+      ],
+    }],
+  });
+}
+
+// ============================================================
+//  Utility
+// ============================================================
+
+function textAttachment(lines, filename) {
+  const buffer = Buffer.from(lines.join("\n"), "utf-8");
+  return new AttachmentBuilder(buffer, { name: filename });
 }
 
 module.exports = {
+  // core
   progressEmbed,
   checkResultsEmbed,
   claimResultsEmbed,
+  // puller
   pullFetchProgressEmbed,
   pullLiveProgressEmbed,
   pullResultsEmbed,
   promoPullerFetchProgressEmbed,
   promoPullerResultsEmbed,
+  // purchase
   purchaseProgressEmbed,
   purchaseResultsEmbed,
   productSearchEmbed,
+  // checkers
   changerResultsEmbed,
   accountCheckerResultsEmbed,
   rewardsResultsEmbed,
-  prsProgressEmbed,
-  prsResultsEmbed,
-  refundProgressEmbed,
-  refundResultsEmbed,
+  // generic
   errorEmbed,
   successEmbed,
   infoEmbed,
   ownerOnlyEmbed,
   authListEmbed,
+  // help
   helpOverviewEmbed,
   helpCategoryEmbed,
   helpSelectMenu,
+  // welcome (no-op)
   welcomeEmbed,
+  // admin / stats
   adminPanelEmbed,
   detailedStatsEmbed,
+  // utils
   textAttachment,
+  // recovery
   recoverProgressEmbed,
   recoverResultEmbed,
+  // inbox
   inboxAioProgressEmbed,
   inboxAioResultsEmbed,
+  // PRS
+  prsProgressEmbed,
+  prsResultsEmbed,
+  // refund
+  refundProgressEmbed,
+  refundResultsEmbed,
+  // gen
   genHelpEmbed,
   stockListEmbed,
   unauthorisedEmbed,
+  // aio
   aioProgressEmbed,
   aioResultsEmbed,
 };
