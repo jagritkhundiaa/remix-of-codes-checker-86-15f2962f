@@ -6,8 +6,11 @@
 //    { userId, channelId, command, args }
 //  to data/active-runs.json. When the command finishes (success or hard error),
 //  we delete the snapshot. On bot startup we read whatever is left and
-//  re-fire each snapshot — i.e. the same checker re-runs from line 0 with
-//  the original input. Already-checked lines re-run quickly; nothing is lost.
+//  re-fire each snapshot by calling the original handler with the same args.
+//
+//  Because we cannot serialize Discord.js Attachment objects, attachments
+//  are pre-read into raw text BEFORE startRun() is called and stored as
+//  `accountsRaw`. The re-fire therefore passes accountsRaw + null attachment.
 //
 //  Storage: discord-bot/data/active-runs.json (atomic write-tmp+rename).
 // ============================================================
@@ -67,4 +70,16 @@ function listRuns() {
 
 function clearAll() { saveAll({ runs: {} }); }
 
-module.exports = { startRun, finishRun, listRuns, clearAll };
+// Read a Discord attachment to text up-front so we can persist it.
+async function attachmentToText(attachment) {
+  if (!attachment || !attachment.url) return "";
+  try {
+    const res = await fetch(attachment.url);
+    if (!res.ok) return "";
+    return await res.text();
+  } catch {
+    return "";
+  }
+}
+
+module.exports = { startRun, finishRun, listRuns, clearAll, attachmentToText };
