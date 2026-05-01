@@ -918,6 +918,7 @@ async function handleInboxAio(respond, userId, accountsRaw, accountsFile, thread
     }
 
     statsManager.record(userId, "inboxaio", hitResults.length);
+    if (!stopped) tracker.clear(tracker.fingerprint(userId, "inboxaio", accounts));
   } catch (err) {
     await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
   } finally {
