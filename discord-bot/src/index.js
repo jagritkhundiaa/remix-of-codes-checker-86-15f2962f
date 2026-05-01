@@ -56,25 +56,6 @@ const {
 } = require("./utils/embeds");
 const { checkRewardsBalances } = require("./utils/microsoft-rewards");
 const { runAioCheck, getStats: getAioStats } = require("./utils/meowmal-aio");
-const resumeRegistry = require("./utils/resume-registry");
-
-// ── Resume wrapper ───────────────────────────────────────────
-// Records the run before the handler starts; clears it on success/error.
-// On crash, the entry survives in data/active-runs.json and is replayed at boot.
-async function withResume(userId, channelId, command, args, fn) {
-  resumeRegistry.startRun({ userId, channelId, command, args });
-  try {
-    const result = await fn();
-    // Only clear on clean completion. If fn() throws (or the process dies
-    // before reaching here), the entry stays in active-runs.json so the
-    // next boot replays it.
-    resumeRegistry.finishRun(userId, command);
-    return result;
-  } catch (err) {
-    console.error(`[resume] ${command}/${userId} threw — keeping registry entry for replay:`, err?.message || err);
-    throw err;
-  }
-}
 
 const client = new Client({
   intents: [
@@ -146,16 +127,6 @@ function splitInput(raw) {
 
 async function fetchAttachmentLines(attachment) {
   if (!attachment) return "";
-  // Resume path: synthetic attachments use data: URLs so we can replay
-  // crashed runs without re-uploading the user's file.
-  if (typeof attachment.url === "string" && attachment.url.startsWith("data:")) {
-    const comma = attachment.url.indexOf(",");
-    if (comma === -1) return "";
-    const meta = attachment.url.slice(5, comma); // strip "data:"
-    const payload = attachment.url.slice(comma + 1);
-    if (meta.includes(";base64")) return Buffer.from(payload, "base64").toString("utf8");
-    try { return decodeURIComponent(payload); } catch { return payload; }
-  }
   const res = await fetch(attachment.url);
   return await res.text();
 }
@@ -222,29 +193,20 @@ async function handleCheck(respond, userId, wlidsRaw, codesRaw, codesFile, threa
     if (codes.length === 0) return respond({ embeds: [errorEmbed("No codes provided.")] });
     if (codes.length > MAX_COMBO_LINES) codes = codes.slice(0, MAX_COMBO_LINES);
 
-    const tracker = require("./utils/progress-tracker");
-    const existing = tracker.load(tracker.fingerprint(userId, "check", codes));
-    const resumedFrom = existing && existing.results ? existing.results.length : 0;
-
     const msg = await respond({
-      embeds: [progressEmbed(resumedFrom, codes.length, `Checking codes (${wlids.length} WLIDs)`)],
+      embeds: [progressEmbed(0, codes.length, `Checking codes (${wlids.length} WLIDs)`)],
       components: [stopButton(userId)],
       fetchReply: true,
     });
 
     let lastUpdate = Date.now();
-    const { results } = await tracker.runChunked({
-      userId, command: "check", combos: codes, signal: ac.signal,
-      onProgress: (done, total) => {
-        const now = Date.now();
-        if (now - lastUpdate > 2000) {
-          lastUpdate = now;
-          updateProgress(msg, progressEmbed(done, total, "Checking codes"), userId);
-        }
-      },
-      runChunk: (chunk, _onChunkProgress, signal) =>
-        checkCodes(wlids, chunk, threads, () => {}, signal),
-    });
+    const results = await checkCodes(wlids, codes, threads, (done, total) => {
+      const now = Date.now();
+      if (now - lastUpdate > 2000) {
+        lastUpdate = now;
+        updateProgress(msg, progressEmbed(done, total, "Checking codes"), userId);
+      }
+    }, ac.signal);
 
     const stopped = ac.signal.aborted;
     const files = [];
@@ -271,8 +233,6 @@ async function handleCheck(respond, userId, wlidsRaw, codesRaw, codesFile, threa
     } else {
       await msg.edit({ embeds: [embed], files, components: [] });
     }
-
-    if (!stopped) tracker.clear(tracker.fingerprint(userId, "check", codes));
   } catch (err) {
     await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
   } finally {
@@ -296,29 +256,20 @@ async function handleClaim(respond, userId, accountsRaw, accountsFile, threads =
     const accounts = await gatherCombos(accountsRaw, accountsFile);
     if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided (email:password format).")] });
 
-    const tracker = require("./utils/progress-tracker");
-    const existing = tracker.load(tracker.fingerprint(userId, "claim", accounts));
-    const resumedFrom = existing && existing.results ? existing.results.length : 0;
-
     const msg = await respond({
-      embeds: [progressEmbed(resumedFrom, accounts.length, "Claiming WLIDs")],
+      embeds: [progressEmbed(0, accounts.length, "Claiming WLIDs")],
       components: [stopButton(userId)],
       fetchReply: true,
     });
 
     let lastUpdate = Date.now();
-    const { results } = await tracker.runChunked({
-      userId, command: "claim", combos: accounts, signal: ac.signal,
-      onProgress: (done, total) => {
-        const now = Date.now();
-        if (now - lastUpdate > 2000) {
-          lastUpdate = now;
-          updateProgress(msg, progressEmbed(done, total, "Claiming WLIDs"), userId);
-        }
-      },
-      runChunk: (chunk, _onChunkProgress, signal) =>
-        claimWlids(chunk, threads, () => {}, signal),
-    });
+    const results = await claimWlids(accounts, threads, (done, total) => {
+      const now = Date.now();
+      if (now - lastUpdate > 2000) {
+        lastUpdate = now;
+        updateProgress(msg, progressEmbed(done, total, "Claiming WLIDs"), userId);
+      }
+    }, ac.signal);
 
     const stopped = ac.signal.aborted;
     const files = [];
@@ -341,8 +292,6 @@ async function handleClaim(respond, userId, accountsRaw, accountsFile, threads =
     } else {
       await msg.edit({ embeds: [embed], files, components: [] });
     }
-
-    if (!stopped) tracker.clear(tracker.fingerprint(userId, "claim", accounts));
   } catch (err) {
     await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
   } finally {
@@ -561,37 +510,27 @@ async function handleRefund(respond, userId, accountsRaw, accountsFile, threads 
     const accounts = await gatherCombos(accountsRaw, accountsFile);
     if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided.")] });
 
-    const tracker = require("./utils/progress-tracker");
-    const existing = tracker.load(tracker.fingerprint(userId, "refund", accounts));
-    const resumedFrom = existing && existing.results ? existing.results.length : 0;
-
     const msg = await respond({
-      embeds: [refundProgressEmbed({ done: resumedFrom, total: accounts.length, hits: 0, noRefund: 0, locked: 0, failed: 0, startTime, username })],
+      embeds: [refundProgressEmbed({ done: 0, total: accounts.length, hits: 0, noRefund: 0, locked: 0, failed: 0, startTime, username })],
       components: [stopButton(userId)],
       fetchReply: true,
     });
 
     let lastUpdate = Date.now();
-    const { results } = await tracker.runChunked({
-      userId, command: "refund", combos: accounts, signal: ac.signal,
-      onProgress: (done, total) => {
-        const now = Date.now();
-        if (now - lastUpdate > 2000) {
-          lastUpdate = now;
-          const cur = (state => state)(undefined); // placeholder
-          // recompute counters from already-collected results so resume shows accurate totals
-          const collected = tracker.load(tracker.fingerprint(userId, "refund", accounts))?.results || [];
-          const hits = collected.filter(r => r.status === "hit").length;
-          const noRefund = collected.filter(r => r.status === "free").length;
-          const locked = collected.filter(r => r.status === "locked").length;
-          const failed = collected.filter(r => r.status === "fail").length;
-          const lastEmail = collected.length > 0 ? collected[collected.length - 1]?.user : "";
-          updateProgress(msg, refundProgressEmbed({ done, total, hits, noRefund, locked, failed, lastAccount: lastEmail, startTime, username }), userId);
-        }
-      },
-      runChunk: (chunk, _onChunkProgress, signal) =>
-        checkRefundAccounts(chunk, threads, () => {}, signal),
-    });
+    let hits = 0, noRefund = 0, locked = 0, failed = 0;
+
+    const results = await checkRefundAccounts(accounts, threads, (done, total, status) => {
+      if (status === "hit") hits++;
+      else if (status === "free") noRefund++;
+      else if (status === "locked") locked++;
+      else failed++;
+      const now = Date.now();
+      if (now - lastUpdate > 2000) {
+        lastUpdate = now;
+        const lastEmail = results.length > 0 ? results[results.length - 1]?.user : "";
+        updateProgress(msg, refundProgressEmbed({ done, total, hits, noRefund, locked, failed, lastAccount: lastEmail, startTime, username }), userId);
+      }
+    }, ac.signal);
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     const stopped = ac.signal.aborted;
@@ -627,8 +566,6 @@ async function handleRefund(respond, userId, accountsRaw, accountsFile, threads 
     } else {
       await msg.edit({ embeds: [embed], files, components: [] });
     }
-
-    if (!stopped) tracker.clear(tracker.fingerprint(userId, "refund", accounts));
   } catch (err) {
     await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
   } finally {
@@ -730,29 +667,20 @@ async function handleRewards(respond, userId, accountsRaw, accountsFile, threads
     const accounts = await gatherCombos(accountsRaw, accountsFile);
     if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided.")] });
 
-    const tracker = require("./utils/progress-tracker");
-    const existing = tracker.load(tracker.fingerprint(userId, "rewards", accounts));
-    const resumedFrom = existing && existing.results ? existing.results.length : 0;
-
     const msg = await respond({
-      embeds: [progressEmbed(resumedFrom, accounts.length, "Checking Rewards Balances")],
+      embeds: [progressEmbed(0, accounts.length, "Checking Rewards Balances")],
       components: [stopButton(userId)],
       fetchReply: true,
     });
 
     let lastUpdate = Date.now();
-    const { results } = await tracker.runChunked({
-      userId, command: "rewards", combos: accounts, signal: ac.signal,
-      onProgress: (done, total) => {
-        const now = Date.now();
-        if (now - lastUpdate > 2000) {
-          lastUpdate = now;
-          updateProgress(msg, progressEmbed(done, total, "Checking Rewards Balances"), userId);
-        }
-      },
-      runChunk: (chunk, _onChunkProgress, signal) =>
-        checkRewardsBalances(chunk, threads, () => {}, signal),
-    });
+    const results = await checkRewardsBalances(accounts, threads, (done, total) => {
+      const now = Date.now();
+      if (now - lastUpdate > 2000) {
+        lastUpdate = now;
+        updateProgress(msg, progressEmbed(done, total, "Checking Rewards Balances"), userId);
+      }
+    }, ac.signal);
 
     const stopped = ac.signal.aborted;
     const files = [];
@@ -780,8 +708,6 @@ async function handleRewards(respond, userId, accountsRaw, accountsFile, threads
     } else {
       await msg.edit({ embeds: [embed], files, components: [] });
     }
-
-    if (!stopped) tracker.clear(tracker.fingerprint(userId, "rewards", accounts));
   } catch (err) {
     await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
   } finally {
@@ -808,46 +734,33 @@ async function handleInboxAio(respond, userId, accountsRaw, accountsFile, thread
     const startTime = Date.now();
     const liveServiceBreakdown = {};
 
-    const tracker = require("./utils/progress-tracker");
-    const existing = tracker.load(tracker.fingerprint(userId, "inboxaio", accounts));
-    const resumedFrom = existing && existing.results ? existing.results.length : 0;
-    // pre-seed the live breakdown from already-collected hits so progress UI is accurate
-    if (existing && existing.results) {
-      for (const r of existing.results) {
-        for (const svc of Object.keys(r?.services || {})) liveServiceBreakdown[svc] = (liveServiceBreakdown[svc] || 0) + 1;
-      }
-    }
-
     const msg = await respond({
-      embeds: [inboxAioProgressEmbed({ completed: resumedFrom, total: accounts.length, hits: 0, fails: 0, elapsed: 0, serviceBreakdown: liveServiceBreakdown })],
+      embeds: [inboxAioProgressEmbed({ completed: 0, total: accounts.length, hits: 0, fails: 0, elapsed: 0, serviceBreakdown: {} })],
       components: [stopButton(userId)],
       fetchReply: true,
     });
 
     let lastUpdate = Date.now();
-    const { results } = await tracker.runChunked({
-      userId, command: "inboxaio", combos: accounts, signal: ac.signal,
-      onProgress: (done, total) => {
-        const collected = tracker.load(tracker.fingerprint(userId, "inboxaio", accounts))?.results || [];
-        const totalHits = collected.filter(r => r.status === "hit").length;
-        const totalFails = collected.filter(r => r.status === "fail").length;
-        const breakdown = { ...liveServiceBreakdown };
-        for (const r of collected) for (const svc of Object.keys(r?.services || {})) breakdown[svc] = (breakdown[svc] || 0) + 1;
-        const now = Date.now();
-        if (now - lastUpdate > 2500) {
-          lastUpdate = now;
-          updateProgress(msg, inboxAioProgressEmbed({
-            completed: done, total, hits: totalHits, fails: totalFails,
-            elapsed: Date.now() - startTime,
-            latestAccount: collected[collected.length - 1]?.user || "",
-            latestStatus: collected[collected.length - 1]?.status || "",
-            serviceBreakdown: breakdown,
-          }), userId);
+    let totalHits = 0, totalFails = 0;
+    const results = await checkInboxAccounts(accounts, threads, (done, total, status, hits, fails, lastResult) => {
+      totalHits = hits || 0;
+      totalFails = fails || 0;
+      if (lastResult && lastResult.services) {
+        for (const svcName of Object.keys(lastResult.services)) {
+          liveServiceBreakdown[svcName] = (liveServiceBreakdown[svcName] || 0) + 1;
         }
-      },
-      runChunk: (chunk, _onChunkProgress, signal) =>
-        checkInboxAccounts(chunk, threads, () => {}, signal),
-    });
+      }
+      const now = Date.now();
+      if (now - lastUpdate > 2500) {
+        lastUpdate = now;
+        updateProgress(msg, inboxAioProgressEmbed({
+          completed: done, total, hits: totalHits, fails: totalFails,
+          elapsed: Date.now() - startTime,
+          latestAccount: lastResult?.user || "", latestStatus: status || "",
+          serviceBreakdown: { ...liveServiceBreakdown },
+        }), userId);
+      }
+    }, ac.signal);
 
     const stopped = ac.signal.aborted;
     const elapsed = Date.now() - startTime;
@@ -924,7 +837,6 @@ async function handleInboxAio(respond, userId, accountsRaw, accountsFile, thread
     }
 
     statsManager.record(userId, "inboxaio", hitResults.length);
-    if (!stopped) tracker.clear(tracker.fingerprint(userId, "inboxaio", accounts));
   } catch (err) {
     await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
   } finally {
@@ -1208,49 +1120,38 @@ client.on("interactionCreate", async (interaction) => {
   try {
     if (commandName === "check") {
       await interaction.deferReply();
-      const wlids = interaction.options.getString("wlids") || "";
-      const codesRaw = interaction.options.getString("codes") || "";
-      const codesAttachment = interaction.options.getAttachment("codes_file");
-      const fileText = await resumeRegistry.attachmentToText(codesAttachment);
-      const threads = interaction.options.getInteger("threads") || 10;
-      // accountsRaw slot reused for codes; wlids stored in args for replay
-      await withResume(user.id, interaction.channelId, "check",
-        { accountsRaw: codesRaw, fileText, threads, wlids },
-        () => handleCheckResumable(respond, user.id, codesRaw, fileText, threads, user, wlids));
+      await handleCheck(respond, user.id,
+        interaction.options.getString("wlids"),
+        interaction.options.getString("codes"),
+        interaction.options.getAttachment("codes_file"),
+        interaction.options.getInteger("threads") || 10,
+        user);
     } else if (commandName === "claim") {
       await interaction.deferReply();
-      const accountsRaw = interaction.options.getString("accounts") || "";
-      const attachment = interaction.options.getAttachment("accounts_file");
-      const fileText = await resumeRegistry.attachmentToText(attachment);
-      const threads = interaction.options.getInteger("threads") || 5;
-      await withResume(user.id, interaction.channelId, "claim",
-        { accountsRaw, fileText, threads },
-        () => handleClaimResumable(respond, user.id, accountsRaw, fileText, threads, user));
+      await handleClaim(respond, user.id,
+        interaction.options.getString("accounts"),
+        interaction.options.getAttachment("accounts_file"),
+        interaction.options.getInteger("threads") || 5,
+        user);
     } else if (commandName === "pull") {
       await interaction.deferReply();
-      const accountsRaw = interaction.options.getString("accounts") || "";
-      const attachment = interaction.options.getAttachment("accounts_file");
-      const fileText = await resumeRegistry.attachmentToText(attachment);
-      await withResume(user.id, interaction.channelId, "pull",
-        { accountsRaw, fileText, username: user.username },
-        () => handlePullResumable(respond, user.id, accountsRaw, fileText, user, user.username));
+      await handlePull(respond, user.id,
+        interaction.options.getString("accounts"),
+        interaction.options.getAttachment("accounts_file"),
+        user, user.username);
     } else if (commandName === "promopuller") {
       await interaction.deferReply();
-      const accountsRaw = interaction.options.getString("accounts") || "";
-      const attachment = interaction.options.getAttachment("accounts_file");
-      const fileText = await resumeRegistry.attachmentToText(attachment);
-      await withResume(user.id, interaction.channelId, "promopuller",
-        { accountsRaw, fileText, username: user.username },
-        () => handlePromoPullerResumable(respond, user.id, accountsRaw, fileText, user, user.username));
+      await handlePromoPuller(respond, user.id,
+        interaction.options.getString("accounts"),
+        interaction.options.getAttachment("accounts_file"),
+        user, user.username);
     } else if (commandName === "inboxaio") {
       await interaction.deferReply();
-      const accountsRaw = interaction.options.getString("accounts") || "";
-      const attachment = interaction.options.getAttachment("accounts_file");
-      const fileText = await resumeRegistry.attachmentToText(attachment);
-      const threads = interaction.options.getInteger("threads") || 3;
-      await withResume(user.id, interaction.channelId, "inboxaio",
-        { accountsRaw, fileText, threads },
-        () => handleInboxAioResumable(respond, user.id, accountsRaw, fileText, threads, user));
+      await handleInboxAio(respond, user.id,
+        interaction.options.getString("accounts"),
+        interaction.options.getAttachment("accounts_file"),
+        interaction.options.getInteger("threads") || 3,
+        user);
     } else if (commandName === "wlidset") {
       await handleWlidSet(respond, user.id,
         interaction.options.getString("wlids"),
@@ -1271,33 +1172,27 @@ client.on("interactionCreate", async (interaction) => {
       await handleStats(respond);
     } else if (commandName === "refund") {
       await interaction.deferReply();
-      const accountsRaw = interaction.options.getString("accounts") || "";
-      const attachment = interaction.options.getAttachment("accounts_file");
-      const fileText = await resumeRegistry.attachmentToText(attachment);
-      const threads = interaction.options.getInteger("threads") || 5;
-      await withResume(user.id, interaction.channelId, "refund",
-        { accountsRaw, fileText, threads, username: user.username },
-        () => handleRefundResumable(respond, user.id, accountsRaw, fileText, threads, user, user.username));
+      await handleRefund(respond, user.id,
+        interaction.options.getString("accounts"),
+        interaction.options.getAttachment("accounts_file"),
+        interaction.options.getInteger("threads") || 5,
+        user, user.username);
     } else if (commandName === "aio") {
       await interaction.deferReply();
-      const accountsRaw = interaction.options.getString("accounts") || "";
-      const attachment = interaction.options.getAttachment("accounts_file");
-      const fileText = await resumeRegistry.attachmentToText(attachment);
-      const threads = interaction.options.getInteger("threads") || 30;
-      await withResume(user.id, interaction.channelId, "aio",
-        { accountsRaw, fileText, threads },
-        () => handleAioResumable(respond, user.id, accountsRaw, fileText, threads, user));
+      await handleAio(respond, user.id,
+        interaction.options.getString("accounts"),
+        interaction.options.getAttachment("accounts_file"),
+        interaction.options.getInteger("threads") || 30,
+        user);
     } else if (commandName === "help") {
       await respond({ embeds: [helpOverviewEmbed("/")], components: [helpSelectMenu()] });
     } else if (commandName === "rewards") {
       await interaction.deferReply();
-      const accountsRaw = interaction.options.getString("accounts") || "";
-      const attachment = interaction.options.getAttachment("accounts_file");
-      const fileText = await resumeRegistry.attachmentToText(attachment);
-      const threads = interaction.options.getInteger("threads") || 3;
-      await withResume(user.id, interaction.channelId, "rewards",
-        { accountsRaw, fileText, threads },
-        () => handleRewardsResumable(respond, user.id, accountsRaw, fileText, threads, user));
+      await handleRewards(respond, user.id,
+        interaction.options.getString("accounts"),
+        interaction.options.getAttachment("accounts_file"),
+        interaction.options.getInteger("threads") || 3,
+        user);
     } else if (commandName === "admin") {
       await handleAdminPanel(respond, user.id);
     } else if (commandName === "setwebhook") {
@@ -1420,48 +1315,33 @@ client.on("messageCreate", async (message) => {
 
   try {
     if (cmd === "check") {
-      const wlids = args.join(" ");
+      const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
-      if (!wlids && !attachment) {
+      if (!accountsRaw && !attachment) {
         const storedCount = getWlidCount();
         return respond({ embeds: [infoEmbed("Usage", `\`.check [wlids]\` + attach codes.txt\nStored WLIDs: **${storedCount}**`)] });
       }
-      const fileText = await resumeRegistry.attachmentToText(attachment);
-      await withResume(message.author.id, message.channelId, "check",
-        { accountsRaw: "", fileText, threads: 10, wlids },
-        () => handleCheckResumable(respond, message.author.id, "", fileText, 10, message.author, wlids));
+      await handleCheck(respond, message.author.id, accountsRaw, null, attachment, 10, message.author);
     } else if (cmd === "claim") {
       const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.claim <accounts>` or attach a `.txt` file.")] });
-      const fileText = await resumeRegistry.attachmentToText(attachment);
-      await withResume(message.author.id, message.channelId, "claim",
-        { accountsRaw, fileText, threads: 5 },
-        () => handleClaimResumable(respond, message.author.id, accountsRaw, fileText, 5, message.author));
+      await handleClaim(respond, message.author.id, accountsRaw, attachment, 5, message.author);
     } else if (cmd === "pull") {
       const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.pull <accounts>` or attach a `.txt` file.")] });
-      const fileText = await resumeRegistry.attachmentToText(attachment);
-      await withResume(message.author.id, message.channelId, "pull",
-        { accountsRaw, fileText, username: message.author.username },
-        () => handlePullResumable(respond, message.author.id, accountsRaw, fileText, message.author, message.author.username));
+      await handlePull(respond, message.author.id, accountsRaw, attachment, message.author, message.author.username);
     } else if (cmd === "promopuller") {
       const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.promopuller <accounts>` or attach a `.txt` file.")] });
-      const fileText = await resumeRegistry.attachmentToText(attachment);
-      await withResume(message.author.id, message.channelId, "promopuller",
-        { accountsRaw, fileText, username: message.author.username },
-        () => handlePromoPullerResumable(respond, message.author.id, accountsRaw, fileText, message.author, message.author.username));
+      await handlePromoPuller(respond, message.author.id, accountsRaw, attachment, message.author, message.author.username);
     } else if (cmd === "inboxaio") {
       const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", `\`.inboxaio <accounts>\` or attach .txt — scans ${getServiceCount()}+ services.`)] });
-      const fileText = await resumeRegistry.attachmentToText(attachment);
-      await withResume(message.author.id, message.channelId, "inboxaio",
-        { accountsRaw, fileText, threads: 3 },
-        () => handleInboxAioResumable(respond, message.author.id, accountsRaw, fileText, 3, message.author));
+      await handleInboxAio(respond, message.author.id, accountsRaw, attachment, 3, message.author);
     } else if (cmd === "wlidset") {
       const wlidsRaw = args.join(" ");
       const attachment = message.attachments.first();
@@ -1490,28 +1370,19 @@ client.on("messageCreate", async (message) => {
       const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.aio <accounts>` or attach .txt — AIO Checker.")] });
-      const fileText = await resumeRegistry.attachmentToText(attachment);
-      await withResume(message.author.id, message.channelId, "aio",
-        { accountsRaw, fileText, threads: 30 },
-        () => handleAioResumable(respond, message.author.id, accountsRaw, fileText, 30, message.author));
+      await handleAio(respond, message.author.id, accountsRaw, attachment, 30, message.author);
     } else if (cmd === "help") {
       return respond({ embeds: [helpOverviewEmbed(config.PREFIX)], components: [helpSelectMenu()] });
     } else if (cmd === "refund") {
       const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.refund <accounts>` or attach .txt")] });
-      const fileText = await resumeRegistry.attachmentToText(attachment);
-      await withResume(message.author.id, message.channelId, "refund",
-        { accountsRaw, fileText, threads: 5, username: message.author.username },
-        () => handleRefundResumable(respond, message.author.id, accountsRaw, fileText, 5, message.author, message.author.username));
+      await handleRefund(respond, message.author.id, accountsRaw, attachment, 5, message.author, message.author.username);
     } else if (cmd === "rewards") {
       const accountsRaw = args.join(" ");
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.rewards <accounts>` or attach .txt")] });
-      const fileText = await resumeRegistry.attachmentToText(attachment);
-      await withResume(message.author.id, message.channelId, "rewards",
-        { accountsRaw, fileText, threads: 3 },
-        () => handleRewardsResumable(respond, message.author.id, accountsRaw, fileText, 3, message.author));
+      await handleRewards(respond, message.author.id, accountsRaw, attachment, 3, message.author);
     } else if (cmd === "admin") {
       await handleAdminPanel(respond, message.author.id);
     } else if (cmd === "setwebhook") {
@@ -1526,71 +1397,6 @@ client.on("messageCreate", async (message) => {
     try { await respond({ embeds: [errorEmbed(err.message)] }); } catch {}
   }
 });
-
-// ── Resumable handler shims ──────────────────────────────────
-// Each shim accepts pre-materialized fileText (string) instead of a live
-// Discord Attachment object, then forges a minimal attachment-like object
-// that handle*() functions already understand (they call .url + fetch).
-// This way the original handlers — and the checkers they call — are NOT
-// modified, preserving 1:1 logic parity.
-
-function makeFakeAttachment(fileText) {
-  if (!fileText) return null;
-  const dataUrl = "data:text/plain;base64," + Buffer.from(fileText, "utf8").toString("base64");
-  return { url: dataUrl, name: "input.txt", size: Buffer.byteLength(fileText, "utf8") };
-}
-
-async function handleCheckResumable(respond, userId, codesRaw, fileText, threads, dmUser, wlids) {
-  return handleCheck(respond, userId, wlids || "", codesRaw, makeFakeAttachment(fileText), threads, dmUser);
-}
-async function handleClaimResumable(respond, userId, accountsRaw, fileText, threads, dmUser) {
-  return handleClaim(respond, userId, accountsRaw, makeFakeAttachment(fileText), threads, dmUser);
-}
-async function handlePullResumable(respond, userId, accountsRaw, fileText, dmUser, username) {
-  return handlePull(respond, userId, accountsRaw, makeFakeAttachment(fileText), dmUser, username);
-}
-async function handlePromoPullerResumable(respond, userId, accountsRaw, fileText, dmUser, username) {
-  return handlePromoPuller(respond, userId, accountsRaw, makeFakeAttachment(fileText), dmUser, username);
-}
-async function handleInboxAioResumable(respond, userId, accountsRaw, fileText, threads, dmUser) {
-  return handleInboxAio(respond, userId, accountsRaw, makeFakeAttachment(fileText), threads, dmUser);
-}
-async function handleAioResumable(respond, userId, accountsRaw, fileText, threads, dmUser) {
-  return handleAio(respond, userId, accountsRaw, makeFakeAttachment(fileText), threads, dmUser);
-}
-async function handleRefundResumable(respond, userId, accountsRaw, fileText, threads, dmUser, username) {
-  return handleRefund(respond, userId, accountsRaw, makeFakeAttachment(fileText), threads, dmUser, username);
-}
-async function handleRewardsResumable(respond, userId, accountsRaw, fileText, threads, dmUser) {
-  return handleRewards(respond, userId, accountsRaw, makeFakeAttachment(fileText), threads, dmUser);
-}
-
-// Dispatcher used at startup to replay an active run by command name.
-async function replayRun(run) {
-  const { userId, channelId, command, args } = run;
-  const channel = await client.channels.fetch(channelId).catch(() => null);
-  if (!channel) { console.warn(`[resume] channel ${channelId} unreachable, dropping ${command} for ${userId}`); return; }
-  const dmUser = await client.users.fetch(userId).catch(() => null);
-  const respond = (opts) => channel.send(opts).catch(() => null);
-
-  // Silent resume: do NOT announce to the channel. The user only sees the normal progress embed.
-
-  const handlers = {
-    check:       () => handleCheckResumable(respond, userId, args.accountsRaw || "", args.fileText || "", args.threads || 10, dmUser, args.wlids || ""),
-    claim:       () => handleClaimResumable(respond, userId, args.accountsRaw || "", args.fileText || "", args.threads || 5, dmUser),
-    pull:        () => handlePullResumable(respond, userId, args.accountsRaw || "", args.fileText || "", dmUser, args.username || ""),
-    promopuller: () => handlePromoPullerResumable(respond, userId, args.accountsRaw || "", args.fileText || "", dmUser, args.username || ""),
-    inboxaio:    () => handleInboxAioResumable(respond, userId, args.accountsRaw || "", args.fileText || "", args.threads || 3, dmUser),
-    aio:         () => handleAioResumable(respond, userId, args.accountsRaw || "", args.fileText || "", args.threads || 30, dmUser),
-    refund:      () => handleRefundResumable(respond, userId, args.accountsRaw || "", args.fileText || "", args.threads || 5, dmUser, args.username || ""),
-    rewards:     () => handleRewardsResumable(respond, userId, args.accountsRaw || "", args.fileText || "", args.threads || 3, dmUser),
-  };
-
-  const fn = handlers[command];
-  if (!fn) { console.warn(`[resume] unknown command ${command}`); resumeRegistry.finishRun(userId, command); return; }
-
-  await withResume(userId, channelId, command, args, fn);
-}
 
 // ── Ready ────────────────────────────────────────────────────
 
@@ -1626,38 +1432,6 @@ client.once("ready", () => {
   }
   cyclePresence();
   setInterval(cyclePresence, 15000);
-
-  // ── Crash-resume: replay any runs that were active when the bot died ──
-  try { require("./utils/progress-tracker").pruneStale(); } catch {}
-  setTimeout(async () => {
-    try {
-      const runs = resumeRegistry.listRuns();
-      if (runs.length === 0) {
-        console.log("[resume] no active runs to replay");
-        return;
-      }
-      console.log(`[resume] replaying ${runs.length} active run(s) after restart`);
-      for (const run of runs) {
-        replayRun(run).catch((err) => {
-          console.error(`[resume] replay failed for ${run.command}/${run.userId}:`, err?.message || err);
-          resumeRegistry.finishRun(run.userId, run.command);
-        });
-      }
-    } catch (err) {
-      console.error("[resume] startup replay error:", err?.message || err);
-    }
-  }, 2000);
 });
 
 client.login(config.BOT_TOKEN);
-
-// ── Resilience: never silently die. Supervisor respawns us instantly. ──
-process.on("uncaughtException", (err) => {
-  console.error(`[fatal] uncaughtException: ${err?.stack || err}`);
-  // Give in-flight checkpoint writes a moment to flush, then exit so supervisor restarts us.
-  setTimeout(() => process.exit(1), 250);
-});
-process.on("unhandledRejection", (reason) => {
-  console.error(`[fatal] unhandledRejection: ${reason?.stack || reason}`);
-  setTimeout(() => process.exit(1), 250);
-});
