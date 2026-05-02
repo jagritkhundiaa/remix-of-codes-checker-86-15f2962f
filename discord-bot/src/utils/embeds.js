@@ -820,7 +820,83 @@ function inboxAioResultsEmbed({ total, hits, fails, locked, twoFA, elapsed, serv
 }
 
 // ============================================================
-//  PRS
+//  Country Sort — top countries breakdown (Inbox AIO style UI)
+// ============================================================
+
+const COUNTRY_FLAGS = {
+  US: "🇺🇸", GB: "🇬🇧", UK: "🇬🇧", CA: "🇨🇦", AU: "🇦🇺", NZ: "🇳🇿",
+  DE: "🇩🇪", FR: "🇫🇷", IT: "🇮🇹", ES: "🇪🇸", PT: "🇵🇹", NL: "🇳🇱",
+  BE: "🇧🇪", SE: "🇸🇪", NO: "🇳🇴", DK: "🇩🇰", FI: "🇫🇮", IE: "🇮🇪",
+  CH: "🇨🇭", AT: "🇦🇹", PL: "🇵🇱", CZ: "🇨🇿", GR: "🇬🇷", RO: "🇷🇴",
+  HU: "🇭🇺", RU: "🇷🇺", UA: "🇺🇦", TR: "🇹🇷", IL: "🇮🇱", SA: "🇸🇦",
+  AE: "🇦🇪", EG: "🇪🇬", ZA: "🇿🇦", NG: "🇳🇬", KE: "🇰🇪", MA: "🇲🇦",
+  BR: "🇧🇷", AR: "🇦🇷", MX: "🇲🇽", CL: "🇨🇱", CO: "🇨🇴", PE: "🇵🇪",
+  VE: "🇻🇪", CN: "🇨🇳", JP: "🇯🇵", KR: "🇰🇷", IN: "🇮🇳", PK: "🇵🇰",
+  BD: "🇧🇩", ID: "🇮🇩", TH: "🇹🇭", VN: "🇻🇳", PH: "🇵🇭", MY: "🇲🇾",
+  SG: "🇸🇬", HK: "🇭🇰", TW: "🇹🇼",
+};
+
+function _countryLines(countryBreakdown, max = 20) {
+  if (!countryBreakdown || Object.keys(countryBreakdown).length === 0) return ["No countries detected."];
+  const sorted = Object.entries(countryBreakdown).sort((a, b) => b[1] - a[1]).slice(0, max);
+  const total = sorted.reduce((acc, [, c]) => acc + c, 0) || 1;
+  return sorted.map(([code, count], i) => {
+    const flag = COUNTRY_FLAGS[String(code).toUpperCase()] || "🏳️";
+    const pct = Math.round((count / total) * 100);
+    const rank = String(i + 1).padStart(2, " ");
+    return `${rank}. ${flag} ${String(code).padEnd(8)} : ${String(count).padStart(4)}  (${pct}%)`;
+  });
+}
+
+function countrySortProgressEmbed({ completed, total, hits, fails, elapsed, latestAccount, latestStatus, countryBreakdown, username }) {
+  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+  const elSec = elapsed ? Math.round(elapsed / 1000) : 0;
+  const cpm = elSec > 0 ? Math.round((completed / elSec) * 60) : 0;
+  const lines = [
+    `[${_bar(pct)}] ${pct}%`,
+    `Processed : ${completed} / ${total}`,
+    `Hits      : ${hits}`,
+    `Failed    : ${fails}`,
+    `Speed     : ${cpm} c/min`,
+    `Elapsed   : ${elSec}s`,
+  ];
+  if (latestAccount) {
+    const masked = latestAccount.replace(/(.{3}).*(@.*)/, "$1***$2");
+    lines.push(`Latest    : ${masked} (${latestStatus || "..."})`);
+  }
+  const sections = [{ heading: "Progress", lines }];
+  if (countryBreakdown && Object.keys(countryBreakdown).length > 0) {
+    sections.push({ heading: "Top Countries", lines: _countryLines(countryBreakdown, 20) });
+  }
+  return pullerStyle({ title: "Country Sort", username, color: COLORS.PRIMARY, thumbnail: false, sections });
+}
+
+function countrySortResultsEmbed({ total, hits, fails, locked, twoFA, elapsed, countryBreakdown, dmSent, username }) {
+  const elSec = elapsed ? Math.round(elapsed / 1000) : 0;
+  const cpm = elSec > 0 ? Math.round((total / elSec) * 60) : 0;
+  const uniqueCountries = countryBreakdown ? Object.keys(countryBreakdown).length : 0;
+  const lines = [
+    `Checked   : ${total}`,
+    `Valid     : ${hits}`,
+    `Invalid   : ${fails}`,
+    `Locked    : ${locked || 0}`,
+    `2FA       : ${twoFA || 0}`,
+    `Countries : ${uniqueCountries}`,
+    `Speed     : ${cpm} c/min`,
+    `Elapsed   : ${elSec}s`,
+  ];
+  if (dmSent) lines.push("", "Results sent to your DMs.");
+  const sections = [{ heading: "Results", lines }];
+  sections.push({ heading: "Top 20 Countries", lines: _countryLines(countryBreakdown, 20) });
+  return pullerStyle({
+    title: "Country Sort",
+    username,
+    color: hits > 0 ? COLORS.SUCCESS : COLORS.ERROR,
+    sections,
+  });
+}
+
+
 // ============================================================
 
 function prsProgressEmbed({ done, total, codesFound, category, working, failed, elapsed, latestAccount, username }) {
