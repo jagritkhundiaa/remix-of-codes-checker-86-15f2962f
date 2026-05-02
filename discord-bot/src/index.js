@@ -15,6 +15,7 @@ const { pullCodes } = require("./utils/microsoft-puller");
 const { pullPromos } = require("./utils/promo-puller");
 const { checkRefundAccounts } = require("./utils/microsoft-refund");
 const { checkInboxAccounts, getServiceCount } = require("./utils/microsoft-inbox");
+const { runCountrySort } = require("./utils/microsoft-countrysort");
 const { loadProxies, isProxyEnabled, getProxyCount, getProxyStats } = require("./utils/proxy-manager");
 const blacklist = require("./utils/blacklist");
 const { setWlids, getWlids, getWlidCount } = require("./utils/wlid-store");
@@ -34,6 +35,8 @@ const {
   promoPullerResultsEmbed,
   inboxAioProgressEmbed,
   inboxAioResultsEmbed,
+  countrySortProgressEmbed,
+  countrySortResultsEmbed,
   rewardsResultsEmbed,
   refundProgressEmbed,
   refundResultsEmbed,
@@ -89,7 +92,7 @@ function isOwner(userId) {
 // ── Channel enforcement ──────────────────────────────────────
 
 const PULLER_CHECKER_CMDS = new Set(["pull", "promopuller", "check", "checker", "claim"]);
-const INBOX_NORMAL_CMDS = new Set(["inboxaio", "rewards", "help", "stats", "wlidset", "refund", "netflix", "steam", "xboxchk", "aio"]);
+const INBOX_NORMAL_CMDS = new Set(["inboxaio", "countrysort", "rewards", "help", "stats", "wlidset", "refund", "netflix", "steam", "xboxchk", "aio"]);
 
 function getRequiredChannel(cmd) {
   if (PULLER_CHECKER_CMDS.has(cmd)) return config.ALLOWED_CHANNEL_PULLER;
