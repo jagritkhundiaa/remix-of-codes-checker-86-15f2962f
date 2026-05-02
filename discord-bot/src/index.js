@@ -1201,6 +1201,13 @@ client.on("interactionCreate", async (interaction) => {
         interaction.options.getAttachment("accounts_file"),
         interaction.options.getInteger("threads") || 3,
         user);
+    } else if (commandName === "countrysort") {
+      await interaction.deferReply();
+      await handleCountrySort(respond, user.id,
+        interaction.options.getString("accounts"),
+        interaction.options.getAttachment("accounts_file"),
+        interaction.options.getInteger("threads") || 3,
+        user);
     } else if (commandName === "wlidset") {
       await handleWlidSet(respond, user.id,
         interaction.options.getString("wlids"),
@@ -1380,6 +1387,11 @@ client.on("messageCreate", async (message) => {
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", `\`.inboxaio <accounts>\` or attach .txt — scans ${getServiceCount()}+ services.`)] });
       await handleInboxAio(respond, message.author.id, accountsRaw, attachment, 3, message.author);
+    } else if (cmd === "countrysort") {
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.countrysort <accounts>` or attach .txt — sorts by country, top 20 shown.")] });
+      await handleCountrySort(respond, message.author.id, accountsRaw, attachment, 3, message.author);
     } else if (cmd === "wlidset") {
       const wlidsRaw = args.join(" ");
       const attachment = message.attachments.first();
