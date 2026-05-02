@@ -1161,6 +1161,9 @@ module.exports = {
   // inbox
   inboxAioProgressEmbed,
   inboxAioResultsEmbed,
+  // country sort
+  countrySortProgressEmbed,
+  countrySortResultsEmbed,
   // PRS
   prsProgressEmbed,
   prsResultsEmbed,
