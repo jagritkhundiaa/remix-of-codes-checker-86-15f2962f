@@ -549,44 +549,43 @@ function authListEmbed(entries, username) {
 // ============================================================
 
 const HELP_SECTIONS = {
-  core: { label: "-- Core Tools --", categories: ["checker", "claimer", "puller", "promopuller"] },
-  account: { label: "-- Account Tools --", categories: ["inbox", "rewards", "refund"] },
-  checkers: { label: "-- Checkers --", categories: ["aio"] },
+  pullers: { label: "-- Pullers --", categories: ["puller", "promopuller", "claimer"] },
+  checkers: { label: "-- Checkers --", categories: ["aio", "inbox", "countrysort", "checker", "refund"] },
   owner: { label: "-- Owner Only --", categories: ["admin"] },
 };
 
 const HELP_CATEGORIES = {
-  checker: {
-    label: "Checker", description: "Check codes against WLID tokens", section: "core",
-    commands: (p) => [`${p}check [wlids] + attach codes.txt`, "  Check codes against WLID tokens.", "  Uses stored WLIDs if none provided."],
-  },
-  claimer: {
-    label: "Claimer", description: "Claim WLID tokens from accounts", section: "core",
-    commands: (p) => [`${p}claim <email:pass> or attach .txt`, "  Extract WLID tokens from MS accounts."],
-  },
   puller: {
-    label: "Puller", description: "Fetch & validate Game Pass codes", section: "core",
+    label: "Puller", description: "Fetch & validate Game Pass codes", section: "pullers",
     commands: (p) => [`${p}pull <email:pass> or attach .txt`, "  Fetches codes from Game Pass accounts,", "  then validates them automatically."],
   },
   promopuller: {
-    label: "Promo Puller", description: "Pull & validate Discord promo links", section: "core",
+    label: "Promo Puller", description: "Pull & validate Discord promo links", section: "pullers",
     commands: (p) => [`${p}promopuller <email:pass> or attach .txt`, "  Pulls Discord promo links from Game Pass", "  perks and validates each gift code."],
   },
-  rewards: {
-    label: "Rewards", description: "Check Microsoft Rewards balances", section: "account",
-    commands: (p) => [`${p}rewards <email:pass> or attach .txt`, "  Check Rewards point balances.", "  Shows balance, lifetime points, level."],
-  },
-  refund: {
-    label: "Refund", description: "Check refund eligibility (14-day)", section: "account",
-    commands: (p) => [`${p}refund <email:pass> or attach .txt`, "  Checks if purchases are within the", "  14-day refund window."],
-  },
-  inbox: {
-    label: "Inbox AIO", description: "Scan inboxes for 50+ services", section: "account",
-    commands: (p) => [`${p}inboxaio <email:pass> or attach .txt`, "  Scans Hotmail/Outlook for 50+ services", "  (Netflix, Spotify, PayPal, ...)."],
+  claimer: {
+    label: "Claimer", description: "Claim WLID tokens from accounts", section: "pullers",
+    commands: (p) => [`${p}claim <email:pass> or attach .txt`, "  Extract WLID tokens from MS accounts."],
   },
   aio: {
     label: "AIO", description: "Full Microsoft account analysis", section: "checkers",
     commands: (p) => [`${p}aio <email:pass> or attach .txt`, "  Full Microsoft account analysis:", "  XGP, cards, MFA, bans, Minecraft,", "  rewards, and more."],
+  },
+  inbox: {
+    label: "Inbox AIO", description: "Scan inboxes for 50+ services", section: "checkers",
+    commands: (p) => [`${p}inboxaio <email:pass> or attach .txt`, "  Scans Hotmail/Outlook for 50+ services", "  (Netflix, Spotify, PayPal, ...)."],
+  },
+  countrysort: {
+    label: "Country Sort", description: "Sort accounts by country (top 20)", section: "checkers",
+    commands: (p) => [`${p}countrysort <email:pass> or attach .txt`, "  Sorts Microsoft accounts by country.", "  Shows the top 20 countries on UI."],
+  },
+  checker: {
+    label: "Code Checker", description: "Check codes against WLID tokens", section: "checkers",
+    commands: (p) => [`${p}check [wlids] + attach codes.txt`, "  Check codes against WLID tokens.", "  Uses stored WLIDs if none provided."],
+  },
+  refund: {
+    label: "Refund", description: "Check refund eligibility (14-day)", section: "checkers",
+    commands: (p) => [`${p}refund <email:pass> or attach .txt`, "  Checks if purchases are within the", "  14-day refund window."],
   },
   admin: {
     label: "Admin", description: "Authorization, blacklist & settings", section: "owner",
@@ -605,7 +604,6 @@ const HELP_CATEGORIES = {
 };
 
 function helpOverviewEmbed(prefix, username) {
-  // Matches the screenshot: title + === + Commands section + Output section
   return pullerStyle({
     title: "AutizMens",
     username,
@@ -617,10 +615,13 @@ function helpOverviewEmbed(prefix, username) {
           "  Browse every category via the menu below.",
           "",
           "Use the dropdown to view command groups:",
-          "  • Checker     • Claimer",
-          "  • Puller      • Promo Puller",
-          "  • Rewards     • Refund",
-          "  • Inbox AIO   • AIO",
+          "  -- Pullers --",
+          "  • Puller       • Promo Puller",
+          "  • Claimer",
+          "  -- Checkers --",
+          "  • AIO          • Inbox AIO",
+          "  • Country Sort • Code Checker",
+          "  • Refund",
         ],
       },
       {
