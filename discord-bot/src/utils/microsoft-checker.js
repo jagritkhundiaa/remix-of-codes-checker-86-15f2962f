@@ -123,15 +123,8 @@ async function checkCodes(wlids, codes, threads = 10, onProgress, signal) {
     w.includes("WLID1.0=") ? w.trim() : `WLID1.0="${w.trim()}"`
   );
 
-  const MAX_PER_WLID = 40;
-  const tasks = [];
-  for (let i = 0; i < codes.length; i++) {
-    const code = codes[i].trim();
-    if (!code) continue;
-    const wlidIndex = Math.floor(i / MAX_PER_WLID);
-    if (wlidIndex >= formattedWlids.length) break;
-    tasks.push({ code, wlid: formattedWlids[wlidIndex] });
-  }
+  const cleanCodes = codes.map((c) => c.trim()).filter(Boolean);
+  const tasks = cleanCodes.map((code, i) => ({ code, startIdx: i % formattedWlids.length }));
 
   const results = await runPool({
     items: tasks,
@@ -140,7 +133,18 @@ async function checkCodes(wlids, codes, threads = 10, onProgress, signal) {
     scope: "codecheck",
     runner: async (task) => {
       try {
-        return { result: await checkSingleCode(task.code, task.wlid) };
+        let last = null;
+        // Round-robin starting at task.startIdx, retry next WLID on auth/error
+        for (let n = 0; n < formattedWlids.length; n++) {
+          const idx = (task.startIdx + n) % formattedWlids.length;
+          const res = await checkSingleCode(task.code, formattedWlids[idx]);
+          last = res;
+          if (res.status === "error" || (res.status === "error" && /unauthorized/i.test(res.error || ""))) {
+            continue;
+          }
+          return { result: res };
+        }
+        return { result: last || { code: task.code, status: "error", error: "All WLIDs failed" } };
       } catch (e) {
         return { result: { code: task.code, status: "error", error: String(e) } };
       }

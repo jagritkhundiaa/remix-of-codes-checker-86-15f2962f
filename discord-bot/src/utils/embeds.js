@@ -652,17 +652,19 @@ function helpCategoryEmbed(categoryKey, prefix, username) {
 }
 
 function helpSelectMenu() {
+  const sectionEmoji = { pullers: "📥", checkers: "✅", owner: "👑" };
+  const sectionName = { pullers: "Pullers", checkers: "Checkers", owner: "Owner" };
   const options = [];
-  for (const [, section] of Object.entries(HELP_SECTIONS)) {
+  for (const [secKey, section] of Object.entries(HELP_SECTIONS)) {
     for (const catKey of section.categories) {
       const cat = HELP_CATEGORIES[catKey];
-      if (cat) {
-        options.push({
-          label: cat.label,
-          description: `${section.label.replace(/^-- | --$/g, "")} > ${cat.description}`,
-          value: catKey,
-        });
-      }
+      if (!cat) continue;
+      options.push({
+        label: `${sectionName[secKey]} • ${cat.label}`,
+        description: cat.description,
+        value: catKey,
+        emoji: sectionEmoji[secKey],
+      });
     }
   }
   return new ActionRowBuilder().addComponents(
