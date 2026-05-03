@@ -246,6 +246,7 @@ async function handleCheck(respond, userId, wlidsRaw, codesRaw, codesFile, threa
 // ── Claim ────────────────────────────────────────────────────
 
 async function handleClaim(respond, userId, accountsRaw, accountsFile, threads = 5, dmUser = null) {
+  if (!isOwner(userId)) return respond({ embeds: [errorEmbed("Only the bot owner can use `.claim`.")] });
   if (!canUse(userId)) return respond({ embeds: [errorEmbed(blacklist.isBlacklisted(userId) ? "You are blacklisted." : "You are not authorized to use this bot.")] });
 
   const acquire = limiter.acquire(userId, "claim");
