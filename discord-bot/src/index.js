@@ -460,12 +460,28 @@ async function handlePromoPuller(respond, userId, accountsRaw, accountsFile, dmU
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     const stopped = ac.signal.aborted;
     const files = [];
-    // allLinks is now [{ link, sourceEmail }] — keep raw + per-account breakdown
+    // allLinks is now [{ link, sourceEmail, status, ok }] — keep raw + per-account breakdown
     const flatLinks = allLinks.map((l) => typeof l === "string" ? l : l.link);
     const uniqueLinks = [...new Set(flatLinks)];
 
+    // Tally status counts across every validated link
+    const statusCounts = {};
+    for (const l of allLinks) {
+      const s = (l && typeof l === "object" && l.status) ? l.status : "UNKNOWN";
+      statusCounts[s] = (statusCounts[s] || 0) + 1;
+    }
+
+    const validLines = allLinks.filter((l) => l && l.status === "VALID").map((l) => `${l.sourceEmail} | ${l.link}`);
+    const redeemedLines = allLinks.filter((l) => l && l.status === "REDEEMED").map((l) => `${l.sourceEmail} | ${l.link}`);
+
+    if (validLines.length > 0) files.push(textAttachment(validLines, "valid.txt"));
+    if (redeemedLines.length > 0) files.push(textAttachment(redeemedLines, "redeemed.txt"));
+
     if (allLinks.length > 0) {
-      files.push(textAttachment(allLinks.map((l) => typeof l === "string" ? l : `${l.link} | from ${l.sourceEmail}`), "links_all.txt"));
+      files.push(textAttachment(
+        allLinks.map((l) => typeof l === "string" ? l : `${l.link} | from ${l.sourceEmail} | ${l.status}`),
+        "links_all.txt",
+      ));
     }
     if (uniqueLinks.length > 0 && uniqueLinks.length !== flatLinks.length) {
       files.push(textAttachment(uniqueLinks, "links_unique.txt"));
@@ -475,13 +491,13 @@ async function handlePromoPuller(respond, userId, accountsRaw, accountsFile, dmU
       .map((r) => `${r.email}\n${r.links.join("\n")}`);
     if (perAccount.length > 0) files.push(textAttachment(perAccount, "links_by_account.txt"));
 
-    const embed = promoPullerResultsEmbed(fetchResults, flatLinks, { elapsed, dmSent: !!dmUser, username: username || undefined });
+    const embed = promoPullerResultsEmbed(fetchResults, flatLinks, { elapsed, dmSent: !!dmUser, username: username || undefined, statusCounts });
     if (stopped) embed.setDescription(embed.data.description + "\n\n*Stopped -- partial results*");
 
     if (dmUser) {
       try {
         await dmUser.send({ embeds: [embed], files });
-        await msg.edit({ embeds: [promoPullerResultsEmbed(fetchResults, flatLinks, { elapsed, dmSent: true, username: username || undefined })], components: [] });
+        await msg.edit({ embeds: [promoPullerResultsEmbed(fetchResults, flatLinks, { elapsed, dmSent: true, username: username || undefined, statusCounts })], components: [] });
       } catch {
         await msg.edit({ embeds: [embed], files, components: [] });
       }
