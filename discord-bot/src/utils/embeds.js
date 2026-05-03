@@ -555,9 +555,9 @@ function authListEmbed(entries, username) {
 // ============================================================
 
 const HELP_SECTIONS = {
-  pullers: { label: "-- Pullers --", categories: ["puller", "promopuller", "claimer"] },
-  checkers: { label: "-- Checkers --", categories: ["aio", "inbox", "countrysort", "checker", "refund"] },
-  owner: { label: "-- Owner Only --", categories: ["admin"] },
+  pullers:  { label: "-- Pullers --",     title: "Pullers",  categories: ["puller", "promopuller", "claimer"] },
+  checkers: { label: "-- Checkers --",    title: "Checkers", categories: ["aio", "inbox", "countrysort", "checker", "refund"] },
+  owner:    { label: "-- Owner Only --",  title: "Owner",    categories: ["admin"] },
 };
 
 const HELP_CATEGORIES = {
