@@ -295,7 +295,7 @@ function promoPullerFetchProgressEmbed(details) {
   });
 }
 
-function promoPullerResultsEmbed(fetchResults, allLinks, { elapsed, dmSent, username } = {}) {
+function promoPullerResultsEmbed(fetchResults, allLinks, { elapsed, dmSent, username, statusCounts } = {}) {
   const E = PULLER_EMOJI;
   const totalAccounts = fetchResults.length;
   const working = fetchResults.filter((r) => !r.error);
@@ -303,6 +303,7 @@ function promoPullerResultsEmbed(fetchResults, allLinks, { elapsed, dmSent, user
   const withLinks = working.filter((r) => r.links.length > 0);
   const noLinks = working.filter((r) => r.links.length === 0);
   const unique = [...new Set(allLinks)];
+  const sc = statusCounts || {};
 
   const lines = [
     `• Total Accounts: ${totalAccounts}`,
@@ -312,9 +313,14 @@ function promoPullerResultsEmbed(fetchResults, allLinks, { elapsed, dmSent, user
     `• ${E.failed} Failed: ${failed.length}`,
     `• ${E.codes} Links Found: ${allLinks.length}`,
     `  └ Unique: ${unique.length}`,
+    `  └ ✅ Valid: ${sc.VALID || 0}`,
+    `  └ ♻️ Redeemed: ${sc.REDEEMED || 0}`,
+    `  └ 🚫 Max Uses: ${sc.MAX_USES || 0}`,
+    `  └ ❌ Invalid: ${sc.INVALID || 0}`,
+    ((sc.ERROR || 0) + (sc.NO_TOKEN || 0) > 0) ? `  └ ⚠️ Errors: ${(sc.ERROR || 0) + (sc.NO_TOKEN || 0)}` : null,
     ``,
     `⏱️ Time: ${elapsed || "0.0"}s`,
-  ];
+  ].filter(Boolean);
   if (dmSent) lines.push("", "» Links sent to your DMs");
 
   return pullerLive({
