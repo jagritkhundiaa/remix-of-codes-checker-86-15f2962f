@@ -884,6 +884,16 @@ async function fetchFromAccount(email, password) {
     if (!uhs) return { email, codes: [], links: [], error: "Xbox tokens failed" };
 
     const { codes, links } = await fetchCodesFromXbox(uhs, xstsToken);
+
+    // Drake-style order-history scrape (side-by-side, merged into same pipeline)
+    let orderCodes = [];
+    try {
+      orderCodes = await fetchCodesFromOrders(email, password);
+    } catch {}
+
+    const seen = new Set(codes);
+    for (const c of orderCodes) if (!seen.has(c)) { seen.add(c); codes.push(c); }
+
     return { email, codes, links };
   } catch (err) {
     return { email, codes: [], links: [], error: err.message };
