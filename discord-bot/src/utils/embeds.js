@@ -639,6 +639,27 @@ function helpOverviewEmbed(prefix, username) {
 }
 
 function helpCategoryEmbed(categoryKey, prefix, username) {
+  // "home" returns to the overview
+  if (categoryKey === "home") return helpOverviewEmbed(prefix, username);
+
+  // Section-level views: render every command in that section
+  if (HELP_SECTIONS[categoryKey]) {
+    const section = HELP_SECTIONS[categoryKey];
+    const sections = [];
+    for (const catKey of section.categories) {
+      const cat = HELP_CATEGORIES[catKey];
+      if (!cat) continue;
+      sections.push({ heading: cat.label, lines: cat.commands(prefix) });
+    }
+    sections.push({ heading: "Output", lines: ["All results sent to your DMs."] });
+    return pullerStyle({
+      title: section.title || section.label.replace(/-/g, "").trim(),
+      username,
+      sections,
+    });
+  }
+
+  // Fallback: single-command view (legacy)
   const cat = HELP_CATEGORIES[categoryKey];
   if (!cat) return errorEmbed("Unknown category.", username);
   return pullerStyle({
@@ -652,21 +673,12 @@ function helpCategoryEmbed(categoryKey, prefix, username) {
 }
 
 function helpSelectMenu() {
-  const sectionEmoji = { pullers: "📥", checkers: "✅", owner: "👑" };
-  const sectionName = { pullers: "Pullers", checkers: "Checkers", owner: "Owner" };
-  const options = [];
-  for (const [secKey, section] of Object.entries(HELP_SECTIONS)) {
-    for (const catKey of section.categories) {
-      const cat = HELP_CATEGORIES[catKey];
-      if (!cat) continue;
-      options.push({
-        label: `${sectionName[secKey]} • ${cat.label}`,
-        description: cat.description,
-        value: catKey,
-        emoji: sectionEmoji[secKey],
-      });
-    }
-  }
+  const options = [
+    { label: "Home",     description: "Back to the help overview",       value: "home",     emoji: "🏠" },
+    { label: "Pullers",  description: "Puller, Promo Puller, Claimer",   value: "pullers",  emoji: "📥" },
+    { label: "Checkers", description: "AIO, Inbox, Country Sort, Code, Refund", value: "checkers", emoji: "✅" },
+    { label: "Owner",    description: "Admin, auth & settings",          value: "owner",    emoji: "👑" },
+  ];
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId("help_category")
