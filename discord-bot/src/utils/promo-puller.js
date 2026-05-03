@@ -45,8 +45,9 @@ function filterPromoLinks(links) {
 }
 
 function discordTokenConfigured() {
+  // 1:1 with main.py: only skip if token is falsy (empty/null).
   const t = config && config.DISCORD_TOKEN;
-  return typeof t === "string" && t && t !== "YOUR_DISCORD_TOKEN_HERE";
+  return typeof t === "string" && t.length > 0;
 }
 
 // ── Discord gift-code validator (1:1 port of Python check_promo) ──
