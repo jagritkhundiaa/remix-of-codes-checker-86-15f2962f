@@ -756,8 +756,8 @@ async function changePasswords(accounts, newPassword, threads = 3, onProgress, s
         return { result: { email, success: false, error: err?.message || String(err) } };
       }
     },
-    onResult: (_r, done, total) => {
-      if (onProgress) onProgress(done, total);
+    onResult: (r, done, total) => {
+      if (onProgress) onProgress(done, total, r);
     },
   });
   return results.filter(Boolean);
