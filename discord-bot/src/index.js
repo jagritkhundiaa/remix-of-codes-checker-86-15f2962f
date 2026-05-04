@@ -1530,6 +1530,13 @@ client.on("messageCreate", async (message) => {
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.countrysort <accounts>` or attach .txt — sorts by country, top 20 shown.")] });
       await handleCountrySort(respond, message.author.id, accountsRaw, attachment, 3, message.author);
+    } else if (cmd === "change") {
+      const attachment = message.attachments.first();
+      if (args.length < 1) return respond({ embeds: [infoEmbed("Usage", "`.change <newpass> <email:pass>` or `.change <newpass>` + attach .txt")] });
+      const newPassword = args[0];
+      const accountsRaw = args.slice(1).join(" ");
+      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.change <newpass> <email:pass>` or attach .txt with combos.")] });
+      await handleChange(respond, message.author.id, newPassword, accountsRaw, attachment, 3, message.author);
     } else if (cmd === "wlidset") {
       const wlidsRaw = args.join(" ");
       const attachment = message.attachments.first();
