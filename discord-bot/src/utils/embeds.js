@@ -1274,6 +1274,8 @@ module.exports = {
   productSearchEmbed,
   // checkers
   changerResultsEmbed,
+  changerProgressEmbed,
+  changerFinalEmbed,
   accountCheckerResultsEmbed,
   rewardsResultsEmbed,
   // generic
