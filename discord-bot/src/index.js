@@ -1093,6 +1093,8 @@ async function handleChange(respond, userId, newPassword, accountsRaw, accountsF
   }
 }
 
+// ── Admin Panel ─────────────────────────────────────────────
+
 async function handleAdminPanel(respond, callerId) {
   if (!isOwner(callerId)) return respond({ embeds: [errorEmbed("Only the bot owner can view the admin panel.")] });
   return respond({ embeds: [adminPanelEmbed({
