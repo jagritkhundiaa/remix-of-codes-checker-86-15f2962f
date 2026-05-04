@@ -10,27 +10,29 @@ from collections import defaultdict, deque
 from openai import OpenAI
 
 # ================= CONFIG =================
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "PUT_TOKEN_HERE")
+# ╔══════════════════════════════════════════════════════════╗
+# ║  PUT YOUR 2 KEYS HERE — that's it, nothing else needed   ║
+# ╚══════════════════════════════════════════════════════════╝
 
-# ----- NVIDIA API (single key, multiple models rotated to avoid rate limits) -----
-API_KEY = os.getenv("NVIDIA_API_KEY", "PUT_KEY_HERE")
+DISCORD_TOKEN = "PUT_DISCORD_BOT_TOKEN_HERE"   # <-- your Discord bot token
+NVIDIA_KEY    = "PUT_NVIDIA_API_KEY_HERE"      # <-- your NVIDIA API key (one key, used for all 3 models)
+
+# ─────────────── (everything below is auto, don't touch) ───────────────
+
+# Allow env vars to override if you prefer that instead of editing the file
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", DISCORD_TOKEN)
+NVIDIA_KEY    = os.getenv("NVIDIA_API_KEY", NVIDIA_KEY)
+
 BASE_URL = "https://integrate.api.nvidia.com/v1"
 
-# Models rotated round-robin per request. If one is rate limited / errors,
-# we automatically slide to the next one. Order = preference.
+# 3 models rotated round-robin so we never hit rate limits. Order = preference (best first).
 NVIDIA_MODELS = [
-    os.getenv("NVIDIA_MODEL_1", "meta/llama-3.1-70b-instruct"),
-    os.getenv("NVIDIA_MODEL_2", "nvidia/llama-3.1-nemotron-nano-8b-v1"),
-    os.getenv("NVIDIA_MODEL_3", "meta/llama-3.1-8b-instruct"),
+    "meta/llama-3.1-70b-instruct",
+    "nvidia/llama-3.1-nemotron-nano-8b-v1",
+    "meta/llama-3.1-8b-instruct",
 ]
 
-# Optional final fallback (different provider) — kept for safety, skipped if not set.
-API_KEY_2 = os.getenv("BACKUP_API_KEY", "PUT_KEY_HERE")
-BASE_URL_2 = os.getenv("BACKUP_BASE_URL", "https://openrouter.ai/api/v1")
-MODEL_2 = os.getenv("BACKUP_MODEL", "meta-llama/llama-3.3-70b-instruct")
-
-# Timeout (seconds) before we treat a model as "too slow" and rotate
-API_TIMEOUT = float(os.getenv("API_TIMEOUT", "8"))
+API_TIMEOUT = 8.0  # seconds before a model is considered too slow → rotate
 
 OWNER_ID = 1450727165061496064  # talkneon
 ALLOWED_CHANNEL_IDS = {int(x) for x in os.getenv("ALLOWED_CHANNELS", "0").split(",") if x.strip().isdigit()}
