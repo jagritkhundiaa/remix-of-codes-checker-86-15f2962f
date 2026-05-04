@@ -31,8 +31,8 @@ NVIDIA_KEY_8B       = os.getenv("NVIDIA_KEY_8B",       NVIDIA_KEY_8B)
 
 BASE_URL = "https://integrate.api.nvidia.com/v1"
 
-# Model → its own key. Rotated round-robin so we never hit rate limits.
-# Order = preference (best first).
+# Model → its own key. 70B is the brain, others are fallbacks ONLY when 70B is rate-limited.
+# Order = preference (smartest first). 70B is preferred 80% of the time for accuracy.
 NVIDIA_MODELS = [
     "meta/llama-3.1-70b-instruct",
     "nvidia/llama-3.1-nemotron-nano-8b-v1",
@@ -43,8 +43,10 @@ MODEL_KEYS = {
     "nvidia/llama-3.1-nemotron-nano-8b-v1":   NVIDIA_KEY_NEMOTRON,
     "meta/llama-3.1-8b-instruct":             NVIDIA_KEY_8B,
 }
+# 70B is the smart one — prefer it heavily, only fall back when it's busy/limited
+PRIMARY_MODEL = "meta/llama-3.1-70b-instruct"
 
-API_TIMEOUT = 8.0  # seconds before a model is considered too slow → rotate
+API_TIMEOUT = 12.0  # seconds before a model is considered too slow → rotate
 
 OWNER_ID = 1450727165061496064  # talkneon
 ALLOWED_CHANNEL_IDS = {int(x) for x in os.getenv("ALLOWED_CHANNELS", "0").split(",") if x.strip().isdigit()}
@@ -83,14 +85,16 @@ def _is_rate_limit(err: Exception) -> bool:
     return "429" in s or "rate" in s or "quota" in s or "too many" in s
 
 def _call_nvidia(model: str, messages):
+    # tuned for COHERENT roasts: high creativity but not chaos.
+    # old values (temp 1.25, freq 1.6, presence 1.4) caused word-salad on small models.
     return MODEL_CLIENTS[model].chat.completions.create(
         model=model,
         messages=messages,
-        temperature=1.25,
-        max_tokens=110,
-        top_p=0.95,
-        frequency_penalty=1.6,
-        presence_penalty=1.4,
+        temperature=0.95,
+        max_tokens=80,
+        top_p=0.9,
+        frequency_penalty=0.4,
+        presence_penalty=0.4,
         timeout=API_TIMEOUT,
     )
 
@@ -98,20 +102,20 @@ def _call_nvidia(model: str, messages):
 
 
 async def ai_complete(messages):
-    """Round-robin NVIDIA models with per-model cooldown; final fallback to backup."""
+    """Always try 70B first (it's the smart one). Only fall back to smaller models if 70B is benched."""
     global _rr_index
     now = time.time()
-    n = len(NVIDIA_MODELS)
-    # Build attempt order starting at the round-robin pointer, skipping benched models.
+    # Build attempt order: 70B first if available, then the rest
     order = []
-    for i in range(n):
-        m = NVIDIA_MODELS[(_rr_index + i) % n]
+    if now >= _model_skip_until[PRIMARY_MODEL]:
+        order.append(PRIMARY_MODEL)
+    for m in NVIDIA_MODELS:
+        if m == PRIMARY_MODEL: continue
         if now >= _model_skip_until[m]:
             order.append(m)
-    # If everyone's benched, try them all anyway (least-recently-benched first).
+    # If everyone's benched, try them all (least-recently-benched first), 70B still preferred
     if not order:
-        order = sorted(NVIDIA_MODELS, key=lambda m: _model_skip_until[m])
-    _rr_index = (_rr_index + 1) % n
+        order = sorted(NVIDIA_MODELS, key=lambda m: (m != PRIMARY_MODEL, _model_skip_until[m]))
 
     last_err = None
     for model in order:
@@ -416,19 +420,26 @@ def build_system(lang: str, target_user: str, target_id: int, force_savage: bool
     elif reply_ctx and is_question:
         ctx = f"(They're quoting \"{reply_ctx[:80]}\" but ANSWER their actual question directly.)"
 
-    # conversation memory
+    # conversation memory — keep SHORT, only last 2 exchanges, to avoid confusing the model on which msg to react to
     conv_ctx = ""
     if conv_history:
-        conv_ctx = "RECENT CONVERSATION WITH THIS USER (use for context, reference past exchanges to be smarter):\n"
-        for entry in conv_history[-6:]:
-            conv_ctx += f"  {entry['who']}: {entry['text']}\n"
+        last = conv_history[-4:]  # last 2 user/bot pairs
+        if last:
+            conv_ctx = "Last exchange (context only, do NOT reply to these, reply to the NEW message):\n"
+            for entry in last:
+                conv_ctx += f"  {entry['who']}: {entry['text']}\n"
 
     custom = ""
     if savage and savage_lines:
-        sample = random.sample(savage_lines, min(5, len(savage_lines)))
+        sample = random.sample(savage_lines, min(3, len(savage_lines)))
         custom = "STYLE EXAMPLES (energy only, don't copy): " + " || ".join(sample)
 
-    return f"{target_directive}{base_rules} {tone} {qa_line} {mention_line} {slave_line} {callback} {global_avoid} {ctx} {conv_ctx} {custom}\n\n{KNOWLEDGE}"
+    # KNOWLEDGE only injected for owner or when user is asking a question (saves tokens, keeps model focused on the message)
+    knowledge_block = ""
+    if is_owner or is_question:
+        knowledge_block = f"\n\n{KNOWLEDGE}"
+
+    return f"{target_directive}{base_rules} {tone} {qa_line} {mention_line} {slave_line} {callback} {global_avoid} {ctx} {conv_ctx} {custom}{knowledge_block}"
 
 # ================= AI CALL =================
 async def get_reply(user_msg: str, target_user: str, target_id: int, force_savage: bool, ch_mood: float, lang: str, recent_roasts: list, is_owner: bool, is_slave: bool, reply_ctx: str | None, mentioned_info: str | None, is_question: bool, target_roast_user: str | None = None, conv_history: list | None = None) -> str:
@@ -436,12 +447,12 @@ async def get_reply(user_msg: str, target_user: str, target_id: int, force_savag
 
     LEAK_RE = re.compile(r"\b(api|endpoint|http|https|\.py|\.js|\.ts|axios|fetch\(|requests\.|library|module|playwright|selenium|puppeteer|header|payload|token logic|source code|github)\b", re.I)
 
-    for attempt in range(5):
+    for attempt in range(3):
         try:
             resp = await ai_complete(
                 messages=[
                     {"role": "system", "content": sys_prompt},
-                    {"role": "user", "content": f"{target_user} said: {user_msg}"},
+                    {"role": "user", "content": f'{target_user} just said: "{user_msg}"\n\nReact to THAT exact message. One savage line.'},
                 ],
             )
             text = (resp.choices[0].message.content or "").strip().strip('"').strip("'")
@@ -454,11 +465,17 @@ async def get_reply(user_msg: str, target_user: str, target_id: int, force_savag
             cleaned = re.sub(r"\s-\s", ", ", cleaned).replace(" -", ",").replace("- ", "")
             # strip quotes wrapping
             cleaned = cleaned.strip('"').strip("'").strip("*")
+            # take only first line — model sometimes adds explanation
+            cleaned = cleaned.split("\n")[0].strip()
             words = cleaned.split()
             cap = 22 if (is_owner and not target_roast_user) else 20
             if len(words) > cap:
                 cleaned = " ".join(words[:cap])
-            # anti-repeat check vs recent global pool (40% token overlap = dup, stricter)
+            # gibberish guard — reject word-salad outputs (broken_words, weird underscores, fragmented caps)
+            if re.search(r"[a-z]_[A-Z]|[A-Z]{4,}_|\b[A-Z][a-z]+[A-Z][a-z]+[A-Z]", cleaned):
+                print(f"[gibberish reject] {cleaned}")
+                continue
+            # anti-repeat check vs recent global pool — relaxed to 65% (40% was rejecting valid replies)
             low = cleaned.lower().strip(".,!? ")
             dup = False
             for r in list(recent_global) + recent_roasts:
@@ -466,14 +483,14 @@ async def get_reply(user_msg: str, target_user: str, target_id: int, force_savag
                 if not rl: continue
                 if low == rl: dup = True; break
                 a, b = set(low.split()), set(rl.split())
-                if a and b and len(a & b) / max(len(a), len(b)) >= 0.40:
+                if a and b and len(a & b) / max(len(a), len(b)) >= 0.65:
                     dup = True; break
-            if dup and attempt < 4: continue
+            if dup and attempt < 2: continue
             return cleaned
         except Exception as e:
             err = str(e).lower()
             if "429" in err or "rate" in err:
-                wait = min(2 ** attempt, 10)
+                wait = min(2 ** attempt, 6)
                 print(f"[RATE LIMIT] waiting {wait}s")
                 await asyncio.sleep(wait)
             else:
