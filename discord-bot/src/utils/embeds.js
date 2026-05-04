@@ -425,6 +425,47 @@ function changerResultsEmbed(results, username) {
   });
 }
 
+function changerProgressEmbed({ completed, total, changed, failed, elapsed, latestAccount, latestStatus, username }) {
+  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+  const elSec = elapsed ? Math.round(elapsed / 1000) : 0;
+  const cpm = elSec > 0 ? Math.round((completed / elSec) * 60) : 0;
+  const lines = [
+    `[${_bar(pct)}] ${pct}%`,
+    `Processed : ${completed} / ${total}`,
+    `Changed   : ${changed}`,
+    `Failed    : ${failed}`,
+    `Speed     : ${cpm} c/min`,
+    `Elapsed   : ${elSec}s`,
+  ];
+  if (latestAccount) {
+    const masked = latestAccount.replace(/(.{3}).*(@.*)/, "$1***$2");
+    lines.push(`Latest    : ${masked} (${latestStatus || "..."})`);
+  }
+  return pullerStyle({ title: "Password Changer", username, color: COLORS.PRIMARY, thumbnail: false, sections: [{ heading: "Progress", lines }] });
+}
+
+function changerFinalEmbed({ total, changed, failed, twoFA, locked, captcha, elapsed, dmSent, username }) {
+  const elSec = elapsed ? Math.round(elapsed / 1000) : 0;
+  const cpm = elSec > 0 ? Math.round((total / elSec) * 60) : 0;
+  const lines = [
+    `Total     : ${total}`,
+    `Changed   : ${changed}`,
+    `Failed    : ${failed}`,
+    `2FA       : ${twoFA || 0}`,
+    `Locked    : ${locked || 0}`,
+    `Captcha   : ${captcha || 0}`,
+    `Speed     : ${cpm} c/min`,
+    `Elapsed   : ${elSec}s`,
+  ];
+  if (dmSent) lines.push("", "Results sent to your DMs.");
+  return pullerStyle({
+    title: "Password Changer",
+    username,
+    color: changed > 0 ? COLORS.SUCCESS : COLORS.ERROR,
+    sections: [{ heading: "Results", lines }],
+  });
+}
+
 function accountCheckerResultsEmbed(results, username) {
   const valid = results.filter((r) => r.status === "valid").length;
   const locked = results.filter((r) => r.status === "locked").length;
