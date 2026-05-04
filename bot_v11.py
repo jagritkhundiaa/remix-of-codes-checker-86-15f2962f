@@ -420,19 +420,26 @@ def build_system(lang: str, target_user: str, target_id: int, force_savage: bool
     elif reply_ctx and is_question:
         ctx = f"(They're quoting \"{reply_ctx[:80]}\" but ANSWER their actual question directly.)"
 
-    # conversation memory
+    # conversation memory — keep SHORT, only last 2 exchanges, to avoid confusing the model on which msg to react to
     conv_ctx = ""
     if conv_history:
-        conv_ctx = "RECENT CONVERSATION WITH THIS USER (use for context, reference past exchanges to be smarter):\n"
-        for entry in conv_history[-6:]:
-            conv_ctx += f"  {entry['who']}: {entry['text']}\n"
+        last = conv_history[-4:]  # last 2 user/bot pairs
+        if last:
+            conv_ctx = "Last exchange (context only, do NOT reply to these, reply to the NEW message):\n"
+            for entry in last:
+                conv_ctx += f"  {entry['who']}: {entry['text']}\n"
 
     custom = ""
     if savage and savage_lines:
-        sample = random.sample(savage_lines, min(5, len(savage_lines)))
+        sample = random.sample(savage_lines, min(3, len(savage_lines)))
         custom = "STYLE EXAMPLES (energy only, don't copy): " + " || ".join(sample)
 
-    return f"{target_directive}{base_rules} {tone} {qa_line} {mention_line} {slave_line} {callback} {global_avoid} {ctx} {conv_ctx} {custom}\n\n{KNOWLEDGE}"
+    # KNOWLEDGE only injected for owner or when actually asked about projects
+    knowledge_block = ""
+    if is_owner or (is_question and re.search(r"\b(talkneon|bot|tool|command|gate|checker|puller|hijra|neon|autizmens|roast bot|your maker|who made)\b", (user_msg if False else ''), re.I)):
+        knowledge_block = f"\n\n{KNOWLEDGE}"
+
+    return f"{target_directive}{base_rules} {tone} {qa_line} {mention_line} {slave_line} {callback} {global_avoid} {ctx} {conv_ctx} {custom}{knowledge_block}"
 
 # ================= AI CALL =================
 async def get_reply(user_msg: str, target_user: str, target_id: int, force_savage: bool, ch_mood: float, lang: str, recent_roasts: list, is_owner: bool, is_slave: bool, reply_ctx: str | None, mentioned_info: str | None, is_question: bool, target_roast_user: str | None = None, conv_history: list | None = None) -> str:
