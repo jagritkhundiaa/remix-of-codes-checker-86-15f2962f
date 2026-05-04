@@ -60,8 +60,14 @@ intents.members = True
 bot = discord.Client(intents=intents)
 tree = discord.app_commands.CommandTree(bot)
 
-client = OpenAI(base_url=BASE_URL, api_key=NVIDIA_KEY)
+client = None  # legacy single client unused — we now keep one client per model
 client_backup = None  # backup provider removed — 3-model rotation is enough
+
+# Build one OpenAI client per model, each authed with its own key
+MODEL_CLIENTS = {
+    m: OpenAI(base_url=BASE_URL, api_key=MODEL_KEYS[m])
+    for m in NVIDIA_MODELS
+}
 
 # Per-model cooldown — if a model gets 429 / errors, skip it for a bit so we
 # never hammer a rate-limited model. Round-robin index advances each request.
