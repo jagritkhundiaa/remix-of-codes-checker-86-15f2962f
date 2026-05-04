@@ -634,6 +634,15 @@ const HELP_CATEGORIES = {
     label: "Refund", description: "Check refund eligibility (14-day)", section: "checkers",
     commands: (p) => [`${p}refund <email:pass> or attach .txt`, "  Checks if purchases are within the", "  14-day refund window."],
   },
+  change: {
+    label: "Password Changer", description: "Bulk change Microsoft account passwords", section: "checkers",
+    commands: (p) => [
+      `${p}change <newpass> <email:pass> or attach .txt`,
+      "  Bulk-changes Microsoft account passwords",
+      "  via account.live.com. Outputs split files:",
+      "  changed.txt / failed.txt / 2fa.txt / locked.txt.",
+    ],
+  },
   admin: {
     label: "Admin", description: "Authorization, blacklist & settings", section: "owner",
     commands: (p) => [
