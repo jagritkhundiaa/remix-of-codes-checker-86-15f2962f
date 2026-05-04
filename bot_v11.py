@@ -83,7 +83,7 @@ def _is_rate_limit(err: Exception) -> bool:
     return "429" in s or "rate" in s or "quota" in s or "too many" in s
 
 def _call_nvidia(model: str, messages):
-    return client.chat.completions.create(
+    return MODEL_CLIENTS[model].chat.completions.create(
         model=model,
         messages=messages,
         temperature=1.25,
