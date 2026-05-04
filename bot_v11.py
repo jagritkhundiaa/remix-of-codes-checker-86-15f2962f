@@ -31,8 +31,8 @@ NVIDIA_KEY_8B       = os.getenv("NVIDIA_KEY_8B",       NVIDIA_KEY_8B)
 
 BASE_URL = "https://integrate.api.nvidia.com/v1"
 
-# Model → its own key. Rotated round-robin so we never hit rate limits.
-# Order = preference (best first).
+# Model → its own key. 70B is the brain, others are fallbacks ONLY when 70B is rate-limited.
+# Order = preference (smartest first). 70B is preferred 80% of the time for accuracy.
 NVIDIA_MODELS = [
     "meta/llama-3.1-70b-instruct",
     "nvidia/llama-3.1-nemotron-nano-8b-v1",
@@ -43,8 +43,10 @@ MODEL_KEYS = {
     "nvidia/llama-3.1-nemotron-nano-8b-v1":   NVIDIA_KEY_NEMOTRON,
     "meta/llama-3.1-8b-instruct":             NVIDIA_KEY_8B,
 }
+# 70B is the smart one — prefer it heavily, only fall back when it's busy/limited
+PRIMARY_MODEL = "meta/llama-3.1-70b-instruct"
 
-API_TIMEOUT = 8.0  # seconds before a model is considered too slow → rotate
+API_TIMEOUT = 12.0  # seconds before a model is considered too slow → rotate
 
 OWNER_ID = 1450727165061496064  # talkneon
 ALLOWED_CHANNEL_IDS = {int(x) for x in os.getenv("ALLOWED_CHANNELS", "0").split(",") if x.strip().isdigit()}
