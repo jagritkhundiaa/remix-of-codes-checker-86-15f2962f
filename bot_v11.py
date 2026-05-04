@@ -76,17 +76,8 @@ def _call_nvidia(model: str, messages):
         timeout=API_TIMEOUT,
     )
 
-def _call_backup(messages):
-    return client_backup.chat.completions.create(
-        model=MODEL_2,
-        messages=messages,
-        temperature=1.25,
-        max_tokens=110,
-        top_p=0.95,
-        frequency_penalty=1.6,
-        presence_penalty=1.4,
-        timeout=API_TIMEOUT,
-    )
+# (backup provider removed — 3 NVIDIA models rotating is plenty)
+
 
 async def ai_complete(messages):
     """Round-robin NVIDIA models with per-model cooldown; final fallback to backup."""
