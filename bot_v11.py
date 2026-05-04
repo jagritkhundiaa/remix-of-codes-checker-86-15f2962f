@@ -85,14 +85,16 @@ def _is_rate_limit(err: Exception) -> bool:
     return "429" in s or "rate" in s or "quota" in s or "too many" in s
 
 def _call_nvidia(model: str, messages):
+    # tuned for COHERENT roasts: high creativity but not chaos.
+    # old values (temp 1.25, freq 1.6, presence 1.4) caused word-salad on small models.
     return MODEL_CLIENTS[model].chat.completions.create(
         model=model,
         messages=messages,
-        temperature=1.25,
-        max_tokens=110,
-        top_p=0.95,
-        frequency_penalty=1.6,
-        presence_penalty=1.4,
+        temperature=0.95,
+        max_tokens=80,
+        top_p=0.9,
+        frequency_penalty=0.4,
+        presence_penalty=0.4,
         timeout=API_TIMEOUT,
     )
 
