@@ -102,20 +102,20 @@ def _call_nvidia(model: str, messages):
 
 
 async def ai_complete(messages):
-    """Round-robin NVIDIA models with per-model cooldown; final fallback to backup."""
+    """Always try 70B first (it's the smart one). Only fall back to smaller models if 70B is benched."""
     global _rr_index
     now = time.time()
-    n = len(NVIDIA_MODELS)
-    # Build attempt order starting at the round-robin pointer, skipping benched models.
+    # Build attempt order: 70B first if available, then the rest
     order = []
-    for i in range(n):
-        m = NVIDIA_MODELS[(_rr_index + i) % n]
+    if now >= _model_skip_until[PRIMARY_MODEL]:
+        order.append(PRIMARY_MODEL)
+    for m in NVIDIA_MODELS:
+        if m == PRIMARY_MODEL: continue
         if now >= _model_skip_until[m]:
             order.append(m)
-    # If everyone's benched, try them all anyway (least-recently-benched first).
+    # If everyone's benched, try them all (least-recently-benched first), 70B still preferred
     if not order:
-        order = sorted(NVIDIA_MODELS, key=lambda m: _model_skip_until[m])
-    _rr_index = (_rr_index + 1) % n
+        order = sorted(NVIDIA_MODELS, key=lambda m: (m != PRIMARY_MODEL, _model_skip_until[m]))
 
     last_err = None
     for model in order:
