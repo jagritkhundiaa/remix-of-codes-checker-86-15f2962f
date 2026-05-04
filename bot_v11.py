@@ -48,13 +48,8 @@ intents.members = True
 bot = discord.Client(intents=intents)
 tree = discord.app_commands.CommandTree(bot)
 
-client = OpenAI(base_url=BASE_URL, api_key=API_KEY)
-client_backup = None
-if API_KEY_2 and API_KEY_2 != "PUT_KEY_HERE":
-    try:
-        client_backup = OpenAI(base_url=BASE_URL_2, api_key=API_KEY_2)
-    except Exception:
-        client_backup = None
+client = OpenAI(base_url=BASE_URL, api_key=NVIDIA_KEY)
+client_backup = None  # backup provider removed — 3-model rotation is enough
 
 # Per-model cooldown — if a model gets 429 / errors, skip it for a bit so we
 # never hammer a rate-limited model. Round-robin index advances each request.
