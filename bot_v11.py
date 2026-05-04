@@ -10,27 +10,39 @@ from collections import defaultdict, deque
 from openai import OpenAI
 
 # ================= CONFIG =================
-# ╔══════════════════════════════════════════════════════════╗
-# ║  PUT YOUR 2 KEYS HERE — that's it, nothing else needed   ║
-# ╚══════════════════════════════════════════════════════════╝
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  PUT YOUR KEYS HERE — 1 Discord token + 1 key PER MODEL          ║
+# ╚══════════════════════════════════════════════════════════════════╝
 
 DISCORD_TOKEN = "PUT_DISCORD_BOT_TOKEN_HERE"   # <-- your Discord bot token
-NVIDIA_KEY    = "PUT_NVIDIA_API_KEY_HERE"      # <-- your NVIDIA API key (one key, used for all 3 models)
+
+# Each model has its OWN NVIDIA key. Paste them here:
+NVIDIA_KEY_70B      = "PUT_KEY_FOR_LLAMA_70B_HERE"        # for meta/llama-3.1-70b-instruct
+NVIDIA_KEY_NEMOTRON = "PUT_KEY_FOR_NEMOTRON_NANO_HERE"    # for nvidia/llama-3.1-nemotron-nano-8b-v1
+NVIDIA_KEY_8B       = "PUT_KEY_FOR_LLAMA_8B_HERE"         # for meta/llama-3.1-8b-instruct
 
 # ─────────────── (everything below is auto, don't touch) ───────────────
 
-# Allow env vars to override if you prefer that instead of editing the file
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", DISCORD_TOKEN)
-NVIDIA_KEY    = os.getenv("NVIDIA_API_KEY", NVIDIA_KEY)
+# Optional env var overrides (handy if hosting on Railway/Render)
+DISCORD_TOKEN       = os.getenv("DISCORD_TOKEN",       DISCORD_TOKEN)
+NVIDIA_KEY_70B      = os.getenv("NVIDIA_KEY_70B",      NVIDIA_KEY_70B)
+NVIDIA_KEY_NEMOTRON = os.getenv("NVIDIA_KEY_NEMOTRON", NVIDIA_KEY_NEMOTRON)
+NVIDIA_KEY_8B       = os.getenv("NVIDIA_KEY_8B",       NVIDIA_KEY_8B)
 
 BASE_URL = "https://integrate.api.nvidia.com/v1"
 
-# 3 models rotated round-robin so we never hit rate limits. Order = preference (best first).
+# Model → its own key. Rotated round-robin so we never hit rate limits.
+# Order = preference (best first).
 NVIDIA_MODELS = [
     "meta/llama-3.1-70b-instruct",
     "nvidia/llama-3.1-nemotron-nano-8b-v1",
     "meta/llama-3.1-8b-instruct",
 ]
+MODEL_KEYS = {
+    "meta/llama-3.1-70b-instruct":            NVIDIA_KEY_70B,
+    "nvidia/llama-3.1-nemotron-nano-8b-v1":   NVIDIA_KEY_NEMOTRON,
+    "meta/llama-3.1-8b-instruct":             NVIDIA_KEY_8B,
+}
 
 API_TIMEOUT = 8.0  # seconds before a model is considered too slow → rotate
 
