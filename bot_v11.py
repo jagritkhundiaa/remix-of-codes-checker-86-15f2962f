@@ -434,9 +434,9 @@ def build_system(lang: str, target_user: str, target_id: int, force_savage: bool
         sample = random.sample(savage_lines, min(3, len(savage_lines)))
         custom = "STYLE EXAMPLES (energy only, don't copy): " + " || ".join(sample)
 
-    # KNOWLEDGE only injected for owner or when actually asked about projects
+    # KNOWLEDGE only injected for owner or when user is asking a question (saves tokens, keeps model focused on the message)
     knowledge_block = ""
-    if is_owner or (is_question and re.search(r"\b(talkneon|bot|tool|command|gate|checker|puller|hijra|neon|autizmens|roast bot|your maker|who made)\b", (user_msg if False else ''), re.I)):
+    if is_owner or is_question:
         knowledge_block = f"\n\n{KNOWLEDGE}"
 
     return f"{target_directive}{base_rules} {tone} {qa_line} {mention_line} {slave_line} {callback} {global_avoid} {ctx} {conv_ctx} {custom}{knowledge_block}"
