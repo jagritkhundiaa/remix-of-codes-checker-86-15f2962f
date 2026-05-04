@@ -10,27 +10,29 @@ from collections import defaultdict, deque
 from openai import OpenAI
 
 # ================= CONFIG =================
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "PUT_TOKEN_HERE")
+# ╔══════════════════════════════════════════════════════════╗
+# ║  PUT YOUR 2 KEYS HERE — that's it, nothing else needed   ║
+# ╚══════════════════════════════════════════════════════════╝
 
-# ----- NVIDIA API (single key, multiple models rotated to avoid rate limits) -----
-API_KEY = os.getenv("NVIDIA_API_KEY", "PUT_KEY_HERE")
+DISCORD_TOKEN = "PUT_DISCORD_BOT_TOKEN_HERE"   # <-- your Discord bot token
+NVIDIA_KEY    = "PUT_NVIDIA_API_KEY_HERE"      # <-- your NVIDIA API key (one key, used for all 3 models)
+
+# ─────────────── (everything below is auto, don't touch) ───────────────
+
+# Allow env vars to override if you prefer that instead of editing the file
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", DISCORD_TOKEN)
+NVIDIA_KEY    = os.getenv("NVIDIA_API_KEY", NVIDIA_KEY)
+
 BASE_URL = "https://integrate.api.nvidia.com/v1"
 
-# Models rotated round-robin per request. If one is rate limited / errors,
-# we automatically slide to the next one. Order = preference.
+# 3 models rotated round-robin so we never hit rate limits. Order = preference (best first).
 NVIDIA_MODELS = [
-    os.getenv("NVIDIA_MODEL_1", "meta/llama-3.1-70b-instruct"),
-    os.getenv("NVIDIA_MODEL_2", "nvidia/llama-3.1-nemotron-nano-8b-v1"),
-    os.getenv("NVIDIA_MODEL_3", "meta/llama-3.1-8b-instruct"),
+    "meta/llama-3.1-70b-instruct",
+    "nvidia/llama-3.1-nemotron-nano-8b-v1",
+    "meta/llama-3.1-8b-instruct",
 ]
 
-# Optional final fallback (different provider) — kept for safety, skipped if not set.
-API_KEY_2 = os.getenv("BACKUP_API_KEY", "PUT_KEY_HERE")
-BASE_URL_2 = os.getenv("BACKUP_BASE_URL", "https://openrouter.ai/api/v1")
-MODEL_2 = os.getenv("BACKUP_MODEL", "meta-llama/llama-3.3-70b-instruct")
-
-# Timeout (seconds) before we treat a model as "too slow" and rotate
-API_TIMEOUT = float(os.getenv("API_TIMEOUT", "8"))
+API_TIMEOUT = 8.0  # seconds before a model is considered too slow → rotate
 
 OWNER_ID = 1450727165061496064  # talkneon
 ALLOWED_CHANNEL_IDS = {int(x) for x in os.getenv("ALLOWED_CHANNELS", "0").split(",") if x.strip().isdigit()}
@@ -46,13 +48,8 @@ intents.members = True
 bot = discord.Client(intents=intents)
 tree = discord.app_commands.CommandTree(bot)
 
-client = OpenAI(base_url=BASE_URL, api_key=API_KEY)
-client_backup = None
-if API_KEY_2 and API_KEY_2 != "PUT_KEY_HERE":
-    try:
-        client_backup = OpenAI(base_url=BASE_URL_2, api_key=API_KEY_2)
-    except Exception:
-        client_backup = None
+client = OpenAI(base_url=BASE_URL, api_key=NVIDIA_KEY)
+client_backup = None  # backup provider removed — 3-model rotation is enough
 
 # Per-model cooldown — if a model gets 429 / errors, skip it for a bit so we
 # never hammer a rate-limited model. Round-robin index advances each request.
@@ -79,17 +76,8 @@ def _call_nvidia(model: str, messages):
         timeout=API_TIMEOUT,
     )
 
-def _call_backup(messages):
-    return client_backup.chat.completions.create(
-        model=MODEL_2,
-        messages=messages,
-        temperature=1.25,
-        max_tokens=110,
-        top_p=0.95,
-        frequency_penalty=1.6,
-        presence_penalty=1.4,
-        timeout=API_TIMEOUT,
-    )
+# (backup provider removed — 3 NVIDIA models rotating is plenty)
+
 
 async def ai_complete(messages):
     """Round-robin NVIDIA models with per-model cooldown; final fallback to backup."""
@@ -134,21 +122,7 @@ async def ai_complete(messages):
                 print(f"[ai] ⚠️ {model} fail {_model_fail_streak[model]}/{MODEL_FAIL_LIMIT}: {e}")
             continue
 
-    # All NVIDIA models failed → optional backup provider
-    if client_backup is not None:
-        t0 = time.time()
-        try:
-            resp = await asyncio.wait_for(
-                asyncio.to_thread(_call_backup, messages),
-                timeout=API_TIMEOUT + 2,
-            )
-            print(f"[ai] ✅ BACKUP ({MODEL_2}) ok in {round(time.time()-t0,2)}s")
-            return resp
-        except Exception as e:
-            print(f"[ai] ❌ BACKUP fail: {e}")
-            last_err = e
-
-    raise last_err if last_err else RuntimeError("all providers failed")
+    raise last_err if last_err else RuntimeError("all NVIDIA models failed")
 
 
 # ================= STATE =================
