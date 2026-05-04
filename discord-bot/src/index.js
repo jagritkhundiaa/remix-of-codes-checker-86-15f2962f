@@ -1338,6 +1338,14 @@ client.on("interactionCreate", async (interaction) => {
         interaction.options.getAttachment("accounts_file"),
         interaction.options.getInteger("threads") || 3,
         user);
+    } else if (commandName === "change") {
+      await interaction.deferReply();
+      await handleChange(respond, user.id,
+        interaction.options.getString("newpass"),
+        interaction.options.getString("accounts"),
+        interaction.options.getAttachment("accounts_file"),
+        interaction.options.getInteger("threads") || 3,
+        user);
     } else if (commandName === "wlidset") {
       await handleWlidSet(respond, user.id,
         interaction.options.getString("wlids"),
