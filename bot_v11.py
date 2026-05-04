@@ -440,12 +440,12 @@ async def get_reply(user_msg: str, target_user: str, target_id: int, force_savag
 
     LEAK_RE = re.compile(r"\b(api|endpoint|http|https|\.py|\.js|\.ts|axios|fetch\(|requests\.|library|module|playwright|selenium|puppeteer|header|payload|token logic|source code|github)\b", re.I)
 
-    for attempt in range(5):
+    for attempt in range(3):
         try:
             resp = await ai_complete(
                 messages=[
                     {"role": "system", "content": sys_prompt},
-                    {"role": "user", "content": f"{target_user} said: {user_msg}"},
+                    {"role": "user", "content": f'{target_user} just said: "{user_msg}"\n\nReact to THAT exact message. One savage line.'},
                 ],
             )
             text = (resp.choices[0].message.content or "").strip().strip('"').strip("'")
@@ -458,11 +458,17 @@ async def get_reply(user_msg: str, target_user: str, target_id: int, force_savag
             cleaned = re.sub(r"\s-\s", ", ", cleaned).replace(" -", ",").replace("- ", "")
             # strip quotes wrapping
             cleaned = cleaned.strip('"').strip("'").strip("*")
+            # take only first line — model sometimes adds explanation
+            cleaned = cleaned.split("\n")[0].strip()
             words = cleaned.split()
             cap = 22 if (is_owner and not target_roast_user) else 20
             if len(words) > cap:
                 cleaned = " ".join(words[:cap])
-            # anti-repeat check vs recent global pool (40% token overlap = dup, stricter)
+            # gibberish guard — reject word-salad outputs (broken_words, weird underscores, fragmented caps)
+            if re.search(r"[a-z]_[A-Z]|[A-Z]{4,}_|\b[A-Z][a-z]+[A-Z][a-z]+[A-Z]", cleaned):
+                print(f"[gibberish reject] {cleaned}")
+                continue
+            # anti-repeat check vs recent global pool — relaxed to 65% (40% was rejecting valid replies)
             low = cleaned.lower().strip(".,!? ")
             dup = False
             for r in list(recent_global) + recent_roasts:
@@ -470,14 +476,14 @@ async def get_reply(user_msg: str, target_user: str, target_id: int, force_savag
                 if not rl: continue
                 if low == rl: dup = True; break
                 a, b = set(low.split()), set(rl.split())
-                if a and b and len(a & b) / max(len(a), len(b)) >= 0.40:
+                if a and b and len(a & b) / max(len(a), len(b)) >= 0.65:
                     dup = True; break
-            if dup and attempt < 4: continue
+            if dup and attempt < 2: continue
             return cleaned
         except Exception as e:
             err = str(e).lower()
             if "429" in err or "rate" in err:
-                wait = min(2 ** attempt, 10)
+                wait = min(2 ** attempt, 6)
                 print(f"[RATE LIMIT] waiting {wait}s")
                 await asyncio.sleep(wait)
             else:
