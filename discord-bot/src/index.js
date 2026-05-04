@@ -38,6 +38,8 @@ const {
   inboxAioResultsEmbed,
   countrySortProgressEmbed,
   countrySortResultsEmbed,
+  changerProgressEmbed,
+  changerFinalEmbed,
   rewardsResultsEmbed,
   refundProgressEmbed,
   refundResultsEmbed,
