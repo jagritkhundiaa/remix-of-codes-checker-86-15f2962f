@@ -12,18 +12,24 @@ from openai import OpenAI
 # ================= CONFIG =================
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "PUT_TOKEN_HERE")
 
-# ----- PRIMARY API (existing, do not change) -----
+# ----- NVIDIA API (single key, multiple models rotated to avoid rate limits) -----
 API_KEY = os.getenv("NVIDIA_API_KEY", "PUT_KEY_HERE")
 BASE_URL = "https://integrate.api.nvidia.com/v1"
-MODEL = "meta/llama-3.3-70b-instruct"
 
-# ----- BACKUP API (failover when primary slow / rate-limited / errors) -----
-# Fill these in (or set env vars). If left as PUT_KEY_HERE the backup is just skipped.
+# Models rotated round-robin per request. If one is rate limited / errors,
+# we automatically slide to the next one. Order = preference.
+NVIDIA_MODELS = [
+    os.getenv("NVIDIA_MODEL_1", "meta/llama-3.1-70b-instruct"),
+    os.getenv("NVIDIA_MODEL_2", "nvidia/llama-3.1-nemotron-nano-8b-v1"),
+    os.getenv("NVIDIA_MODEL_3", "meta/llama-3.1-8b-instruct"),
+]
+
+# Optional final fallback (different provider) — kept for safety, skipped if not set.
 API_KEY_2 = os.getenv("BACKUP_API_KEY", "PUT_KEY_HERE")
 BASE_URL_2 = os.getenv("BACKUP_BASE_URL", "https://openrouter.ai/api/v1")
 MODEL_2 = os.getenv("BACKUP_MODEL", "meta-llama/llama-3.3-70b-instruct")
 
-# Timeout (seconds) before we treat primary as "too slow" and fail over
+# Timeout (seconds) before we treat a model as "too slow" and rotate
 API_TIMEOUT = float(os.getenv("API_TIMEOUT", "8"))
 
 OWNER_ID = 1450727165061496064  # talkneon
