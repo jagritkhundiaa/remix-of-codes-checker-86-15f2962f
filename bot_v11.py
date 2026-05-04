@@ -12,18 +12,24 @@ from openai import OpenAI
 # ================= CONFIG =================
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "PUT_TOKEN_HERE")
 
-# ----- PRIMARY API (existing, do not change) -----
+# ----- NVIDIA API (single key, multiple models rotated to avoid rate limits) -----
 API_KEY = os.getenv("NVIDIA_API_KEY", "PUT_KEY_HERE")
 BASE_URL = "https://integrate.api.nvidia.com/v1"
-MODEL = "meta/llama-3.3-70b-instruct"
 
-# ----- BACKUP API (failover when primary slow / rate-limited / errors) -----
-# Fill these in (or set env vars). If left as PUT_KEY_HERE the backup is just skipped.
+# Models rotated round-robin per request. If one is rate limited / errors,
+# we automatically slide to the next one. Order = preference.
+NVIDIA_MODELS = [
+    os.getenv("NVIDIA_MODEL_1", "meta/llama-3.1-70b-instruct"),
+    os.getenv("NVIDIA_MODEL_2", "nvidia/llama-3.1-nemotron-nano-8b-v1"),
+    os.getenv("NVIDIA_MODEL_3", "meta/llama-3.1-8b-instruct"),
+]
+
+# Optional final fallback (different provider) — kept for safety, skipped if not set.
 API_KEY_2 = os.getenv("BACKUP_API_KEY", "PUT_KEY_HERE")
 BASE_URL_2 = os.getenv("BACKUP_BASE_URL", "https://openrouter.ai/api/v1")
 MODEL_2 = os.getenv("BACKUP_MODEL", "meta-llama/llama-3.3-70b-instruct")
 
-# Timeout (seconds) before we treat primary as "too slow" and fail over
+# Timeout (seconds) before we treat a model as "too slow" and rotate
 API_TIMEOUT = float(os.getenv("API_TIMEOUT", "8"))
 
 OWNER_ID = 1450727165061496064  # talkneon
@@ -48,25 +54,32 @@ if API_KEY_2 and API_KEY_2 != "PUT_KEY_HERE":
     except Exception:
         client_backup = None
 
-# circuit breaker — if primary fails repeatedly, skip it for a bit
-_primary_fail_streak = 0
-_primary_skip_until = 0.0
-PRIMARY_FAIL_LIMIT = 3
-PRIMARY_COOLDOWN = 120  # seconds skipped after limit hit
+# Per-model cooldown — if a model gets 429 / errors, skip it for a bit so we
+# never hammer a rate-limited model. Round-robin index advances each request.
+_model_skip_until = {m: 0.0 for m in NVIDIA_MODELS}
+_model_fail_streak = {m: 0 for m in NVIDIA_MODELS}
+_rr_index = 0
+MODEL_FAIL_LIMIT = 2
+MODEL_COOLDOWN = 45        # seconds a model is benched after tripping
+RATE_LIMIT_COOLDOWN = 90   # longer bench specifically for 429s
 
-def _call_provider(which: str, messages):
-    """Blocking call — runs inside asyncio.to_thread."""
-    if which == "primary":
-        return client.chat.completions.create(
-            model=MODEL,
-            messages=messages,
-            temperature=1.25,
-            max_tokens=110,
-            top_p=0.95,
-            frequency_penalty=1.6,
-            presence_penalty=1.4,
-            timeout=API_TIMEOUT,
-        )
+def _is_rate_limit(err: Exception) -> bool:
+    s = str(err).lower()
+    return "429" in s or "rate" in s or "quota" in s or "too many" in s
+
+def _call_nvidia(model: str, messages):
+    return client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=1.25,
+        max_tokens=110,
+        top_p=0.95,
+        frequency_penalty=1.6,
+        presence_penalty=1.4,
+        timeout=API_TIMEOUT,
+    )
+
+def _call_backup(messages):
     return client_backup.chat.completions.create(
         model=MODEL_2,
         messages=messages,
@@ -79,48 +92,63 @@ def _call_provider(which: str, messages):
     )
 
 async def ai_complete(messages):
-    """Try primary -> backup with timeout + circuit breaker. Returns response or raises."""
-    global _primary_fail_streak, _primary_skip_until
+    """Round-robin NVIDIA models with per-model cooldown; final fallback to backup."""
+    global _rr_index
     now = time.time()
-    use_primary = now >= _primary_skip_until
+    n = len(NVIDIA_MODELS)
+    # Build attempt order starting at the round-robin pointer, skipping benched models.
+    order = []
+    for i in range(n):
+        m = NVIDIA_MODELS[(_rr_index + i) % n]
+        if now >= _model_skip_until[m]:
+            order.append(m)
+    # If everyone's benched, try them all anyway (least-recently-benched first).
+    if not order:
+        order = sorted(NVIDIA_MODELS, key=lambda m: _model_skip_until[m])
+    _rr_index = (_rr_index + 1) % n
 
-    if use_primary:
+    last_err = None
+    for model in order:
         t0 = time.time()
         try:
             resp = await asyncio.wait_for(
-                asyncio.to_thread(_call_provider, "primary", messages),
+                asyncio.to_thread(_call_nvidia, model, messages),
                 timeout=API_TIMEOUT + 2,
             )
-            _primary_fail_streak = 0
-            print(f"[ai] ✅ PRIMARY ({MODEL}) ok in {round(time.time()-t0,2)}s")
+            _model_fail_streak[model] = 0
+            print(f"[ai] ✅ NVIDIA ({model}) ok in {round(time.time()-t0,2)}s")
             return resp
         except Exception as e:
-            _primary_fail_streak += 1
-            if _primary_fail_streak >= PRIMARY_FAIL_LIMIT:
-                _primary_skip_until = time.time() + PRIMARY_COOLDOWN
-                _primary_fail_streak = 0
-                print(f"[ai] ⚠️ PRIMARY tripped, cooling {PRIMARY_COOLDOWN}s ({e})")
+            last_err = e
+            if _is_rate_limit(e):
+                _model_skip_until[model] = time.time() + RATE_LIMIT_COOLDOWN
+                _model_fail_streak[model] = 0
+                print(f"[ai] 🚦 {model} rate-limited, benching {RATE_LIMIT_COOLDOWN}s")
+                continue
+            _model_fail_streak[model] += 1
+            if _model_fail_streak[model] >= MODEL_FAIL_LIMIT:
+                _model_skip_until[model] = time.time() + MODEL_COOLDOWN
+                _model_fail_streak[model] = 0
+                print(f"[ai] ⚠️ {model} tripped, cooling {MODEL_COOLDOWN}s ({e})")
             else:
-                print(f"[ai] ⚠️ PRIMARY fail {_primary_fail_streak}/{PRIMARY_FAIL_LIMIT}: {e}")
-            if client_backup is None:
-                print("[ai] ❌ no BACKUP configured, giving up")
-                raise
-    else:
-        print(f"[ai] ⏭️ skipping PRIMARY (cooldown {round(_primary_skip_until - now)}s left)")
+                print(f"[ai] ⚠️ {model} fail {_model_fail_streak[model]}/{MODEL_FAIL_LIMIT}: {e}")
+            continue
 
-    if client_backup is None:
-        raise RuntimeError("primary down and no backup configured")
-    t0 = time.time()
-    try:
-        resp = await asyncio.wait_for(
-            asyncio.to_thread(_call_provider, "backup", messages),
-            timeout=API_TIMEOUT + 2,
-        )
-        print(f"[ai] ✅ BACKUP ({MODEL_2}) ok in {round(time.time()-t0,2)}s")
-        return resp
-    except Exception as e:
-        print(f"[ai] ❌ BACKUP fail: {e}")
-        raise
+    # All NVIDIA models failed → optional backup provider
+    if client_backup is not None:
+        t0 = time.time()
+        try:
+            resp = await asyncio.wait_for(
+                asyncio.to_thread(_call_backup, messages),
+                timeout=API_TIMEOUT + 2,
+            )
+            print(f"[ai] ✅ BACKUP ({MODEL_2}) ok in {round(time.time()-t0,2)}s")
+            return resp
+        except Exception as e:
+            print(f"[ai] ❌ BACKUP fail: {e}")
+            last_err = e
+
+    raise last_err if last_err else RuntimeError("all providers failed")
 
 
 # ================= STATE =================
