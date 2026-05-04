@@ -122,21 +122,7 @@ async def ai_complete(messages):
                 print(f"[ai] ⚠️ {model} fail {_model_fail_streak[model]}/{MODEL_FAIL_LIMIT}: {e}")
             continue
 
-    # All NVIDIA models failed → optional backup provider
-    if client_backup is not None:
-        t0 = time.time()
-        try:
-            resp = await asyncio.wait_for(
-                asyncio.to_thread(_call_backup, messages),
-                timeout=API_TIMEOUT + 2,
-            )
-            print(f"[ai] ✅ BACKUP ({MODEL_2}) ok in {round(time.time()-t0,2)}s")
-            return resp
-        except Exception as e:
-            print(f"[ai] ❌ BACKUP fail: {e}")
-            last_err = e
-
-    raise last_err if last_err else RuntimeError("all providers failed")
+    raise last_err if last_err else RuntimeError("all NVIDIA models failed")
 
 
 # ================= STATE =================
