@@ -466,6 +466,47 @@ function changerFinalEmbed({ total, changed, failed, twoFA, locked, captcha, ela
   });
 }
 
+// ── Chaturbate Bruter ────────────────────────────────────────
+
+function bruterProgressEmbed({ completed, total, hits, bad, banned, retries, elapsed, latestUser, latestStatus, username }) {
+  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+  const elSec = elapsed ? Math.round(elapsed / 1000) : 0;
+  const cpm = elSec > 0 ? Math.round((completed / elSec) * 60) : 0;
+  const lines = [
+    `[${_bar(pct)}] ${pct}%`,
+    `Processed : ${completed} / ${total}`,
+    `Hits      : ${hits}`,
+    `Bad       : ${bad}`,
+    `Banned    : ${banned}`,
+    `Retries   : ${retries}`,
+    `Speed     : ${cpm} c/min`,
+    `Elapsed   : ${elSec}s`,
+  ];
+  if (latestUser) lines.push(`Latest    : ${latestUser} (${latestStatus || "..."})`);
+  return pullerStyle({ title: "Chaturbate Bruter", username, color: COLORS.PRIMARY, thumbnail: false, sections: [{ heading: "Progress", lines }] });
+}
+
+function bruterFinalEmbed({ total, hits, bad, banned, retries, balanced, elapsed, username }) {
+  const elSec = elapsed ? Math.round(elapsed / 1000) : 0;
+  const cpm = elSec > 0 ? Math.round((total / elSec) * 60) : 0;
+  const lines = [
+    `Total     : ${total}`,
+    `Hits      : ${hits}`,
+    `Bad       : ${bad}`,
+    `Banned    : ${banned}`,
+    `Retries   : ${retries}`,
+    `Balanced  : ${balanced} (tokens > 0)`,
+    `Speed     : ${cpm} c/min`,
+    `Elapsed   : ${elSec}s`,
+  ];
+  return pullerStyle({
+    title: "Chaturbate Bruter",
+    username,
+    color: hits > 0 ? COLORS.SUCCESS : COLORS.ERROR,
+    sections: [{ heading: "Results", lines }],
+  });
+}
+
 function accountCheckerResultsEmbed(results, username) {
   const valid = results.filter((r) => r.status === "valid").length;
   const locked = results.filter((r) => r.status === "locked").length;
