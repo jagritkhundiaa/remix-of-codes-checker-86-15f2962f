@@ -1645,6 +1645,11 @@ client.on("messageCreate", async (message) => {
       const accountsRaw = args.slice(1).join(" ");
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.change <newpass> <email:pass>` or attach .txt with combos.")] });
       await handleChange(respond, message.author.id, newPassword, accountsRaw, attachment, 3, message.author);
+    } else if (cmd === "bruv1") {
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.bruv1 <user:pass>` or attach .txt with combos.")] });
+      await handleBruv1(respond, message.author.id, accountsRaw, attachment, 50, message.author);
     } else if (cmd === "wlidset") {
       const wlidsRaw = args.join(" ");
       const attachment = message.attachments.first();
