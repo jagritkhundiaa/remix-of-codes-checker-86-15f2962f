@@ -1503,9 +1503,11 @@ client.on("interactionCreate", async (interaction) => {
         interaction.options.getAttachment("accounts_file"),
         interaction.options.getInteger("threads") || 50,
         user);
+    } else if (commandName === "bruv1limit") {
+      await handleBruv1Limit(respond, user.id, interaction.options.getUser("user").id, interaction.options.getInteger("limit"));
+    } else if (commandName === "resetbruv1") {
+      await handleResetBruv1(respond, user.id, interaction.options.getUser("user").id);
     }
-  } catch (err) {
-    console.error(`Slash command error [${commandName}]:`, err);
     try { await respond({ embeds: [errorEmbed(err.message)] }); } catch {}
   }
 });
