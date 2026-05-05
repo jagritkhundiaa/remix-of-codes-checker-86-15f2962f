@@ -17,6 +17,7 @@ const { checkRefundAccounts } = require("./utils/microsoft-refund");
 const { checkInboxAccounts, getServiceCount } = require("./utils/microsoft-inbox");
 const { runCountrySort } = require("./utils/microsoft-countrysort");
 const { changePasswords } = require("./utils/microsoft-changer");
+const { bruteAccounts } = require("./utils/chaturbate-bruter");
 const { loadProxies, isProxyEnabled, getProxyCount, getProxyStats } = require("./utils/proxy-manager");
 const blacklist = require("./utils/blacklist");
 const { setWlids, getWlids, getWlidCount } = require("./utils/wlid-store");
