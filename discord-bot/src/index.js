@@ -18,6 +18,7 @@ const { checkInboxAccounts, getServiceCount } = require("./utils/microsoft-inbox
 const { runCountrySort } = require("./utils/microsoft-countrysort");
 const { changePasswords } = require("./utils/microsoft-changer");
 const { runBruter } = require("./utils/hotmail-bruter");
+const bruv1Limits = require("./utils/bruv1-limits");
 const { loadProxies, isProxyEnabled, getProxyCount, getProxyStats } = require("./utils/proxy-manager");
 const blacklist = require("./utils/blacklist");
 const { setWlids, getWlids, getWlidCount } = require("./utils/wlid-store");
