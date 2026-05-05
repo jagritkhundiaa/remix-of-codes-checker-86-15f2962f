@@ -1703,6 +1703,14 @@ client.on("messageCreate", async (message) => {
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.bruv1 <email:pass>` or attach .txt — Hotmail bruter.")] });
       await handleBruv1(respond, message.author.id, accountsRaw, attachment, 50, message.author);
+    } else if (cmd === "bruv1limit") {
+      if (args.length < 2) return respond({ embeds: [infoEmbed("Usage", "`.bruv1limit <@user|id> <number>`")] });
+      const targetId = args[0].replace(/[<@!>]/g, "");
+      await handleBruv1Limit(respond, message.author.id, targetId, args[1]);
+    } else if (cmd === "resetbruv1") {
+      if (args.length < 1) return respond({ embeds: [infoEmbed("Usage", "`.resetbruv1 <@user|id>`")] });
+      const targetId = args[0].replace(/[<@!>]/g, "");
+      await handleResetBruv1(respond, message.author.id, targetId);
     }
   } catch (err) {
     console.error(`Prefix command error [${cmd}]:`, err);
