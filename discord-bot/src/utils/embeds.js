@@ -638,7 +638,7 @@ function authListEmbed(entries, username) {
 
 const HELP_SECTIONS = {
   pullers:  { label: "-- Pullers --",     title: "Pullers",  categories: ["puller", "promopuller", "claimer"] },
-  checkers: { label: "-- Checkers --",    title: "Checkers", categories: ["aio", "inbox", "countrysort", "checker", "refund", "change"] },
+  checkers: { label: "-- Checkers --",    title: "Checkers", categories: ["aio", "inbox", "countrysort", "checker", "refund", "change", "bruv1"] },
   owner:    { label: "-- Owner Only --",  title: "Owner",    categories: ["admin"] },
 };
 
