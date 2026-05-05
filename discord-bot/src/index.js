@@ -41,6 +41,8 @@ const {
   countrySortResultsEmbed,
   changerProgressEmbed,
   changerFinalEmbed,
+  bruterProgressEmbed,
+  bruterFinalEmbed,
   rewardsResultsEmbed,
   refundProgressEmbed,
   refundResultsEmbed,
