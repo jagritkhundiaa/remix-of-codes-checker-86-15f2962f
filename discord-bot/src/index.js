@@ -1107,8 +1107,13 @@ async function handleBruv1(respond, userId, accountsRaw, accountsFile, threads =
 
   const accounts = await gatherCombos(accountsRaw, accountsFile);
   if (!accounts.length) { limiter.release(userId); return respond({ embeds: [errorEmbed("No valid email:password combos found.")] }); }
-  if (accounts.length > 4000) { limiter.release(userId); return respond({ embeds: [errorEmbed("Max 4,000 lines.")] }); }
-
+  if (!isOwner(userId)) {
+    const limit = bruv1Limits.getLimit(userId);
+    if (accounts.length > limit) {
+      limiter.release(userId);
+      return respond({ embeds: [errorEmbed(`Max ${limit} lines for your account. Ask the owner to raise it with \`/bruv1limit\`.`)] });
+    }
+  }
   const controller = new AbortController();
   activeAborts.set(userId, controller);
 
