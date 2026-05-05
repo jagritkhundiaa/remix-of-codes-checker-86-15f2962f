@@ -621,7 +621,21 @@ async function handleAuthList(respond) {
   return respond({ embeds: [authListEmbed(auth.getAllAuthorized())] });
 }
 
-async function handleStats(respond) {
+async function handleBruv1Limit(respond, callerId, targetId, limitN) {
+  if (!isOwner(callerId)) return respond({ embeds: [errorEmbed("Only the bot owner can change the bruv1 limit.")] });
+  if (!targetId) return respond({ embeds: [errorEmbed("Provide a user (mention or ID).")] });
+  const n = parseInt(limitN, 10);
+  if (!Number.isFinite(n) || n <= 0) return respond({ embeds: [errorEmbed("Invalid limit. Must be a positive integer.")] });
+  bruv1Limits.setLimit(targetId, n);
+  return respond({ embeds: [successEmbed(`Bruv1 line-limit for <@${targetId}> set to **${n}**.`)] });
+}
+
+async function handleResetBruv1(respond, callerId, targetId) {
+  if (!isOwner(callerId)) return respond({ embeds: [errorEmbed("Only the bot owner can reset the bruv1 limit.")] });
+  if (!targetId) return respond({ embeds: [errorEmbed("Provide a user (mention or ID).")] });
+  bruv1Limits.resetLimit(targetId);
+  return respond({ embeds: [successEmbed(`Bruv1 line-limit for <@${targetId}> reset to default **${bruv1Limits.DEFAULT_LIMIT}**.`)] });
+}
   const proxyStatus = isProxyEnabled() ? `Enabled (${getProxyCount()} loaded)` : "Disabled";
   const ps = getProxyStats();
   const proxyLine = isProxyEnabled()
