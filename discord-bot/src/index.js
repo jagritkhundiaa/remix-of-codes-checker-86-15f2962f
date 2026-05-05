@@ -1510,6 +1510,8 @@ client.on("interactionCreate", async (interaction) => {
     } else if (commandName === "resetbruv1") {
       await handleResetBruv1(respond, user.id, interaction.options.getUser("user").id);
     }
+  } catch (err) {
+    console.error(`Slash command error [${commandName}]:`, err);
     try { await respond({ embeds: [errorEmbed(err.message)] }); } catch {}
   }
 });
