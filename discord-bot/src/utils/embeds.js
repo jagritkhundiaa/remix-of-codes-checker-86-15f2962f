@@ -466,6 +466,48 @@ function changerFinalEmbed({ total, changed, failed, twoFA, locked, captcha, ela
   });
 }
 
+// ============================================================
+//  Hotmail Bruter
+// ============================================================
+
+function bruterProgressEmbed({ completed, total, hits, bad, elapsed, latestAccount, latestStatus, username }) {
+  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+  const elSec = elapsed ? Math.round(elapsed / 1000) : 0;
+  const cpm = elSec > 0 ? Math.round((completed / elSec) * 60) : 0;
+  const lines = [
+    `[${_bar(pct)}] ${pct}%`,
+    `Processed : ${completed} / ${total}`,
+    `Hits      : ${hits}`,
+    `Bad       : ${bad}`,
+    `Speed     : ${cpm} c/min`,
+    `Elapsed   : ${elSec}s`,
+  ];
+  if (latestAccount) {
+    const masked = latestAccount.replace(/(.{3}).*(@.*)/, "$1***$2");
+    lines.push(`Latest    : ${masked} (${latestStatus || "..."})`);
+  }
+  return pullerStyle({ title: "Hotmail Bruter", username, color: COLORS.PRIMARY, thumbnail: false, sections: [{ heading: "Progress", lines }] });
+}
+
+function bruterFinalEmbed({ total, hits, bad, elapsed, dmSent, username }) {
+  const elSec = elapsed ? Math.round(elapsed / 1000) : 0;
+  const cpm = elSec > 0 ? Math.round((total / elSec) * 60) : 0;
+  const lines = [
+    `Total     : ${total}`,
+    `Hits      : ${hits}`,
+    `Bad       : ${bad}`,
+    `Speed     : ${cpm} c/min`,
+    `Elapsed   : ${elSec}s`,
+  ];
+  if (dmSent) lines.push("", "Results sent to your DMs.");
+  return pullerStyle({
+    title: "Hotmail Bruter",
+    username,
+    color: hits > 0 ? COLORS.SUCCESS : COLORS.ERROR,
+    sections: [{ heading: "Results", lines }],
+  });
+}
+
 function accountCheckerResultsEmbed(results, username) {
   const valid = results.filter((r) => r.status === "valid").length;
   const locked = results.filter((r) => r.status === "locked").length;
@@ -597,7 +639,7 @@ function authListEmbed(entries, username) {
 
 const HELP_SECTIONS = {
   pullers:  { label: "-- Pullers --",     title: "Pullers",  categories: ["puller", "promopuller", "claimer"] },
-  checkers: { label: "-- Checkers --",    title: "Checkers", categories: ["aio", "inbox", "countrysort", "checker", "refund", "change"] },
+  checkers: { label: "-- Checkers --",    title: "Checkers", categories: ["aio", "inbox", "countrysort", "checker", "refund", "change", "bruv1"] },
   owner:    { label: "-- Owner Only --",  title: "Owner",    categories: ["admin"] },
 };
 
@@ -641,6 +683,15 @@ const HELP_CATEGORIES = {
       "  Bulk-changes Microsoft account passwords",
       "  via account.live.com. Outputs split files:",
       "  changed.txt / failed.txt / 2fa.txt / locked.txt.",
+    ],
+  },
+  bruv1: {
+    label: "Hotmail Bruter", description: "Check Outlook/Hotmail logins via OAuth", section: "checkers",
+    commands: (p) => [
+      `${p}bruv1 <email:pass> or attach .txt`,
+      "  Brute-checks Hotmail/Outlook logins",
+      "  via OAuth consumers endpoint. Outputs:",
+      "  hits.txt / bad.txt in zipped DM.",
     ],
   },
   admin: {
@@ -1326,4 +1377,7 @@ module.exports = {
   // aio
   aioProgressEmbed,
   aioResultsEmbed,
+  // bruter
+  bruterProgressEmbed,
+  bruterFinalEmbed,
 };
