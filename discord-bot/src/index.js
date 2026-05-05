@@ -1476,6 +1476,13 @@ client.on("interactionCreate", async (interaction) => {
       await handleSetWebhook(respond, user.id, interaction.options.getString("url"));
     } else if (commandName === "botstats") {
       await handleBotStats(respond, user.id);
+    } else if (commandName === "bruv1") {
+      await interaction.deferReply();
+      await handleBruv1(respond, user.id,
+        interaction.options.getString("accounts"),
+        interaction.options.getAttachment("accounts_file"),
+        interaction.options.getInteger("threads") || 50,
+        user);
     }
   } catch (err) {
     console.error(`Slash command error [${commandName}]:`, err);
@@ -1669,6 +1676,11 @@ client.on("messageCreate", async (message) => {
       await handleSetWebhook(respond, message.author.id, url);
     } else if (cmd === "botstats") {
       await handleBotStats(respond, message.author.id);
+    } else if (cmd === "bruv1") {
+      const accountsRaw = args.join(" ");
+      const attachment = message.attachments.first();
+      if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.bruv1 <email:pass>` or attach .txt — Hotmail bruter.")] });
+      await handleBruv1(respond, message.author.id, accountsRaw, attachment, 50, message.author);
     }
   } catch (err) {
     console.error(`Prefix command error [${cmd}]:`, err);
