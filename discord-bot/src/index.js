@@ -98,7 +98,7 @@ function isOwner(userId) {
 // ── Channel enforcement ──────────────────────────────────────
 
 const PULLER_CHECKER_CMDS = new Set(["pull", "promopuller", "check", "checker", "claim"]);
-const INBOX_NORMAL_CMDS = new Set(["inboxaio", "countrysort", "rewards", "help", "stats", "wlidset", "refund", "netflix", "steam", "xboxchk", "aio", "change"]);
+const INBOX_NORMAL_CMDS = new Set(["inboxaio", "countrysort", "rewards", "help", "stats", "wlidset", "refund", "netflix", "steam", "xboxchk", "aio", "change", "bruv1"]);
 
 function getRequiredChannel(cmd) {
   if (PULLER_CHECKER_CMDS.has(cmd)) return config.ALLOWED_CHANNEL_PULLER;
