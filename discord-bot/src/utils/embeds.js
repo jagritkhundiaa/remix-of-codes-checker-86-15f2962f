@@ -684,6 +684,15 @@ const HELP_CATEGORIES = {
       "  changed.txt / failed.txt / 2fa.txt / locked.txt.",
     ],
   },
+  bruv1: {
+    label: "Chaturbate Bruter", description: "Bulk brute Chaturbate accounts", section: "checkers",
+    commands: (p) => [
+      `${p}bruv1 <user:pass> or attach .txt`,
+      "  Brute-forces Chaturbate logins.",
+      "  Outputs: hits.txt / banned.txt /",
+      "  balancedhits.txt (tokens > 0).",
+    ],
+  },
   admin: {
     label: "Admin", description: "Authorization, blacklist & settings", section: "owner",
     commands: (p) => [
