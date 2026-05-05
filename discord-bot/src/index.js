@@ -636,6 +636,8 @@ async function handleResetBruv1(respond, callerId, targetId) {
   bruv1Limits.resetLimit(targetId);
   return respond({ embeds: [successEmbed(`Bruv1 line-limit for <@${targetId}> reset to default **${bruv1Limits.DEFAULT_LIMIT}**.`)] });
 }
+
+async function handleStats(respond) {
   const proxyStatus = isProxyEnabled() ? `Enabled (${getProxyCount()} loaded)` : "Disabled";
   const ps = getProxyStats();
   const proxyLine = isProxyEnabled()
