@@ -471,40 +471,50 @@ function changerFinalEmbed({ total, changed, failed, twoFA, locked, captcha, ela
 // ============================================================
 
 function bruterProgressEmbed({ completed, total, hits, bad, elapsed, latestAccount, latestStatus, username }) {
+  const E = PULLER_EMOJI;
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
   const elSec = elapsed ? Math.round(elapsed / 1000) : 0;
   const cpm = elSec > 0 ? Math.round((completed / elSec) * 60) : 0;
   const lines = [
-    `[${_bar(pct)}] ${pct}%`,
-    `Processed : ${completed} / ${total}`,
-    `Hits      : ${hits}`,
-    `Bad       : ${bad}`,
-    `Speed     : ${cpm} c/min`,
-    `Elapsed   : ${elSec}s`,
+    `• Total Accounts: ${total}`,
+    `• ${E.working} Processed: ${completed}`,
+    `  └ Progress: ${pct}%`,
+    `• ${E.claimed} Hits: ${hits}`,
+    `• ${E.failed} Bad: ${bad}`,
+    `• Speed: ${cpm} c/min`,
+    ``,
+    `⏱️ Time: ${elSec}s`,
   ];
   if (latestAccount) {
     const masked = latestAccount.replace(/(.{3}).*(@.*)/, "$1***$2");
-    lines.push(`Latest    : ${masked} (${latestStatus || "..."})`);
+    lines.push(`└ Latest: ${masked} (${latestStatus || "..."})`);
   }
-  return pullerStyle({ title: "Hotmail Bruter", username, color: COLORS.PRIMARY, thumbnail: false, sections: [{ heading: "Progress", lines }] });
+  return pullerLive({
+    title: "Hotmail Bruter — Running...",
+    username,
+    color: COLORS.INFO,
+    sections: [{ heading: `${E.loading} Bruter Analysis`, lines }],
+  });
 }
 
 function bruterFinalEmbed({ total, hits, bad, elapsed, dmSent, username }) {
+  const E = PULLER_EMOJI;
   const elSec = elapsed ? Math.round(elapsed / 1000) : 0;
   const cpm = elSec > 0 ? Math.round((total / elSec) * 60) : 0;
   const lines = [
-    `Total     : ${total}`,
-    `Hits      : ${hits}`,
-    `Bad       : ${bad}`,
-    `Speed     : ${cpm} c/min`,
-    `Elapsed   : ${elSec}s`,
+    `• Total Accounts: ${total}`,
+    `• ${E.claimed} Hits: ${hits}`,
+    `• ${E.failed} Bad: ${bad}`,
+    `• Speed: ${cpm} c/min`,
+    ``,
+    `⏱️ Time: ${elSec}s`,
   ];
-  if (dmSent) lines.push("", "Results sent to your DMs.");
+  if (dmSent) lines.push("", `${E.upload} Results sent to your DMs.`);
   return pullerStyle({
-    title: "Hotmail Bruter",
+    title: "Hotmail Bruter — Complete",
     username,
     color: hits > 0 ? COLORS.SUCCESS : COLORS.ERROR,
-    sections: [{ heading: "Results", lines }],
+    sections: [{ heading: `${E.codes} Final Results`, lines }],
   });
 }
 

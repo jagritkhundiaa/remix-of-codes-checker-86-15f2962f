@@ -18,6 +18,7 @@ const { checkInboxAccounts, getServiceCount } = require("./utils/microsoft-inbox
 const { runCountrySort } = require("./utils/microsoft-countrysort");
 const { changePasswords } = require("./utils/microsoft-changer");
 const { runBruter } = require("./utils/hotmail-bruter");
+const bruv1Limits = require("./utils/bruv1-limits");
 const { loadProxies, isProxyEnabled, getProxyCount, getProxyStats } = require("./utils/proxy-manager");
 const blacklist = require("./utils/blacklist");
 const { setWlids, getWlids, getWlidCount } = require("./utils/wlid-store");
@@ -620,6 +621,22 @@ async function handleAuthList(respond) {
   return respond({ embeds: [authListEmbed(auth.getAllAuthorized())] });
 }
 
+async function handleBruv1Limit(respond, callerId, targetId, limitN) {
+  if (!isOwner(callerId)) return respond({ embeds: [errorEmbed("Only the bot owner can change the bruv1 limit.")] });
+  if (!targetId) return respond({ embeds: [errorEmbed("Provide a user (mention or ID).")] });
+  const n = parseInt(limitN, 10);
+  if (!Number.isFinite(n) || n <= 0) return respond({ embeds: [errorEmbed("Invalid limit. Must be a positive integer.")] });
+  bruv1Limits.setLimit(targetId, n);
+  return respond({ embeds: [successEmbed(`Bruv1 line-limit for <@${targetId}> set to **${n}**.`)] });
+}
+
+async function handleResetBruv1(respond, callerId, targetId) {
+  if (!isOwner(callerId)) return respond({ embeds: [errorEmbed("Only the bot owner can reset the bruv1 limit.")] });
+  if (!targetId) return respond({ embeds: [errorEmbed("Provide a user (mention or ID).")] });
+  bruv1Limits.resetLimit(targetId);
+  return respond({ embeds: [successEmbed(`Bruv1 line-limit for <@${targetId}> reset to default **${bruv1Limits.DEFAULT_LIMIT}**.`)] });
+}
+
 async function handleStats(respond) {
   const proxyStatus = isProxyEnabled() ? `Enabled (${getProxyCount()} loaded)` : "Disabled";
   const ps = getProxyStats();
@@ -1106,8 +1123,13 @@ async function handleBruv1(respond, userId, accountsRaw, accountsFile, threads =
 
   const accounts = await gatherCombos(accountsRaw, accountsFile);
   if (!accounts.length) { limiter.release(userId); return respond({ embeds: [errorEmbed("No valid email:password combos found.")] }); }
-  if (accounts.length > 4000) { limiter.release(userId); return respond({ embeds: [errorEmbed("Max 4,000 lines.")] }); }
-
+  if (!isOwner(userId)) {
+    const limit = bruv1Limits.getLimit(userId);
+    if (accounts.length > limit) {
+      limiter.release(userId);
+      return respond({ embeds: [errorEmbed(`Max ${limit} lines for your account. Ask the owner to raise it with \`/bruv1limit\`.`)] });
+    }
+  }
   const controller = new AbortController();
   activeAborts.set(userId, controller);
 
@@ -1483,6 +1505,10 @@ client.on("interactionCreate", async (interaction) => {
         interaction.options.getAttachment("accounts_file"),
         interaction.options.getInteger("threads") || 50,
         user);
+    } else if (commandName === "bruv1limit") {
+      await handleBruv1Limit(respond, user.id, interaction.options.getUser("user").id, interaction.options.getInteger("limit"));
+    } else if (commandName === "resetbruv1") {
+      await handleResetBruv1(respond, user.id, interaction.options.getUser("user").id);
     }
   } catch (err) {
     console.error(`Slash command error [${commandName}]:`, err);
@@ -1681,6 +1707,14 @@ client.on("messageCreate", async (message) => {
       const attachment = message.attachments.first();
       if (!accountsRaw && !attachment) return respond({ embeds: [infoEmbed("Usage", "`.bruv1 <email:pass>` or attach .txt — Hotmail bruter.")] });
       await handleBruv1(respond, message.author.id, accountsRaw, attachment, 50, message.author);
+    } else if (cmd === "bruv1limit") {
+      if (args.length < 2) return respond({ embeds: [infoEmbed("Usage", "`.bruv1limit <@user|id> <number>`")] });
+      const targetId = args[0].replace(/[<@!>]/g, "");
+      await handleBruv1Limit(respond, message.author.id, targetId, args[1]);
+    } else if (cmd === "resetbruv1") {
+      if (args.length < 1) return respond({ embeds: [infoEmbed("Usage", "`.resetbruv1 <@user|id>`")] });
+      const targetId = args[0].replace(/[<@!>]/g, "");
+      await handleResetBruv1(respond, message.author.id, targetId);
     }
   } catch (err) {
     console.error(`Prefix command error [${cmd}]:`, err);

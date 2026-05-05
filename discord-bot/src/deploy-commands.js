@@ -126,6 +126,17 @@ const commands = [
     .addStringOption((o) => o.setName("accounts").setDescription("Accounts (comma-separated)").setRequired(false))
     .addIntegerOption((o) => o.setName("threads").setDescription("Threads (1-50, default 50)").setMinValue(1).setMaxValue(50)),
 
+  new SlashCommandBuilder()
+    .setName("bruv1limit")
+    .setDescription("[OWNER] Set bruv1 line-limit for a specific user")
+    .addUserOption((o) => o.setName("user").setDescription("User to update").setRequired(true))
+    .addIntegerOption((o) => o.setName("limit").setDescription("New line limit (e.g. 1000)").setRequired(true).setMinValue(1)),
+
+  new SlashCommandBuilder()
+    .setName("resetbruv1")
+    .setDescription("[OWNER] Reset bruv1 line-limit to default (400) for a user")
+    .addUserOption((o) => o.setName("user").setDescription("User to reset").setRequired(true)),
+
   // Gen System v2 slash commands
   ...genV2.buildSlashCommands(),
 ].map((c) => c.toJSON());
