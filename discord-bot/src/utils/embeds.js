@@ -1335,6 +1335,8 @@ module.exports = {
   changerResultsEmbed,
   changerProgressEmbed,
   changerFinalEmbed,
+  bruterProgressEmbed,
+  bruterFinalEmbed,
   accountCheckerResultsEmbed,
   rewardsResultsEmbed,
   // generic
