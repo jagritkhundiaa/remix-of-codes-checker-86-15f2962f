@@ -2041,7 +2041,7 @@ async function checkMc(jar, email, password, token, xboxToken) {
 
   if (acctype === "Xbox Game Pass Ultimate" || acctype === "Normal Minecraft (with Game Pass Ultimate)") {
     stats.xgpu++;
-    results_xgpu.push(`${email}:${password}`);
+    results_xgpu.push(`${email}:${password} | XBOX GAME PASS ULTIMATE`);
     if (acctype.includes("Normal")) results_normal.push(`${email}:${password}`);
     await claimBuddypassOffers(jar, xboxToken);
     // captureMc for Game Pass types
